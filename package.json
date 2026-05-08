@@ -1,0 +1,19 @@
+{
+  "name": "pos-system",
+  "version": "1.0.0",
+  "main": "electron/main.js",
+  "scripts": {
+    "backend": "cd backend && npm run dev",
+    "frontend": "cd frontend && npm run dev",
+    "electron": "wait-on http://localhost:5173 http://localhost:5000 && electron .",
+    "start": "concurrently \"npm run backend\" \"npm run frontend\" \"npm run electron\""
+  },
+  "dependencies": {
+    "electron": "^30.0.0",
+    "framer-motion": "^12.38.0"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0",
+    "wait-on": "^7.2.0"
+  }
+}
