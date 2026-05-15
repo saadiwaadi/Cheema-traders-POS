@@ -7,6 +7,9 @@ node_modules/
 dist/
 build/
 .vite/
+database/*.db-wal
+database/*.db-shm
+database/*.db-journal
 
 # Environment variables
 .env

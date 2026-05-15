@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
+import { loginWithPin } from "../lib/posApi";
 
 
 function Login() {
@@ -17,50 +18,13 @@ function Login() {
     }, 2200);
   }, []);
 
-  const handleClick = (num) => {
-    if (pin.length < 4) {
-      setError("");
-
-      const newPin = pin + num;
-      setPin(newPin);
-
-      if (newPin.length === 4) {
-        login(newPin);
-      }
-    }
-  };
-
-  const handleDelete = () => {
-    setPin((prev) => prev.slice(0, -1));
-  };
-
-  useEffect(() => {
-    const handleKey = (e) => {
-      if (e.key >= "0" && e.key <= "9") handleClick(e.key);
-      else if (e.key === "Backspace") handleDelete();
-      else if (e.key === "Enter") login(pin);
-    };
-
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  });
-
-  const login = async (enteredPin) => {
+  const login = useCallback(async (enteredPin) => {
     setLoading(true);
     setError("");
 
     try {
-      const res = await fetch("http://localhost:5000/api/users/login", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ pin: enteredPin }),
-      });
-
-      const data = await res.json();
-
-      if (res.ok) {
+      const data = await loginWithPin(enteredPin);
+      if (data?.user) {
         localStorage.setItem("user", JSON.stringify(data.user));
         navigate("/dashboard");
       } else {
@@ -76,7 +40,35 @@ function Login() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [navigate]);
+
+  const handleClick = useCallback((num) => {
+    if (pin.length < 4) {
+      setError("");
+
+      const newPin = pin + num;
+      setPin(newPin);
+
+      if (newPin.length === 4) {
+        login(newPin);
+      }
+    }
+  }, [pin, login]);
+
+  const handleDelete = useCallback(() => {
+    setPin((prev) => prev.slice(0, -1));
+  }, []);
+
+  useEffect(() => {
+    const handleKey = (e) => {
+      if (e.key >= "0" && e.key <= "9") handleClick(e.key);
+      else if (e.key === "Backspace") handleDelete();
+      else if (e.key === "Enter") login(pin);
+    };
+
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [handleClick, handleDelete, login, pin]);
 
   return (
     <div style={styles.container}>

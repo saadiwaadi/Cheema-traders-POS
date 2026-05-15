@@ -1,142 +1,133 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
-export default function BillingPage() {
-  // Billing Info State
-  const [invoiceNo, setInvoiceNo] = useState("");
-  const [billingDate, setBillingDate] = useState(
-    new Date().toISOString().split("T")[0]
-  );
-  const [customerName, setCustomerName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [customerType, setCustomerType] = useState("Walk-in");
+const productDatabase = [
+  { name: "Roundup", unit: "Litre", price: 580 },
+  { name: "Mospilan", unit: "Bottle", price: 920 },
+  { name: "Coragen", unit: "Bottle", price: 1450 },
+  { name: "Confidor", unit: "Bottle", price: 860 },
+  { name: "Aliette", unit: "Kg", price: 1240 },
+  { name: "Ridomil Gold", unit: "Packet", price: 760 },
+];
+
+function createRow() {
+  return {
+    id: Date.now() + Math.random(),
+    product: "",
+    qty: 1,
+    unit: "",
+    price: "",
+    discount: "",
+    total: 0,
+  };
+}
+
+export default function BillingWorkspace() {
+  const [rows, setRows] = useState([createRow()]);
+  const [customer, setCustomer] = useState("");
   const [paymentType, setPaymentType] = useState("Cash");
+  const [invoiceNo] = useState("INV-1048");
   const [notes, setNotes] = useState("");
 
-  const [products, setProducts] = useState([createEmptyProduct()]);
+  const billingDate = new Date().toISOString().split("T")[0];
 
-  function createEmptyProduct() {
-    return {
-      id: Date.now() + Math.random(),
-      product: "",
-      qty: 1,
-      unit: "Litre",
-      ppp: "",
-      discount: "",
-      total: 0,
-    };
-  }
-
-  const addRow = () => setProducts([...products, createEmptyProduct()]);
+  const addRow = () => {
+    setRows((prev) => [...prev, createRow()]);
+  };
 
   const removeRow = (id) => {
-    if (products.length > 1) {
-      setProducts(products.filter((p) => p.id !== id));
-    }
+    if (rows.length === 1) return;
+    setRows((prev) => prev.filter((r) => r.id !== id));
   };
 
-  const clearAll = () => {
-    setProducts([createEmptyProduct()]);
-    setCustomerName("");
-    setPhone("");
-    setNotes("");
-    setInvoiceNo("");
-    setCustomerType("Walk-in");
-    setPaymentType("Cash");
-    setBillingDate(new Date().toISOString().split("T")[0]);
-  };
+  const updateRow = (id, field, value) => {
+    setRows((prev) =>
+      prev.map((row) => {
+        if (row.id !== id) return row;
 
-  const updateProduct = (id, field, value) => {
-    setProducts((prev) =>
-      prev.map((p) => {
-        if (p.id !== id) return p;
-        const updated = { ...p, [field]: value };
-        if (field === "qty" || field === "ppp" || field === "discount") {
-          const qty = parseFloat(updated.qty) || 0;
-          const ppp = parseFloat(updated.ppp) || 0;
-          const disc = parseFloat(updated.discount) || 0;
-          updated.total = Math.max(0, qty * ppp - disc);
+        const updated = {
+          ...row,
+          [field]: value,
+        };
+
+        if (field === "product") {
+          const selected = productDatabase.find(
+            (p) => p.name === value
+          );
+
+          if (selected) {
+            updated.unit = selected.unit;
+            updated.price = selected.price;
+          }
         }
+
+        const qty = parseFloat(updated.qty) || 0;
+        const price = parseFloat(updated.price) || 0;
+        const discount = parseFloat(updated.discount) || 0;
+
+        updated.total = Math.max(0, qty * price - discount);
+
         return updated;
       })
     );
   };
 
-  // Calculations
-  const subtotal = products.reduce((a, p) => a + (p.total || 0), 0);
-  const totalDiscount = products.reduce(
-    (a, p) => a + (parseFloat(p.discount) || 0),
-    0
-  );
-  const taxRate = 0.05;
-  const taxAmount = subtotal * taxRate;
-  const grandTotal = subtotal + taxAmount;
-  const itemCount = products.filter((p) => p.product.trim() !== "").length;
+  const subtotal = useMemo(() => {
+    return rows.reduce((acc, row) => acc + row.total, 0);
+  }, [rows]);
+
+  const totalDiscount = useMemo(() => {
+    return rows.reduce(
+      (acc, row) => acc + (parseFloat(row.discount) || 0),
+      0
+    );
+  }, [rows]);
+
+  const itemCount = rows.filter((r) => r.product !== "").length;
 
   return (
     <div style={st.page}>
-      <div style={st.main}>
-        {/* ─── TOOLBAR ─── */}
-        <div style={st.toolbar}>
-          <div style={st.toolbarLeft}>
-            <h1 style={st.pageTitle}>New Bill</h1>
-            <span style={st.badge}>{itemCount} item{itemCount !== 1 ? "s" : ""}</span>
+      <div style={st.workspace}>
+        {/* HEADER */}
+        <div style={st.headerBar}>
+          <div>
+            <h1 style={st.pageTitle}>Billing Workspace</h1>
+            <p style={st.pageSubtext}>
+              Fast operational billing and invoice generation.
+            </p>
           </div>
-          <div style={st.toolbarRight}>
-            <button style={st.toolBtn} onClick={clearAll} title="Clear All">
-              Clear
-            </button>
+
+          <div style={st.headerActions}>
+            <button style={st.secondaryBtn}>Invoice History</button>
+            <button style={st.primaryBtn}>Generate Invoice</button>
           </div>
         </div>
 
-        {/* ─── BILL META CARD ─── */}
-        <div style={st.billMetaCard}>
-          {/* TOP ROW */}
-          <div style={st.metaTopRow}>
-            <div style={st.metaField}>
+        {/* TOP STRIP */}
+        <div style={st.topStrip}>
+          <div style={st.stripLeft}>
+            <div style={st.metaBlock}>
               <span style={st.metaLabel}>Invoice No</span>
-              <input
-                style={st.metaInput}
-                placeholder="INV-1001"
-                value={invoiceNo}
-                onChange={(e) => setInvoiceNo(e.target.value)}
-              />
+              <strong style={st.metaValue}>{invoiceNo}</strong>
             </div>
-            <div style={st.metaField}>
-              <span style={st.metaLabel}>Billing Date</span>
-              <input
-                type="date"
-                style={st.metaInput}
-                value={billingDate}
-                onChange={(e) => setBillingDate(e.target.value)}
-              />
+
+            <div style={st.metaBlock}>
+              <span style={st.metaLabel}>Date</span>
+              <strong style={st.metaValue}>{billingDate}</strong>
             </div>
           </div>
 
-          {/* CUSTOMER */}
-          <div style={st.customerRow}>
+          <div style={st.stripCenter}>
             <input
               style={st.customerInput}
               placeholder="Customer Name"
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
+              value={customer}
+              onChange={(e) => setCustomer(e.target.value)}
             />
           </div>
 
-          {/* PAYMENT + TYPE */}
-          <div style={st.metaBottomRow}>
+          <div style={st.stripRight}>
             <select
-              style={st.metaInput}
-              value={customerType}
-              onChange={(e) => setCustomerType(e.target.value)}
-            >
-              <option>Walk-in</option>
-              <option>Farmer</option>
-              <option>Dealer</option>
-              <option>Distributor</option>
-            </select>
-
-            <select
-              style={st.metaInput}
+              style={st.paymentSelect}
               value={paymentType}
               onChange={(e) => setPaymentType(e.target.value)}
             >
@@ -148,477 +139,625 @@ export default function BillingPage() {
               <option>EasyPaisa</option>
               <option>Credit</option>
             </select>
-
-            <input
-              style={st.metaInput}
-              placeholder="Phone Number"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-            />
           </div>
         </div>
 
-        {/* ─── PRODUCTS ─── */}
-        <div style={st.productCard}>
-          <div style={st.productTop}>
-            <h2 style={st.sectionTitle}>Products</h2>
-            <button style={st.addBtn} onClick={addRow}>
-              + Add Row
-            </button>
-          </div>
+        {/* MAIN WORKSPACE */}
+        <div style={st.mainGrid}>
+          {/* PRODUCT WORKSPACE */}
+          <div style={st.productWorkspace}>
+            <div style={st.sectionTop}>
+              <div>
+                <h2 style={st.sectionTitle}>Product Entry</h2>
+                <p style={st.sectionSubtext}>
+                  Search products and generate invoices quickly.
+                </p>
+              </div>
 
-          <div style={st.tableWrap}>
-            <div style={st.tableHead}>
-              <span style={{ width: 36 }}>#</span>
-              <span style={{ flex: 3 }}>Product</span>
-              <span style={{ flex: 0.8 }}>Qty</span>
-              <span style={{ flex: 0.9 }}>Unit</span>
-              <span style={{ flex: 1 }}>PPP</span>
-              <span style={{ flex: 1 }}>Discount</span>
-              <span style={{ flex: 1 }}>Total</span>
-              <span style={{ width: 40 }}></span>
+              <button style={st.addRowBtn} onClick={addRow}>
+                + Add Row
+              </button>
             </div>
 
-            {products.map((item, i) => (
-              <div key={item.id} style={st.tableRow}>
-                <span style={{ ...st.rowNum, width: 36 }}>{i + 1}</span>
-
-                <select
-                  style={{ ...st.inp, flex: 3 }}
-                  value={item.product}
-                  onChange={(e) =>
-                    updateProduct(item.id, "product", e.target.value)
-                  }
-                >
-                  <option value="">Select Product</option>
-                  <option>Roundup</option>
-                  <option>Mospilan</option>
-                  <option>Acetamiprid</option>
-                  <option>Confidor</option>
-                  <option>Coragen</option>
-                  <option>Aliette</option>
-                  <option>Ridomil Gold</option>
-                </select>
-
-                <input
-                  style={{ ...st.inp, flex: 0.8 }}
-                  type="number"
-                  min="1"
-                  placeholder="1"
-                  value={item.qty}
-                  onChange={(e) =>
-                    updateProduct(item.id, "qty", e.target.value)
-                  }
-                />
-
-                <select
-                  style={{ ...st.inp, flex: 0.9 }}
-                  value={item.unit}
-                  onChange={(e) =>
-                    updateProduct(item.id, "unit", e.target.value)
-                  }
-                >
-                  <option>Litre</option>
-                  <option>Kg</option>
-                  <option>Piece</option>
-                  <option>Box</option>
-                  <option>Packet</option>
-                  <option>Bottle</option>
-                </select>
-
-                <input
-                  style={{ ...st.inp, flex: 1 }}
-                  type="number"
-                  placeholder="0.00"
-                  value={item.ppp}
-                  onChange={(e) =>
-                    updateProduct(item.id, "ppp", e.target.value)
-                  }
-                />
-
-                <input
-                  style={{ ...st.inp, flex: 1 }}
-                  type="number"
-                  placeholder="0.00"
-                  value={item.discount}
-                  onChange={(e) =>
-                    updateProduct(item.id, "discount", e.target.value)
-                  }
-                />
-
-                <div style={{ ...st.totalCell, flex: 1 }}>
-                  Rs {item.total.toFixed(2)}
-                </div>
-
-                <button
-                  style={st.delBtn}
-                  onClick={() => removeRow(item.id)}
-                  title="Remove"
-                >
-                  ✕
-                </button>
+            <div style={st.tableWrap}>
+              <div style={st.tableHead}>
+                <span style={{ width: 36 }}>#</span>
+                <span style={{ flex: 3 }}>Product</span>
+                <span style={{ flex: 0.9 }}>Qty</span>
+                <span style={{ flex: 1 }}>Unit</span>
+                <span style={{ flex: 1.2 }}>PPP</span>
+                <span style={{ flex: 1 }}>Discount</span>
+                <span style={{ flex: 1.3 }}>Total</span>
+                <span style={{ width: 44 }}></span>
               </div>
-            ))}
+
+              {rows.map((row, index) => (
+                <div key={row.id} style={st.tableRow}>
+                  <div style={{ ...st.rowIndex, width: 36 }}>
+                    {index + 1}
+                  </div>
+
+                  <select
+                    style={{ ...st.input, flex: 3 }}
+                    value={row.product}
+                    onChange={(e) =>
+                      updateRow(row.id, "product", e.target.value)
+                    }
+                  >
+                    <option value="">Search Product</option>
+
+                    {productDatabase.map((item) => (
+                      <option key={item.name}>{item.name}</option>
+                    ))}
+                  </select>
+
+                  <input
+                    style={{ ...st.input, flex: 0.9 }}
+                    type="number"
+                    value={row.qty}
+                    onChange={(e) =>
+                      updateRow(row.id, "qty", e.target.value)
+                    }
+                  />
+
+                  <div style={{ ...st.unitCell, flex: 1 }}>
+                    {row.unit || "-"}
+                  </div>
+
+                  <input
+                    style={{ ...st.input, flex: 1.2 }}
+                    type="number"
+                    value={row.price}
+                    onChange={(e) =>
+                      updateRow(row.id, "price", e.target.value)
+                    }
+                  />
+
+                  <input
+                    style={{ ...st.input, flex: 1 }}
+                    type="number"
+                    value={row.discount}
+                    onChange={(e) =>
+                      updateRow(row.id, "discount", e.target.value)
+                    }
+                  />
+
+                  <div style={{ ...st.totalCell, flex: 1.3 }}>
+                    Rs {row.total.toFixed(0)}
+                  </div>
+
+                  <button
+                    style={st.deleteBtn}
+                    onClick={() => removeRow(row.id)}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div style={st.notesArea}>
+              <textarea
+                style={st.notesInput}
+                rows={2}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Notes or delivery instructions..."
+              />
+            </div>
           </div>
 
-          <div style={st.hint}>
-            Tip: Select a product, fill Qty &amp; PPP — Total auto-calculates.
+          {/* SIDE PANEL */}
+          <div style={st.sidePanel}>
+            {/* LIVE SUMMARY */}
+            <div style={st.sideCard}>
+              <div style={st.sideCardTop}>
+                <h3 style={st.sideTitle}>Live Summary</h3>
+              </div>
+
+              <div style={st.summaryStack}>
+                <SummaryRow
+                  label="Items"
+                  value={`${itemCount}`}
+                />
+
+                <SummaryRow
+                  label="Subtotal"
+                  value={`Rs ${subtotal.toFixed(0)}`}
+                />
+
+                <SummaryRow
+                  label="Discount"
+                  value={`Rs ${totalDiscount.toFixed(0)}`}
+                />
+              </div>
+
+              <div style={st.grandTotalBox}>
+                <span style={st.grandLabel}>Grand Total</span>
+                <strong style={st.grandValue}>
+                  Rs {subtotal.toFixed(0)}
+                </strong>
+              </div>
+            </div>
+
+            {/* CUSTOMER CONTEXT */}
+            <div style={st.sideCard}>
+              <div style={st.sideCardTop}>
+                <h3 style={st.sideTitle}>Customer Context</h3>
+              </div>
+
+              <div style={st.contextItem}>
+                Last Invoice: INV-1038
+              </div>
+
+              <div style={st.contextItem}>
+                Pending Credit: Rs 24,000
+              </div>
+
+              <div style={st.contextItem}>
+                Recent Purchase: Roundup x12
+              </div>
+            </div>
+
+            {/* OPERATIONAL INSIGHTS */}
+            <div style={st.sideCard}>
+              <div style={st.sideCardTop}>
+                <h3 style={st.sideTitle}>Operational Insights</h3>
+              </div>
+
+              <div style={st.insightBox}>
+                Roundup stock likely requires restocking within 5 days.
+              </div>
+
+              <div style={st.insightBox}>
+                Mospilan currently nearing low stock threshold.
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* ─── NOTES ─── */}
-        <div style={st.notesCard}>
-          <textarea
-            style={st.notesInput}
-            placeholder="Notes or delivery instructions (optional)…"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={2}
-          />
-        </div>
+        {/* BOTTOM OPERATION BAR */}
+        <div style={st.bottomBar}>
+          <div style={st.bottomLeft}>
+            <div style={st.bottomMetric}>
+              <span style={st.bottomLabel}>Items</span>
+              <strong>{itemCount}</strong>
+            </div>
 
-        {/* ─── INLINE SUMMARY ─── */}
-        <div style={st.summaryInline}>
-          <div style={st.summaryGrid}>
-            <SumCard label="Items" value={itemCount} />
-            <SumCard label="Subtotal" value={`Rs ${subtotal.toFixed(0)}`} />
-            <SumCard label="Discount" value={`Rs ${totalDiscount.toFixed(0)}`} />
-            <SumCard label="Tax" value={`Rs ${taxAmount.toFixed(0)}`} />
-            <SumCard
-              label="Grand Total"
-              value={`Rs ${grandTotal.toFixed(0)}`}
-              highlight
-            />
+            <div style={st.bottomMetric}>
+              <span style={st.bottomLabel}>Discount</span>
+              <strong>Rs {totalDiscount.toFixed(0)}</strong>
+            </div>
+
+            <div style={st.bottomMetric}>
+              <span style={st.bottomLabel}>Payment</span>
+              <strong>{paymentType}</strong>
+            </div>
           </div>
-          <button style={st.generateBtn}>Generate Bill</button>
+
+          <div style={st.bottomRight}>
+            <div style={st.bottomTotal}>
+              Rs {subtotal.toFixed(0)}
+            </div>
+
+            <button style={st.generateBtn}>
+              Generate Invoice
+            </button>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-/* ─── Components ─── */
-
-function SumCard({ label, value, highlight }) {
+function SummaryRow({ label, value }) {
   return (
-    <div
-      style={{
-        ...st.sumCard,
-        ...(highlight ? st.sumCardHighlight : {}),
-      }}
-    >
-      <span style={st.sumLabel}>{label}</span>
-      <strong style={st.sumValue}>{value}</strong>
+    <div style={st.summaryRow}>
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }
 
-/* ─── STYLES ─── */
-
 const st = {
-  /* Page */
   page: {
-    position: "relative",
-    display: "flex",
-    minHeight: "100%",
-    background: "#f0f6f0",
-    fontFamily: "'Segoe UI', system-ui, sans-serif",
-    overflow: "hidden",
+    minHeight: "100vh",
+    background: "#f2f6f2",
+    fontFamily: "Segoe UI, sans-serif",
+    color: "#203522",
   },
 
-  main: {
-    flex: 1,
+  workspace: {
     display: "flex",
     flexDirection: "column",
-    gap: 16,
+    gap: 18,
     padding: 20,
-    overflowY: "auto",
   },
 
-  /* Toolbar */
-  toolbar: {
+  headerBar: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    flexShrink: 0,
   },
-  toolbarLeft: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
+
+  pageTitle: {
+    margin: 0,
+    fontSize: 24,
+    fontWeight: 700,
   },
-  toolbarRight: {
+
+  pageSubtext: {
+    marginTop: 5,
+    fontSize: 13,
+    color: "#728773",
+  },
+
+  headerActions: {
     display: "flex",
     alignItems: "center",
     gap: 10,
   },
-  pageTitle: {
-    fontSize: 22,
-    fontWeight: 700,
-    color: "#1b3a1d",
-    margin: 0,
-  },
-  badge: {
-    background: "#dcf5dc",
-    color: "#2e7d32",
-    fontSize: 12,
+
+  secondaryBtn: {
+    height: 42,
+    padding: "0 16px",
+    borderRadius: 10,
+    border: "1px solid #d6e3d6",
+    background: "#ffffff",
+    color: "#49604b",
     fontWeight: 600,
-    padding: "3px 10px",
-    borderRadius: 20,
-  },
-  toolBtn: {
-    padding: "8px 14px",
-    borderRadius: 8,
-    border: "1px solid #d3e5d3",
-    background: "#fff",
-    color: "#555",
-    fontSize: 13,
     cursor: "pointer",
-    fontWeight: 500,
   },
 
-  /* Bill Meta Card */
-  billMetaCard: {
+  primaryBtn: {
+    height: 42,
+    padding: "0 18px",
+    borderRadius: 10,
+    border: "none",
+    background: "#397d3d",
+    color: "white",
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+
+  topStrip: {
     background: "#ffffff",
-    border: "1px solid #d5e8d5",
+    border: "1px solid #dbe7db",
     borderRadius: 14,
-    padding: 18,
+    padding: 16,
+    display: "grid",
+    gridTemplateColumns: "1fr 2fr 1fr",
+    gap: 16,
+    alignItems: "center",
+  },
+
+  stripLeft: {
+    display: "flex",
+    gap: 26,
+  },
+
+  metaBlock: {
     display: "flex",
     flexDirection: "column",
-    gap: 14,
+    gap: 4,
   },
-  metaTopRow: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 16,
-  },
-  metaBottomRow: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr 1fr",
-    gap: 16,
-  },
-  customerRow: {
-    width: "100%",
-  },
-  metaField: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-  },
+
   metaLabel: {
     fontSize: 11,
-    fontWeight: 700,
-    color: "#6a8f6c",
     textTransform: "uppercase",
-    letterSpacing: 0.4,
+    fontWeight: 700,
+    color: "#7d907f",
   },
-  metaInput: {
-    padding: "12px 14px",
-    borderRadius: 10,
-    border: "1.5px solid #cde0cd",
-    background: "#fafff9",
-    fontSize: 14,
-    fontWeight: 500,
-    outline: "none",
-    color: "#1a1a1a",
-    boxSizing: "border-box",
+
+  metaValue: {
+    fontSize: 15,
+    color: "#203522",
+  },
+
+  stripCenter: {
     width: "100%",
   },
+
   customerInput: {
     width: "100%",
-    padding: "14px 16px",
+    height: 46,
     borderRadius: 10,
-    border: "1.5px solid #cde0cd",
-    background: "#fafff9",
-    fontSize: 15,
-    fontWeight: 500,
+    border: "1px solid #d3e0d3",
+    background: "#fbfdfb",
+    padding: "0 14px",
+    fontSize: 14,
     outline: "none",
-    color: "#1a1a1a",
     boxSizing: "border-box",
   },
 
-  /* Product Card */
-  productCard: {
-    background: "#ffffff",
-    borderRadius: 14,
-    padding: "20px 22px",
-    border: "1px solid #d5e8d5",
+  stripRight: {
+    display: "flex",
+    justifyContent: "flex-end",
   },
-  productTop: {
+
+  paymentSelect: {
+    height: 46,
+    minWidth: 180,
+    borderRadius: 10,
+    border: "1px solid #d3e0d3",
+    background: "#fbfdfb",
+    padding: "0 12px",
+    fontSize: 14,
+    outline: "none",
+  },
+
+  mainGrid: {
+    display: "grid",
+    gridTemplateColumns: "2fr 360px",
+    gap: 18,
+    alignItems: "start",
+  },
+
+  productWorkspace: {
+    background: "#ffffff",
+    border: "1px solid #dbe7db",
+    borderRadius: 14,
+    padding: 18,
+  },
+
+  sectionTop: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 16,
   },
+
   sectionTitle: {
-    fontSize: 16,
-    fontWeight: 700,
-    color: "#1b3a1d",
     margin: 0,
-  },
-  addBtn: {
-    padding: "8px 16px",
-    borderRadius: 8,
-    border: "none",
-    background: "#43a047",
-    color: "#fff",
-    cursor: "pointer",
-    fontWeight: 600,
-    fontSize: 13,
+    fontSize: 18,
+    fontWeight: 700,
   },
 
-  /* Table */
+  sectionSubtext: {
+    marginTop: 5,
+    fontSize: 12,
+    color: "#758977",
+  },
+
+  addRowBtn: {
+    height: 40,
+    padding: "0 16px",
+    borderRadius: 10,
+    border: "1px solid #d6e4d6",
+    background: "#f8fbf8",
+    color: "#456548",
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+
   tableWrap: {
     display: "flex",
     flexDirection: "column",
-    gap: 6,
   },
+
   tableHead: {
     display: "flex",
     alignItems: "center",
     gap: 10,
-    padding: "0 4px 8px",
-    borderBottom: "2px solid #e8f0e8",
+    padding: "0 4px 10px",
+    borderBottom: "2px solid #edf3ed",
     fontSize: 11,
     fontWeight: 700,
-    color: "#6a8f6c",
     textTransform: "uppercase",
-    letterSpacing: 0.6,
+    color: "#738675",
   },
+
   tableRow: {
     display: "flex",
     alignItems: "center",
     gap: 10,
-    padding: "6px 0",
-    borderBottom: "1px solid #f2f7f2",
+    padding: "12px 0",
+    borderBottom: "1px solid #f1f5f1",
   },
-  rowNum: {
+
+  rowIndex: {
     fontSize: 13,
-    fontWeight: 600,
-    color: "#a3bca5",
+    color: "#91a392",
     textAlign: "center",
-    flexShrink: 0,
+    fontWeight: 700,
   },
 
-  /* Inputs */
-  inp: {
-    padding: "11px 14px",
+  input: {
+    height: 44,
     borderRadius: 10,
-    border: "1.5px solid #cde0cd",
-    fontSize: 15,
-    fontWeight: 500,
-    background: "#fafff9",
-    color: "#1a1a1a",
+    border: "1px solid #d4e1d4",
+    background: "#fbfdfb",
+    padding: "0 12px",
+    fontSize: 14,
     outline: "none",
-    boxSizing: "border-box",
     minWidth: 0,
-    transition: "border-color 0.15s, box-shadow 0.15s",
   },
 
-  totalCell: {
-    padding: "11px 14px",
+  unitCell: {
+    height: 44,
     borderRadius: 10,
-    fontSize: 15,
-    fontWeight: 700,
-    color: "#2e7d32",
-    background: "#eef7ee",
-    textAlign: "center",
-    boxSizing: "border-box",
-    minWidth: 0,
-  },
-
-  delBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    border: "none",
-    background: "#fff0f0",
-    color: "#d32f2f",
-    fontSize: 16,
-    fontWeight: 700,
-    cursor: "pointer",
+    border: "1px solid #e3ece3",
+    background: "#f7faf7",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    flexShrink: 0,
-    transition: "background 0.15s",
+    fontWeight: 600,
+    color: "#4d664f",
   },
 
-  hint: {
-    marginTop: 12,
-    fontSize: 12,
-    color: "#8aab8c",
-    fontStyle: "italic",
+  totalCell: {
+    height: 44,
+    borderRadius: 10,
+    background: "#eef7ee",
+    border: "1px solid #d4e5d4",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontWeight: 700,
+    color: "#2d7032",
   },
 
-  /* Notes */
-  notesCard: {
-    background: "#fbfefb",
-    border: "1px dashed #d5e5d5",
-    borderRadius: 12,
-    padding: "12px 16px",
+  deleteBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    border: "none",
+    background: "#fff1f1",
+    color: "#c03a3a",
+    fontWeight: 700,
+    cursor: "pointer",
   },
+
+  notesArea: {
+    marginTop: 18,
+  },
+
   notesInput: {
     width: "100%",
-    padding: "10px 14px",
-    borderRadius: 9,
-    border: "1.5px solid #cde0cd",
+    borderRadius: 10,
+    border: "1px solid #d6e3d6",
+    background: "#fbfdfb",
+    padding: 14,
     fontSize: 14,
-    fontWeight: 500,
-    background: "#fafff9",
-    color: "#1a1a1a",
+    resize: "vertical",
     outline: "none",
     boxSizing: "border-box",
-    resize: "vertical",
-    fontFamily: "inherit",
   },
 
-  /* Inline Summary */
-  summaryInline: {
+  sidePanel: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 18,
+  },
+
+  sideCard: {
     background: "#ffffff",
-    border: "1px solid #d5e8d5",
+    border: "1px solid #dbe7db",
     borderRadius: 14,
     padding: 18,
   },
-  summaryGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(5, 1fr)",
-    gap: 14,
-    marginBottom: 18,
+
+  sideCardTop: {
+    marginBottom: 14,
   },
-  sumCard: {
-    background: "#f8fcf8",
-    border: "1px solid #e0ece0",
+
+  sideTitle: {
+    margin: 0,
+    fontSize: 16,
+    fontWeight: 700,
+  },
+
+  summaryStack: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+  },
+
+  summaryRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "12px 14px",
+    borderRadius: 10,
+    background: "#f8fbf8",
+    border: "1px solid #e5eee5",
+    fontSize: 14,
+  },
+
+  grandTotalBox: {
+    marginTop: 16,
     borderRadius: 12,
+    background: "#edf7ed",
+    border: "1px solid #cfe2cf",
     padding: 16,
     display: "flex",
     flexDirection: "column",
-    gap: 8,
+    gap: 6,
   },
-  sumCardHighlight: {
-    background: "#eaf7ea",
-    border: "1px solid #b9ddb9",
-  },
-  sumLabel: {
+
+  grandLabel: {
     fontSize: 12,
-    fontWeight: 600,
-    color: "#6a8f6c",
+    color: "#6f8571",
+    fontWeight: 700,
+    textTransform: "uppercase",
   },
-  sumValue: {
-    fontSize: 20,
-    color: "#1b3a1d",
+
+  grandValue: {
+    fontSize: 28,
+    color: "#215926",
+  },
+
+  contextItem: {
+    padding: "13px 14px",
+    borderRadius: 10,
+    background: "#f8fbf8",
+    border: "1px solid #e5eee5",
+    fontSize: 13,
+    marginBottom: 10,
+    color: "#4d654f",
+  },
+
+  insightBox: {
+    padding: "14px 14px",
+    borderRadius: 10,
+    background: "#f8fbf8",
+    border: "1px solid #e5eee5",
+    fontSize: 13,
+    lineHeight: 1.5,
+    marginBottom: 10,
+    color: "#4b624d",
+  },
+
+  bottomBar: {
+    background: "#ffffff",
+    border: "1px solid #dbe7db",
+    borderRadius: 14,
+    padding: 16,
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+
+  bottomLeft: {
+    display: "flex",
+    gap: 30,
+    alignItems: "center",
+  },
+
+  bottomMetric: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+  },
+
+  bottomLabel: {
+    fontSize: 11,
+    textTransform: "uppercase",
+    color: "#7c907e",
+    fontWeight: 700,
+  },
+
+  bottomRight: {
+    display: "flex",
+    alignItems: "center",
+    gap: 16,
+  },
+
+  bottomTotal: {
+    fontSize: 28,
+    fontWeight: 700,
+    color: "#1f5824",
   },
 
   generateBtn: {
-    width: "100%",
-    padding: "16px",
+    height: 48,
+    padding: "0 22px",
+    borderRadius: 10,
     border: "none",
-    borderRadius: 12,
-    background: "#2e7d32",
-    color: "#fff",
+    background: "#397d3d",
+    color: "white",
     fontWeight: 700,
-    fontSize: 16,
+    fontSize: 14,
     cursor: "pointer",
-    letterSpacing: 0.3,
   },
 };

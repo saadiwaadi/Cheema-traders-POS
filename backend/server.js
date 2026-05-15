@@ -6,6 +6,7 @@ const cors = require("cors");
 
 const userRoutes = require("./routes/users");
 const companyRoutes = require("./routes/companyRoutes");
+const posRoutes = require("./routes/posRoutes");
 
 const app = express();
 
@@ -15,6 +16,7 @@ app.use(express.json());
 /* ROUTES */
 app.use("/api/users", userRoutes);
 app.use("/api/company", companyRoutes);
+app.use("/api/pos", posRoutes);
 
 /* TESTING */
 app.get("/", (req, res) => {

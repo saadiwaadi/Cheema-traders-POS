@@ -5,8 +5,10 @@
   "scripts": {
     "backend": "cd backend && npm run dev",
     "frontend": "cd frontend && npm run dev",
-    "electron": "wait-on http://localhost:5173 http://localhost:5000 && electron .",
-    "start": "concurrently \"npm run backend\" \"npm run frontend\" \"npm run electron\""
+    "electron": "wait-on http://localhost:5173 && electron .",
+    "dev": "concurrently \"npm run backend\" \"npm run frontend\" \"npm run electron\"",
+    "desktop": "concurrently \"npm run frontend\" \"npm run electron\"",
+    "build": "cd frontend && npm run build"
   },
   "dependencies": {
     "electron": "^30.0.0",

@@ -1,13 +1,77 @@
-const { app, BrowserWindow } = require("electron");
+const path = require("path");
+const { app, BrowserWindow, ipcMain } = require("electron");
+const store = require("../backend/store");
+
+const isDev = !app.isPackaged;
 
 let mainWindow;
 
-app.whenReady().then(() => {
+function registerIpc() {
+  const handlers = {
+    "pos:login": (_, pin) => store.loginByPin(pin),
+    "pos:dashboard": () => store.getDashboardSummary(),
+    "pos:products:list": (_, args) => store.listProducts(args || {}),
+    "pos:products:save": (_, payload) => store.saveProduct(payload),
+    "pos:batches:list": (_, args) => store.listBatches(args || {}),
+    "pos:batches:save": (_, payload) => store.saveBatch(payload),
+    "pos:sales:list": (_, args) => store.listSales(args || {}),
+    "pos:sales:create": (_, payload) => store.createSale(payload),
+    "pos:suppliers:list": (_, search) => store.listSuppliers(search || ""),
+    "pos:suppliers:save": (_, payload) => store.saveSupplier(payload),
+    "pos:suppliers:delete": (_, id) => store.softDeleteSupplier(id),
+    "pos:settings:list": () => store.getSettings(),
+    "pos:settings:save": (_, payload) => store.updateSetting(payload.key, payload.value),
+    "pos:backup:export": (_, targetPath) => store.exportBackup(targetPath),
+    "pos:backup:import": (_, sourcePath) => store.importBackup(sourcePath),
+  };
+
+  Object.entries(handlers).forEach(([channel, handler]) => {
+    ipcMain.handle(channel, handler);
+  });
+}
+
+async function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: 1440,
+    height: 900,
+    minWidth: 1200,
+    minHeight: 760,
+    backgroundColor: "#f4faf4",
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
   });
 
-  // Load React app
-  mainWindow.loadURL("http://localhost:5173");
+  mainWindow.once("ready-to-show", () => {
+    mainWindow.show();
+  });
+
+  if (isDev) {
+    await mainWindow.loadURL("http://localhost:5173");
+    mainWindow.webContents.openDevTools({ mode: "detach" });
+  } else {
+    await mainWindow.loadFile(path.join(__dirname, "..", "frontend", "dist", "index.html"));
+  }
+}
+
+app.whenReady().then(async () => {
+  registerIpc();
+  await createWindow();
+});
+
+app.on("window-all-closed", async () => {
+  await store.close().catch(() => {});
+  if (process.platform !== "darwin") {
+    app.quit();
+  }
+});
+
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
+  }
 });

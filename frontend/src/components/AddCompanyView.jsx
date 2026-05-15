@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { deleteSupplier, listSuppliers, saveSupplier } from "../lib/posApi";
 
 const EMPTY_FORM = { name: "", phone: "", salesOfficerPhone: "", address: "" };
 
@@ -43,16 +44,16 @@ export default function AddCompanyView() {
   const [loading, setLoading] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [companies, setCompanies] = useState([]);
+  const toastIdRef = useRef(0);
 
   useEffect(() => {
-    fetch("http://localhost:5000/api/company/list")
-      .then((r) => r.json())
-      .then((data) => setCompanies(data.companies || []))
+    listSuppliers("")
+      .then((data) => setCompanies(data.suppliers || []))
       .catch(() => {});
   }, []);
 
   const addToast = (type, message) => {
-    const id = Date.now();
+    const id = `${type}-${++toastIdRef.current}`;
     setToasts((p) => [...p, { id, type, message }]);
     setTimeout(() => removeToast(id), 3500);
   };
@@ -70,7 +71,7 @@ export default function AddCompanyView() {
 
   const validate = () => {
     const errs = {};
-    if (!form.name.trim()) errs.name = "Company name is required";
+    if (!form.name.trim()) errs.name = "Supplier name is required";
     if (form.phone && form.phone.length < 7) errs.phone = "Enter a valid phone number";
     if (form.salesOfficerPhone && form.salesOfficerPhone.length < 7)
       errs.salesOfficerPhone = "Enter a valid phone number";
@@ -82,19 +83,14 @@ export default function AddCompanyView() {
     if (!validate()) return;
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:5000/api/company/add", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setCompanies((p) => [data.company || { ...form, _id: Date.now() }, ...p]);
+      const data = await saveSupplier(form);
+      if (data) {
+        setCompanies((p) => [data.supplier || { ...form, id: `supplier-${Math.random().toString(36).slice(2, 10)}` }, ...p]);
         setForm(EMPTY_FORM);
         setErrors({});
         addToast("success", `"${form.name}" added successfully`);
       } else {
-        addToast("error", data.message || "Failed to add company");
+        addToast("error", "Failed to add supplier");
       }
     } catch {
       addToast("error", "Server error. Please try again.");
@@ -109,17 +105,10 @@ export default function AddCompanyView() {
 
   const handleDelete = async (id) => {
     try {
-      const res = await fetch(`http://localhost:5000/api/company/${id}`, {
-        method: "DELETE",
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setCompanies((prev) => prev.filter((c) => c._id !== id));
-        addToast("success", "Company deleted successfully");
-      } else {
-        addToast("error", data.message || "Delete failed");
-      }
-    } catch (err) {
+      await deleteSupplier(id);
+      setCompanies((prev) => prev.filter((c) => c.id !== id));
+      addToast("success", "Supplier deleted successfully");
+    } catch {
       addToast("error", "Server error");
     }
   };
@@ -130,7 +119,7 @@ export default function AddCompanyView() {
 
       <div style={ts.wrapper}>
         <div style={ts.pageHeader}>
-          <h2 style={ts.pageTitle}>Add Company</h2>
+          <h2 style={ts.pageTitle}>Suppliers</h2>
           <p style={ts.pageSub}>Register a new supplier or partner company</p>
         </div>
 
@@ -139,13 +128,13 @@ export default function AddCompanyView() {
           {/* Company Name */}
           <div style={ts.fieldFull}>
             <label style={ts.label}>
-              Company Name <span style={{ color: "#c62828" }}>*</span>
+              Supplier Name <span style={{ color: "#c62828" }}>*</span>
             </label>
             <input
               name="name"
               value={form.name}
               onChange={handleChange}
-              placeholder="e.g. Nestle Pakistan Ltd."
+                placeholder="e.g. Bayer Pakistan Ltd."
               maxLength={100}
               style={{ ...ts.input, ...(errors.name ? ts.inputError : {}) }}
             />
@@ -154,7 +143,7 @@ export default function AddCompanyView() {
 
           <div style={ts.row}>
             <div style={ts.fieldHalf}>
-              <label style={ts.label}>Company Phone</label>
+                <label style={ts.label}>Phone</label>
               <input
                 name="phone"
                 value={form.phone}
@@ -210,7 +199,7 @@ export default function AddCompanyView() {
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
                   </svg>
-                  Add Company
+                  Add Supplier
                 </>
               )}
             </motion.button>
@@ -223,21 +212,21 @@ export default function AddCompanyView() {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="#43a047">
                 <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
               </svg>
-              <span style={ts.sectionTitle}>Registered Companies</span>
+              <span style={ts.sectionTitle}>Registered Suppliers</span>
             </div>
             <span style={ts.totalBadge}>{companies.length} total</span>
           </div>
 
           {companies.length === 0 ? (
             <div style={ts.emptyState}>
-              <p style={{ fontSize: 13, color: "#66bb6a" }}>No companies added yet</p>
+              <p style={{ fontSize: 13, color: "#66bb6a" }}>No suppliers added yet</p>
             </div>
           ) : (
             <div style={ts.tableScroll}>
               <table style={ts.table}>
                 <thead>
                   <tr>
-                    <th style={{ ...ts.th, width: "32%" }}>Company</th>
+                    <th style={{ ...ts.th, width: "32%" }}>Supplier</th>
                     <th style={{ ...ts.th, width: "22%" }}>Phone</th>
                     <th style={{ ...ts.th, width: "22%" }}>Sales Officer</th>
                     <th style={{ ...ts.th, width: "14%" }}>Status</th>
@@ -246,7 +235,7 @@ export default function AddCompanyView() {
                 </thead>
                 <tbody>
                   {companies.map((c, i) => (
-                    <tr key={c._id || i} style={i % 2 === 0 ? ts.trEven : ts.trOdd}>
+                    <tr key={c.id || i} style={i % 2 === 0 ? ts.trEven : ts.trOdd}>
                       <td style={ts.td}>
                         <div style={ts.companyName}>{c.name}</div>
                         {c.address && <div style={ts.companyAddress}>{c.address}</div>}
@@ -260,9 +249,9 @@ export default function AddCompanyView() {
                         <motion.button
                           whileHover={{ scale: 1.15 }}
                           whileTap={{ scale: 0.9 }}
-                          onClick={() => handleDelete(c._id)}
+                          onClick={() => handleDelete(c.id)}
                           style={ts.deleteBtn}
-                          title="Delete company"
+                          title="Delete supplier"
                         >
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="#ef5350">
                             <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
@@ -523,9 +512,4 @@ const ts = {
     alignItems: "center",
   },
 
-  scrollContainer: {
-  padding: "20px 24px 40px",
-  boxSizing: "border-box",
-  width: "100%",
-},
 };
