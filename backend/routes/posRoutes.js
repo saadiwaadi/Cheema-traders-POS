@@ -64,6 +64,46 @@ router.post("/batches", async (req, res) => {
   }
 });
 
+// --- CUSTOMERS ---
+
+router.get("/customers", async (req, res) => {
+  try {
+    const customers = await store.listCustomers(req.query.search || "");
+    return res.json({ customers });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.post("/customers", async (req, res) => {
+  try {
+    const customer = await store.saveCustomer(req.body);
+    return res.status(201).json({ customer });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+router.get("/customers/:id/history", async (req, res) => {
+  try {
+    const history = await store.getCustomerHistory(Number(req.params.id));
+    return res.json({ history });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.post("/customer-payments", async (req, res) => {
+  try {
+    const payment = await store.saveCustomerPayment(req.body);
+    return res.status(201).json({ payment });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+// --- SALES ---
+
 router.get("/sales/next-invoice-no", async (_req, res) => {
   try {
     const invoiceNo = await store.peekNextInvoiceNo();
@@ -143,12 +183,71 @@ router.post("/suppliers", async (req, res) => {
   }
 });
 
+router.get("/suppliers/:id/history", async (req, res) => {
+  try {
+    const history = await store.getSupplierHistory(Number(req.params.id));
+    return res.json({ history });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.post("/supplier-payments", async (req, res) => {
+  try {
+    const payment = await store.saveSupplierPayment(req.body);
+    return res.status(201).json({ payment });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
 router.delete("/suppliers/:id", async (req, res) => {
   try {
     await store.softDeleteSupplier(req.params.id);
     return res.json({ message: "Supplier deleted successfully" });
   } catch (error) {
     return res.status(500).json({ message: error.message });
+  }
+});
+
+// ============================================================================
+// BANK ACCOUNTS & TRANSFERS
+// ============================================================================
+
+router.get("/banks", async (req, res) => {
+  try {
+    const search = req.query.q || "";
+    const banks = await store.listBanks(search);
+    return res.json({ banks });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.post("/banks", async (req, res) => {
+  try {
+    const bank = await store.saveBank(req.body);
+    return res.status(201).json({ bank });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+router.get("/banks/:id/history", async (req, res) => {
+  try {
+    const history = await store.getBankHistory(Number(req.params.id));
+    return res.json({ history });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.post("/bank-transfers", async (req, res) => {
+  try {
+    const transfer = await store.saveBankTransfer(req.body);
+    return res.status(201).json({ transfer });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
   }
 });
 

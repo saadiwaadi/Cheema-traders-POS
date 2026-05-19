@@ -112,12 +112,27 @@ class PosStore {
     const db = await this._db();
     return all(
       db,
-      `SELECT id, name, phone, sales_officer_phone AS salesOfficerPhone, address, opening_balance AS openingBalance,
-              created_at AS createdAt, updated_at AS updatedAt
-       FROM suppliers
-       WHERE deleted_at IS NULL
-         AND (name LIKE ? OR phone LIKE ? OR sales_officer_phone LIKE ?)
-       ORDER BY name COLLATE NOCASE ASC`,
+      `
+        SELECT 
+          s.id, 
+          s.name, 
+          s.phone, 
+          s.sales_officer_phone AS salesOfficerPhone, 
+          s.address, 
+          s.opening_balance AS openingBalance,
+          s.created_at AS createdAt, 
+          s.updated_at AS updatedAt,
+          (
+            s.opening_balance 
+            + COALESCE((SELECT SUM(balance_due) FROM purchases WHERE supplier_id = s.id), 0)
+            - COALESCE((SELECT SUM(amount) FROM supplier_payments WHERE supplier_id = s.id), 0)
+          ) AS current_balance,
+          (SELECT MAX(purchase_date) FROM purchases WHERE supplier_id = s.id) AS last_purchase
+        FROM suppliers s
+        WHERE s.deleted_at IS NULL
+          AND (s.name LIKE ? OR s.phone LIKE ? OR s.sales_officer_phone LIKE ?)
+        ORDER BY s.name COLLATE NOCASE ASC
+      `,
       [normalizeSearch(search), normalizeSearch(search), normalizeSearch(search)]
     );
   }
@@ -160,6 +175,302 @@ class PosStore {
     const db = await this._db();
     await run(db, `UPDATE suppliers SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [id]);
     await this.audit("supplier", id, "delete", null, null);
+  }
+
+  async getSupplierHistory(supplierId) {
+    const db = await this._db();
+    return all(
+      db,
+      `
+        SELECT 
+          id AS ref_id,
+          'Purchase' AS type,
+          purchase_date AS date,
+          invoice_no AS reference,
+          payment_method AS method,
+          subtotal AS total_amount,
+          balance_due AS balance_change,
+          created_at
+        FROM purchases
+        WHERE supplier_id = ?
+        
+        UNION ALL
+        
+        SELECT 
+          id AS ref_id,
+          'Payment' AS type,
+          payment_date AS date,
+          notes AS reference,
+          payment_method AS method,
+          amount AS total_amount,
+          -amount AS balance_change,
+          created_at
+        FROM supplier_payments
+        WHERE supplier_id = ?
+        
+        ORDER BY date DESC, created_at DESC
+      `,
+      [supplierId, supplierId]
+    );
+  }
+
+  async saveSupplierPayment(input) {
+    const db = await this._db();
+    if (!input.supplierId || !input.amount) throw new Error("Supplier ID and amount are required");
+    
+    const result = await run(db, 
+      `INSERT INTO supplier_payments (supplier_id, payment_date, amount, payment_method, notes)
+       VALUES (?, ?, ?, ?, ?)`,
+      [input.supplierId, input.date || new Date().toISOString().split('T')[0], input.amount, input.method || 'Cash', input.notes || null]
+    );
+    return { id: result.lastID };
+  }
+
+  // ============================================================================
+  // BANK ACCOUNTS & TRANSFERS
+  // ============================================================================
+
+  async listBanks(search = "") {
+    const db = await this._db();
+    return all(
+      db,
+      `
+        SELECT 
+          b.id, 
+          b.name, 
+          b.opening_balance AS openingBalance,
+          b.created_at AS createdAt, 
+          b.updated_at AS updatedAt,
+          (
+            b.opening_balance 
+            + COALESCE((SELECT SUM(amount) FROM bank_transactions WHERE bank_account_id = b.id AND type = 'Deposit'), 0)
+            - COALESCE((SELECT SUM(amount) FROM bank_transactions WHERE bank_account_id = b.id AND type = 'Withdrawal'), 0)
+          ) AS current_balance
+        FROM bank_accounts b
+        WHERE b.deleted_at IS NULL
+          AND (b.name LIKE ?)
+        ORDER BY b.name COLLATE NOCASE ASC
+      `,
+      [normalizeSearch(search)]
+    );
+  }
+
+  async saveBank(input) {
+    const db = await this._db();
+    const payload = {
+      name: String(input.name || "").trim(),
+      openingBalance: Number(input.openingBalance || 0),
+    };
+
+    if (!payload.name) throw new Error("Bank name is required");
+
+    if (input.id) {
+      const result = await run(
+        db,
+        `UPDATE bank_accounts
+         SET name = ?, opening_balance = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [payload.name, payload.openingBalance, input.id]
+      );
+      await this.audit("bank_account", input.id, "update", null, payload);
+      return { id: input.id, ...payload, changes: result.changes };
+    }
+
+    const result = await run(
+      db,
+      `INSERT INTO bank_accounts (name, opening_balance) VALUES (?, ?)`,
+      [payload.name, payload.openingBalance]
+    );
+    await this.audit("bank_account", result.lastID, "create", null, payload);
+    return { id: result.lastID, ...payload };
+  }
+
+  async getBankHistory(bankId) {
+    const db = await this._db();
+    
+    const transactions = await all(
+      db,
+      `
+        SELECT 
+          id, type, amount, reference, date, created_at
+        FROM bank_transactions
+        WHERE bank_account_id = ?
+      `,
+      [bankId]
+    );
+
+    // Standardize the shape to match Customer/Supplier history
+    const history = [
+      ...transactions.map(t => ({
+        date: t.date,
+        created_at: t.created_at,
+        type: t.type,
+        method: 'Transfer',
+        total_amount: t.amount,
+        balance_change: t.type === 'Deposit' ? t.amount : -t.amount,
+        reference: t.reference || ''
+      }))
+    ];
+
+    history.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    return history;
+  }
+
+  async saveBankTransfer(input) {
+    const db = await this._db();
+    
+    // Transfer logic: 
+    // fromAccount: 'cih' or bank_id
+    // toAccount: 'cih' or bank_id
+    
+    const { fromAccount, toAccount, amount, reference, date } = input;
+    const transferAmount = Number(amount || 0);
+    if (transferAmount <= 0) throw new Error("Transfer amount must be greater than 0");
+    if (fromAccount === toAccount) throw new Error("Cannot transfer to the same account");
+    
+    const txDate = date || new Date().toISOString().split('T')[0];
+    
+    await run(db, "BEGIN TRANSACTION");
+    try {
+        if (fromAccount !== 'cih') {
+            // Withdrawal from Source Bank
+            await run(
+                db,
+                `INSERT INTO bank_transactions (bank_account_id, type, amount, reference, date) VALUES (?, 'Withdrawal', ?, ?, ?)`,
+                [fromAccount, transferAmount, reference, txDate]
+            );
+        }
+        
+        if (toAccount !== 'cih') {
+            // Deposit to Target Bank
+            await run(
+                db,
+                `INSERT INTO bank_transactions (bank_account_id, type, amount, reference, date) VALUES (?, 'Deposit', ?, ?, ?)`,
+                [toAccount, transferAmount, reference, txDate]
+            );
+        }
+        
+        await run(db, "COMMIT");
+        return { success: true, fromAccount, toAccount, amount: transferAmount };
+    } catch (err) {
+        await run(db, "ROLLBACK");
+        throw err;
+    }
+  }
+
+  // ============================================================================
+  // CUSTOMERS
+  // ============================================================================
+  
+  async listCustomers(search = "") {
+    const db = await this._db();
+    return all(
+      db,
+      `
+        SELECT 
+          c.id, 
+          c.name, 
+          c.phone, 
+          c.opening_balance,
+          c.created_at,
+          (
+            c.opening_balance 
+            + COALESCE((SELECT SUM(balance_due) FROM sales WHERE customer_id = c.id AND COALESCE(voided_at, '') = ''), 0)
+            - COALESCE((SELECT SUM(amount) FROM customer_payments WHERE customer_id = c.id), 0)
+          ) AS current_balance,
+          (SELECT MAX(sale_date) FROM sales WHERE customer_id = c.id AND COALESCE(voided_at, '') = '') AS last_purchase
+        FROM customers c
+        WHERE c.deleted_at IS NULL
+          AND (c.name LIKE ? OR c.phone LIKE ?)
+        ORDER BY c.name COLLATE NOCASE ASC
+      `,
+      [normalizeSearch(search), normalizeSearch(search)]
+    );
+  }
+
+  async saveCustomer(input) {
+    const db = await this._db();
+    const name = String(input.name || "").trim();
+    const phone = String(input.phone || "").trim() || null;
+    let opening_balance = Number(input.openingBalance || 0);
+
+    // If type is credit (we owe them), store as negative balance in this simple ledger logic,
+    // or keep positive and interpret it. Based on the UI "They owe us (Debit)" vs "We owe them (Credit)",
+    // "They owe us" = positive balance_due in sales. So "They owe us" = positive opening_balance.
+    // "We owe them" = negative opening_balance.
+    if (input.balanceType === "credit") {
+        opening_balance = -Math.abs(opening_balance);
+    } else if (input.balanceType === "debit") {
+        opening_balance = Math.abs(opening_balance);
+    }
+
+    if (!name) throw new Error("Customer name is required");
+
+    if (input.id) {
+      await run(
+        db,
+        `UPDATE customers SET name = ?, phone = ?, opening_balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [name, phone, opening_balance, input.id]
+      );
+      return { id: input.id, name, phone, opening_balance };
+    }
+
+    const result = await run(
+      db,
+      `INSERT INTO customers (name, phone, opening_balance) VALUES (?, ?, ?)`,
+      [name, phone, opening_balance]
+    );
+    return { id: result.lastID, name, phone, opening_balance };
+  }
+
+  async getCustomerHistory(customerId) {
+    const db = await this._db();
+    // Union sales and payments to generate a ledger
+    return all(
+      db,
+      `
+        SELECT 
+          id AS ref_id,
+          'Sale' AS type,
+          sale_date AS date,
+          invoice_no AS reference,
+          payment_method AS method,
+          total AS total_amount,
+          balance_due AS balance_change,
+          created_at
+        FROM sales
+        WHERE customer_id = ? AND COALESCE(voided_at, '') = ''
+        
+        UNION ALL
+        
+        SELECT 
+          id AS ref_id,
+          'Payment' AS type,
+          payment_date AS date,
+          notes AS reference,
+          payment_method AS method,
+          amount AS total_amount,
+          -amount AS balance_change,
+          created_at
+        FROM customer_payments
+        WHERE customer_id = ?
+        
+        ORDER BY date DESC, created_at DESC
+      `,
+      [customerId, customerId]
+    );
+  }
+
+  async saveCustomerPayment(input) {
+    const db = await this._db();
+    if (!input.customerId || !input.amount) throw new Error("Customer ID and amount are required");
+    
+    const result = await run(db, 
+      `INSERT INTO customer_payments (customer_id, payment_date, amount, payment_method, notes)
+       VALUES (?, ?, ?, ?, ?)`,
+      [input.customerId, input.date || new Date().toISOString().split('T')[0], input.amount, input.method || 'Cash', input.notes || null]
+    );
+    return { id: result.lastID };
   }
 
   async listCategories() {

@@ -1,32 +1,26 @@
 import { useState } from "react";
 import { st } from "./shared/analysisStyles";
-import OverviewWorkspace from "./OverviewWorkspace";
 import InventoryWorkspace from "./InventoryWorkspace";
 import CustomerDuesWorkspace from "./CustomerDuesWorkspace";
 import SupplierWorkspace from "./SupplierWorkspace";
-import ExpenseWorkspace from "./ExpenseWorkspace";
 import SalesWorkspace from "./SalesWorkspace";
 
 const WORKSPACES = [
-  { id: "overview", label: "Overview" },
+  { id: "sales", label: "Sales" },
   { id: "inventory", label: "Inventory" },
   { id: "customerDues", label: "Customer Dues" },
   { id: "suppliers", label: "Suppliers" },
-  { id: "expenses", label: "Expenses" },
-  { id: "sales", label: "Sales" },
 ];
 
 export default function AnalysisShell() {
-  const [activeWorkspace, setActiveWorkspace] = useState("overview");
+  const [activeWorkspace, setActiveWorkspace] = useState("sales");
 
   function renderWorkspace() {
     switch (activeWorkspace) {
       case "inventory": return <InventoryWorkspace />;
       case "customerDues": return <CustomerDuesWorkspace />;
       case "suppliers": return <SupplierWorkspace />;
-      case "expenses": return <ExpenseWorkspace />;
-      case "sales": return <SalesWorkspace />;
-      default: return <OverviewWorkspace />;
+      case "sales": default: return <SalesWorkspace />;
     }
   }
 

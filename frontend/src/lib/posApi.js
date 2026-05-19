@@ -60,6 +60,36 @@ export async function saveBatch(payload) {
   });
 }
 
+// --- CUSTOMERS ---
+
+export async function listCustomers(search = "") {
+  if (usingIpc()) return window.pos.listCustomers(search);
+  const query = new URLSearchParams();
+  if (search) query.set("search", search);
+  return httpJson(`/customers?${query.toString()}`);
+}
+
+export async function saveCustomer(payload) {
+  if (usingIpc()) return window.pos.saveCustomer(payload);
+  return httpJson("/customers", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getCustomerHistory(id) {
+  if (usingIpc()) return window.pos.getCustomerHistory(id);
+  return httpJson(`/customers/${id}/history`);
+}
+
+export async function saveCustomerPayment(payload) {
+  if (usingIpc()) return window.pos.saveCustomerPayment(payload);
+  return httpJson("/customer-payments", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function listSales(args = {}) {
   if (usingIpc()) return window.pos.listSales(args);
   const query = new URLSearchParams();
@@ -85,6 +115,47 @@ export async function listSuppliers(search = "") {
 export async function saveSupplier(payload) {
   if (usingIpc()) return window.pos.saveSupplier(payload);
   return httpJson("/suppliers", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getSupplierHistory(id) {
+  if (usingIpc()) return window.pos.getSupplierHistory(id);
+  return httpJson(`/suppliers/${id}/history`);
+}
+
+export async function saveSupplierPayment(payload) {
+  if (usingIpc()) return window.pos.saveSupplierPayment(payload);
+  return httpJson("/supplier-payments", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listBanks(search = "") {
+  if (usingIpc()) return window.pos.listBanks(search);
+  const query = new URLSearchParams();
+  if (search) query.set("search", search);
+  return httpJson(`/banks?${query.toString()}`);
+}
+
+export async function saveBank(payload) {
+  if (usingIpc()) return window.pos.saveBank(payload);
+  return httpJson("/banks", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getBankHistory(id) {
+  if (usingIpc()) return window.pos.getBankHistory(id);
+  return httpJson(`/banks/${id}/history`);
+}
+
+export async function saveBankTransfer(payload) {
+  if (usingIpc()) return window.pos.saveBankTransfer(payload);
+  return httpJson("/bank-transfers", {
     method: "POST",
     body: JSON.stringify(payload),
   });

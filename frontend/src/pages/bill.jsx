@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
+import { listCustomers } from "../lib/posApi";
 
 const productDatabase = [
   { name: "Roundup", unit: "Litre", price: 580 },
@@ -27,6 +28,23 @@ export default function BillingWorkspace() {
   const [paymentType, setPaymentType] = useState("Cash");
   const [invoiceNo] = useState("INV-1048");
   const [notes, setNotes] = useState("");
+
+  const [customers, setCustomers] = useState([]);
+  const [selectedCustomerObj, setSelectedCustomerObj] = useState(null);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const res = await listCustomers();
+        if (res && res.customers) {
+          setCustomers(res.customers);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    load();
+  }, []);
 
   const billingDate = new Date().toISOString().split("T")[0];
 
@@ -119,10 +137,18 @@ export default function BillingWorkspace() {
           <div style={st.stripCenter}>
             <input
               style={st.customerInput}
-              placeholder="Customer Name"
+              list="customers-list"
+              placeholder="Search or Select Customer Name"
               value={customer}
-              onChange={(e) => setCustomer(e.target.value)}
+              onChange={(e) => {
+                  setCustomer(e.target.value);
+                  const match = customers.find(c => c.name === e.target.value);
+                  setSelectedCustomerObj(match || null);
+              }}
             />
+            <datalist id="customers-list">
+              {customers.map(c => <option key={c.id} value={c.name} />)}
+            </datalist>
           </div>
 
           <div style={st.stripRight}>
@@ -286,33 +312,30 @@ export default function BillingWorkspace() {
                 <h3 style={st.sideTitle}>Customer Context</h3>
               </div>
 
-              <div style={st.contextItem}>
-                Last Invoice: INV-1038
-              </div>
-
-              <div style={st.contextItem}>
-                Pending Credit: Rs 24,000
-              </div>
-
-              <div style={st.contextItem}>
-                Recent Purchase: Roundup x12
-              </div>
+              {selectedCustomerObj ? (
+                <>
+                  <div style={{...st.contextItem, borderLeft: `3px solid ${selectedCustomerObj.current_balance > 0 ? '#c62828' : selectedCustomerObj.current_balance < 0 ? '#2e7d32' : '#738675'}`}}>
+                    <div style={{ fontSize: 11, color: "#6f8571", textTransform: "uppercase", fontWeight: 700 }}>Current Balance</div>
+                    <div style={{ fontSize: 16, fontWeight: "bold", color: selectedCustomerObj.current_balance > 0 ? '#c62828' : selectedCustomerObj.current_balance < 0 ? '#2e7d32' : '#203522', marginTop: 4 }}>
+                        {selectedCustomerObj.current_balance === 0 
+                            ? 'Rs 0' 
+                            : selectedCustomerObj.current_balance > 0 
+                                ? `(Dr) Rs ${Math.abs(selectedCustomerObj.current_balance).toLocaleString()}` 
+                                : `(Cr) Rs ${Math.abs(selectedCustomerObj.current_balance).toLocaleString()}`}
+                    </div>
+                  </div>
+                  <div style={st.contextItem}>
+                    Last Purchase: {selectedCustomerObj.last_purchase || "None"}
+                  </div>
+                </>
+              ) : (
+                  <div style={{ fontSize: 13, color: '#738675', padding: '10px 0' }}>
+                      {customer ? "Walk-in / Unregistered" : "No customer selected."}
+                  </div>
+              )}
             </div>
 
-            {/* OPERATIONAL INSIGHTS */}
-            <div style={st.sideCard}>
-              <div style={st.sideCardTop}>
-                <h3 style={st.sideTitle}>Operational Insights</h3>
-              </div>
 
-              <div style={st.insightBox}>
-                Roundup stock likely requires restocking within 5 days.
-              </div>
-
-              <div style={st.insightBox}>
-                Mospilan currently nearing low stock threshold.
-              </div>
-            </div>
           </div>
         </div>
 
@@ -697,16 +720,7 @@ const st = {
     color: "#4d654f",
   },
 
-  insightBox: {
-    padding: "14px 14px",
-    borderRadius: 10,
-    background: "#f8fbf8",
-    border: "1px solid #e5eee5",
-    fontSize: 13,
-    lineHeight: 1.5,
-    marginBottom: 10,
-    color: "#4b624d",
-  },
+
 
   bottomBar: {
     background: "#ffffff",
