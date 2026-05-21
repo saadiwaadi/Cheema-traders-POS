@@ -73,6 +73,8 @@ db.serialize(() => {
       name TEXT NOT NULL,
       category_id INTEGER,
       unit TEXT NOT NULL DEFAULT 'Piece',
+      price REAL DEFAULT 0,
+      quantity INTEGER DEFAULT 0,
       base_price REAL NOT NULL DEFAULT 0,
       wholesale_price REAL NOT NULL DEFAULT 0,
       cost_price REAL NOT NULL DEFAULT 0,
@@ -345,6 +347,123 @@ db.serialize(() => {
         active = COALESCE(active, 1)
     WHERE 1 = 1
   `);
+
+  db.all("PRAGMA table_info(products)", (err, columns) => {
+    if (err || !columns || columns.length === 0) return;
+    const priceCol = columns.find(c => c.name === 'price');
+    const qtyCol = columns.find(c => c.name === 'quantity');
+    
+    const needsMigration = (priceCol && priceCol.notnull === 1 && priceCol.dflt_value === null) ||
+                           (qtyCol && qtyCol.notnull === 1 && qtyCol.dflt_value === null);
+                           
+    if (needsMigration) {
+      console.log("Migrating products table to remove NOT NULL constraint from legacy price/quantity...");
+      db.serialize(() => {
+        db.run("PRAGMA foreign_keys = OFF", (err) => {
+          if (err) {
+            console.error("Migration failed to disable foreign keys:", err);
+            return;
+          }
+          db.run("ALTER TABLE products RENAME TO products_old", (err) => {
+            if (err) {
+              console.error("Migration failed to rename products table (database might be busy/locked):", err);
+              db.run("PRAGMA foreign_keys = ON");
+              return;
+            }
+            db.run(`
+              CREATE TABLE products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sku TEXT UNIQUE,
+                name TEXT NOT NULL,
+                category_id INTEGER,
+                unit TEXT NOT NULL DEFAULT 'Piece',
+                price REAL DEFAULT 0,
+                quantity INTEGER DEFAULT 0,
+                base_price REAL NOT NULL DEFAULT 0,
+                wholesale_price REAL NOT NULL DEFAULT 0,
+                cost_price REAL NOT NULL DEFAULT 0,
+                current_stock REAL NOT NULL DEFAULT 0,
+                low_stock_level REAL NOT NULL DEFAULT 0,
+                active INTEGER NOT NULL DEFAULT 1,
+                notes TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                deleted_at TEXT,
+                FOREIGN KEY (category_id) REFERENCES categories(id)
+              )
+            `, (err) => {
+              if (err) {
+                console.error("Migration failed to create new products table:", err);
+                db.run("ALTER TABLE products_old RENAME TO products");
+                db.run("PRAGMA foreign_keys = ON");
+                return;
+              }
+              db.run(`
+                INSERT INTO products (
+                  id, sku, name, category_id, unit, price, quantity,
+                  base_price, wholesale_price, cost_price, current_stock,
+                  low_stock_level, active, notes, created_at, updated_at, deleted_at
+                )
+                SELECT 
+                  id, sku, name, category_id, unit, price, quantity,
+                  COALESCE(base_price, price, 0), wholesale_price, COALESCE(cost_price, price, 0), 
+                  COALESCE(current_stock, quantity, 0), low_stock_level, active, notes, 
+                  created_at, updated_at, deleted_at
+                FROM products_old
+              `, (err) => {
+                if (err) {
+                  console.error("Migration failed to copy product data:", err);
+                  db.run("DROP TABLE IF EXISTS products");
+                  db.run("ALTER TABLE products_old RENAME TO products");
+                  db.run("PRAGMA foreign_keys = ON");
+                  return;
+                }
+                db.run("DROP TABLE products_old", (err) => {
+                  if (err) {
+                    console.error("Migration failed to drop old products table:", err);
+                  }
+                  db.run("PRAGMA foreign_keys = ON", (err) => {
+                    if (!err) {
+                      console.log("Products table migration complete.");
+                    }
+                  });
+                });
+              });
+            });
+          });
+        });
+      });
+    }
+  });
+
+  // Self-heal any foreign key references left pointing to 'products_old' from previous migration attempts
+  db.all("SELECT name, sql FROM sqlite_master WHERE type='table' AND sql LIKE '%products_old%'", (err, rows) => {
+    if (err || !rows || rows.length === 0) return;
+    
+    console.log("Found tables referencing products_old. Healing foreign keys...", rows.map(r => r.name));
+    
+    db.serialize(() => {
+      db.run("PRAGMA foreign_keys = OFF");
+      
+      rows.forEach(row => {
+        const tableName = row.name;
+        const oldTableName = tableName + "_old";
+        const newSql = row.sql.replace(/['"]?products_old['"]?/g, "products");
+        
+        db.run(`DROP TABLE IF EXISTS "${oldTableName}"`);
+        db.run(`ALTER TABLE "${tableName}" RENAME TO "${oldTableName}"`);
+        db.run(newSql);
+        db.run(`INSERT INTO "${tableName}" SELECT * FROM "${oldTableName}"`);
+        db.run(`DROP TABLE "${oldTableName}"`);
+      });
+      
+      db.run("PRAGMA foreign_keys = ON", (err) => {
+        if (!err) {
+          console.log("Foreign keys healing completed successfully.");
+        }
+      });
+    });
+  });
 });
 
 module.exports = db;

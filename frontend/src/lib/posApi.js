@@ -60,6 +60,19 @@ export async function saveBatch(payload) {
   });
 }
 
+export async function createPurchase(payload) {
+  if (usingIpc()) return window.pos.createPurchase(payload);
+  return httpJson("/purchases", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getPurchaseItems(id) {
+  if (usingIpc()) return window.pos.getPurchaseItems(id);
+  return httpJson(`/purchases/${id}/items`);
+}
+
 // --- CUSTOMERS ---
 
 export async function listCustomers(search = "") {
@@ -103,6 +116,25 @@ export async function saveSale(payload) {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export async function getSale(id) {
+  if (usingIpc()) return window.pos.getSale(id);
+  return httpJson(`/sales/${id}`);
+}
+
+export async function voidSale(id) {
+  if (usingIpc()) return window.pos.voidSale(id);
+  return httpJson(`/sales/${id}/void`, {
+    method: "POST",
+  });
+}
+
+export async function getNextInvoiceNo(date) {
+  if (usingIpc()) return window.pos.getNextInvoiceNo(date);
+  const query = new URLSearchParams();
+  if (date) query.set("date", date);
+  return httpJson(`/sales/next-invoice?${query.toString()}`);
 }
 
 export async function listSuppliers(search = "") {

@@ -1,14 +1,6 @@
 import { useMemo, useState, useEffect } from "react";
-import { listCustomers } from "../lib/posApi";
+import { listCustomers, saveCustomer, listProducts, saveSale, getNextInvoiceNo } from "../lib/posApi";
 
-const productDatabase = [
-  { name: "Roundup", unit: "Litre", price: 580 },
-  { name: "Mospilan", unit: "Bottle", price: 920 },
-  { name: "Coragen", unit: "Bottle", price: 1450 },
-  { name: "Confidor", unit: "Bottle", price: 860 },
-  { name: "Aliette", unit: "Kg", price: 1240 },
-  { name: "Ridomil Gold", unit: "Packet", price: 760 },
-];
 
 function createRow() {
   return {
@@ -26,27 +18,53 @@ export default function BillingWorkspace() {
   const [rows, setRows] = useState([createRow()]);
   const [customer, setCustomer] = useState("");
   const [paymentType, setPaymentType] = useState("Cash");
-  const [invoiceNo] = useState("INV-1048");
+  const [invoiceNo, setInvoiceNo] = useState("");
   const [notes, setNotes] = useState("");
+  const [receivedAmount, setReceivedAmount] = useState("");
 
   const [customers, setCustomers] = useState([]);
+  const [products, setProducts] = useState([]);
   const [selectedCustomerObj, setSelectedCustomerObj] = useState(null);
 
+  const isNewCustomer = useMemo(() => {
+    const trimmed = customer.trim();
+    if (!trimmed) return false;
+    return !customers.some(c => c.name.toLowerCase() === trimmed.toLowerCase());
+  }, [customer, customers]);
+
+  const billingDate = useMemo(() => new Date().toISOString().split("T")[0], []);
+
   useEffect(() => {
-    async function load() {
+    async function loadData() {
       try {
-        const res = await listCustomers();
-        if (res && res.customers) {
-          setCustomers(res.customers);
+        const custRes = await listCustomers();
+        if (custRes && custRes.customers) {
+          setCustomers(custRes.customers);
+        }
+        const prodRes = await listProducts();
+        if (prodRes && prodRes.products) {
+          setProducts(prodRes.products);
         }
       } catch (e) {
-        console.error(e);
+        console.error("Failed to load initial billing data", e);
       }
     }
-    load();
+    loadData();
   }, []);
 
-  const billingDate = new Date().toISOString().split("T")[0];
+  useEffect(() => {
+    async function fetchInvoiceNo() {
+      try {
+        const res = await getNextInvoiceNo(billingDate);
+        if (res && res.invoiceNo) {
+          setInvoiceNo(res.invoiceNo);
+        }
+      } catch (e) {
+        console.error("Failed to fetch next invoice number", e);
+      }
+    }
+    fetchInvoiceNo();
+  }, [billingDate]);
 
   const addRow = () => {
     setRows((prev) => [...prev, createRow()]);
@@ -68,13 +86,14 @@ export default function BillingWorkspace() {
         };
 
         if (field === "product") {
-          const selected = productDatabase.find(
+          const selected = products.find(
             (p) => p.name === value
           );
 
           if (selected) {
+            updated.productId = selected.id;
             updated.unit = selected.unit;
-            updated.price = selected.price;
+            updated.price = selected.basePrice || selected.price || 0;
           }
         }
 
@@ -102,6 +121,73 @@ export default function BillingWorkspace() {
 
   const itemCount = rows.filter((r) => r.product !== "").length;
 
+  const handleGenerateInvoice = async () => {
+    const activeRows = rows.filter((r) => r.product);
+    if (!activeRows.length) {
+      alert("Please add at least one product item to the invoice.");
+      return;
+    }
+
+    const saleItems = activeRows.map((r) => ({
+      productId: r.productId,
+      productName: r.product,
+      quantity: parseFloat(r.qty) || 0,
+      unit: r.unit,
+      price: parseFloat(r.price) || 0,
+      discount: parseFloat(r.discount) || 0,
+    }));
+
+    const parsedReceived = parseFloat(receivedAmount);
+    const amountPaid = paymentType === "Credit"
+      ? 0
+      : !isNaN(parsedReceived)
+        ? Math.min(subtotal, parsedReceived)
+        : subtotal;
+
+    let paymentStatus = "Paid";
+    if (paymentType === "Credit") {
+      paymentStatus = "Unpaid";
+    } else if (amountPaid <= 0) {
+      paymentStatus = "Unpaid";
+    } else if (amountPaid < subtotal) {
+      paymentStatus = "Partial";
+    } else {
+      paymentStatus = "Paid";
+    }
+
+    const payload = {
+      invoiceNo: invoiceNo,
+      saleDate: billingDate,
+      customerId: selectedCustomerObj ? selectedCustomerObj.id : null,
+      customerName: customer ? customer.trim() : "Walk-in Customer",
+      phone: selectedCustomerObj ? selectedCustomerObj.phone : null,
+      paymentMethod: paymentType,
+      amountPaid: amountPaid,
+      paymentStatus: paymentStatus,
+      notes: notes,
+      items: saleItems,
+    };
+
+    try {
+      const res = await saveSale(payload);
+      if (res && res.sale) {
+        alert(`Invoice ${res.sale.invoiceNo} generated successfully!`);
+        setRows([createRow()]);
+        setCustomer("");
+        setSelectedCustomerObj(null);
+        setNotes("");
+        setReceivedAmount("");
+        const nextInv = await getNextInvoiceNo(billingDate);
+        if (nextInv && nextInv.invoiceNo) {
+          setInvoiceNo(nextInv.invoiceNo);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to generate invoice", error);
+      alert("Error generating invoice: " + error.message);
+    }
+  };
+
   return (
     <div style={st.page}>
       <div style={st.workspace}>
@@ -116,7 +202,7 @@ export default function BillingWorkspace() {
 
           <div style={st.headerActions}>
             <button style={st.secondaryBtn}>Invoice History</button>
-            <button style={st.primaryBtn}>Generate Invoice</button>
+            <button style={st.primaryBtn} onClick={handleGenerateInvoice}>Generate Invoice</button>
           </div>
         </div>
 
@@ -135,20 +221,46 @@ export default function BillingWorkspace() {
           </div>
 
           <div style={st.stripCenter}>
-            <input
-              style={st.customerInput}
-              list="customers-list"
-              placeholder="Search or Select Customer Name"
-              value={customer}
-              onChange={(e) => {
-                  setCustomer(e.target.value);
-                  const match = customers.find(c => c.name === e.target.value);
-                  setSelectedCustomerObj(match || null);
-              }}
-            />
-            <datalist id="customers-list">
-              {customers.map(c => <option key={c.id} value={c.name} />)}
-            </datalist>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
+              <div style={{ flex: 1 }}>
+                <input
+                  style={st.customerInput}
+                  list="customers-list"
+                  placeholder="Search or Select Customer Name"
+                  value={customer}
+                  onChange={(e) => {
+                    setCustomer(e.target.value);
+                    const match = customers.find(c => c.name.toLowerCase() === e.target.value.toLowerCase());
+                    setSelectedCustomerObj(match || null);
+                  }}
+                />
+                <datalist id="customers-list">
+                  {customers.map(c => <option key={c.id} value={c.name} />)}
+                </datalist>
+              </div>
+              {isNewCustomer && (
+                <button
+                  style={st.addCustomerInlineBtn}
+                  onClick={async () => {
+                    try {
+                      const res = await saveCustomer({ name: customer.trim(), phone: "", openingBalance: 0 });
+                      if (res && res.customer) {
+                        const newCust = res.customer;
+                        setCustomers(prev => [...prev, newCust]);
+                        setSelectedCustomerObj(newCust);
+                        alert(`Customer "${newCust.name}" added and selected successfully!`);
+                      }
+                    } catch (e) {
+                      console.error("Failed to add customer", e);
+                      alert("Error adding customer: " + e.message);
+                    }
+                  }}
+                  title="Register this customer in the system"
+                >
+                  + Register
+                </button>
+              )}
+            </div>
           </div>
 
           <div style={st.stripRight}>
@@ -163,7 +275,6 @@ export default function BillingWorkspace() {
               <option>Meezan Bank</option>
               <option>JazzCash</option>
               <option>EasyPaisa</option>
-              <option>Credit</option>
             </select>
           </div>
         </div>
@@ -212,8 +323,8 @@ export default function BillingWorkspace() {
                   >
                     <option value="">Search Product</option>
 
-                    {productDatabase.map((item) => (
-                      <option key={item.name}>{item.name}</option>
+                    {products.map((item) => (
+                      <option key={item.id} value={item.name}>{item.name}</option>
                     ))}
                   </select>
 
@@ -304,6 +415,62 @@ export default function BillingWorkspace() {
                   Rs {subtotal.toFixed(0)}
                 </strong>
               </div>
+
+              {paymentType !== "Credit" && (
+                <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: '#738675', textTransform: 'uppercase' }}>Amount Received (Rs)</label>
+                    <input
+                      type="number"
+                      placeholder={`e.g. ${subtotal.toFixed(0)}`}
+                      value={receivedAmount}
+                      onChange={(e) => setReceivedAmount(e.target.value)}
+                      style={{
+                        height: 40,
+                        borderRadius: 10,
+                        border: "1.5px solid #cde0cd",
+                        background: "#fbfdfb",
+                        padding: "0 12px",
+                        fontSize: 15,
+                        fontWeight: 'bold',
+                        outline: "none",
+                        width: '100%',
+                        boxSizing: 'border-box',
+                        color: '#1b3a1d'
+                      }}
+                    />
+                  </div>
+                  {parseFloat(receivedAmount) > 0 && (
+                    <div style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '12px 14px',
+                      borderRadius: 10,
+                      background: parseFloat(receivedAmount) >= subtotal ? '#eef7ee' : '#ffebee',
+                      border: parseFloat(receivedAmount) >= subtotal ? '1px solid #cde0cd' : '1px solid #ffcdd2',
+                      fontSize: 14,
+                      fontWeight: 'bold'
+                    }}>
+                      {parseFloat(receivedAmount) >= subtotal ? (
+                        <>
+                          <span style={{ color: '#2d7032' }}>Change to Return:</span>
+                          <strong style={{ fontFamily: 'monospace', fontSize: 18, color: '#2d7032' }}>
+                            Rs {Math.max(0, parseFloat(receivedAmount) - subtotal).toLocaleString()}
+                          </strong>
+                        </>
+                      ) : (
+                        <>
+                          <span style={{ color: '#c62828' }}>Remaining Due:</span>
+                          <strong style={{ fontFamily: 'monospace', fontSize: 18, color: '#c62828' }}>
+                            Rs {(subtotal - parseFloat(receivedAmount)).toLocaleString()}
+                          </strong>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* CUSTOMER CONTEXT */}
@@ -314,14 +481,14 @@ export default function BillingWorkspace() {
 
               {selectedCustomerObj ? (
                 <>
-                  <div style={{...st.contextItem, borderLeft: `3px solid ${selectedCustomerObj.current_balance > 0 ? '#c62828' : selectedCustomerObj.current_balance < 0 ? '#2e7d32' : '#738675'}`}}>
+                  <div style={{ ...st.contextItem, borderLeft: `3px solid ${selectedCustomerObj.current_balance > 0 ? '#c62828' : selectedCustomerObj.current_balance < 0 ? '#2e7d32' : '#738675'}` }}>
                     <div style={{ fontSize: 11, color: "#6f8571", textTransform: "uppercase", fontWeight: 700 }}>Current Balance</div>
                     <div style={{ fontSize: 16, fontWeight: "bold", color: selectedCustomerObj.current_balance > 0 ? '#c62828' : selectedCustomerObj.current_balance < 0 ? '#2e7d32' : '#203522', marginTop: 4 }}>
-                        {selectedCustomerObj.current_balance === 0 
-                            ? 'Rs 0' 
-                            : selectedCustomerObj.current_balance > 0 
-                                ? `(Dr) Rs ${Math.abs(selectedCustomerObj.current_balance).toLocaleString()}` 
-                                : `(Cr) Rs ${Math.abs(selectedCustomerObj.current_balance).toLocaleString()}`}
+                      {selectedCustomerObj.current_balance === 0
+                        ? 'Rs 0'
+                        : selectedCustomerObj.current_balance > 0
+                          ? `(Dr) Rs ${Math.abs(selectedCustomerObj.current_balance).toLocaleString()}`
+                          : `(Cr) Rs ${Math.abs(selectedCustomerObj.current_balance).toLocaleString()}`}
                     </div>
                   </div>
                   <div style={st.contextItem}>
@@ -329,9 +496,9 @@ export default function BillingWorkspace() {
                   </div>
                 </>
               ) : (
-                  <div style={{ fontSize: 13, color: '#738675', padding: '10px 0' }}>
-                      {customer ? "Walk-in / Unregistered" : "No customer selected."}
-                  </div>
+                <div style={{ fontSize: 13, color: '#738675', padding: '10px 0' }}>
+                  {customer ? "Walk-in / Unregistered" : "No customer selected."}
+                </div>
               )}
             </div>
 
@@ -363,7 +530,7 @@ export default function BillingWorkspace() {
               Rs {subtotal.toFixed(0)}
             </div>
 
-            <button style={st.generateBtn}>
+            <button style={st.generateBtn} onClick={handleGenerateInvoice}>
               Generate Invoice
             </button>
           </div>
@@ -491,6 +658,23 @@ const st = {
     fontSize: 14,
     outline: "none",
     boxSizing: "border-box",
+  },
+
+  addCustomerInlineBtn: {
+    height: 46,
+    padding: "0 16px",
+    borderRadius: 10,
+    border: "none",
+    background: "#397d3d",
+    color: "white",
+    fontWeight: "bold",
+    fontSize: 13,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    transition: "background 0.2s",
   },
 
   stripRight: {

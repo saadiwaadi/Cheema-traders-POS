@@ -139,6 +139,24 @@ function StockEntryTab({ onSaved }) {
   const [success, setSuccess] = useState("");
 
   const [inventory, setInventory] = useState([createEmptyBatch()]);
+  const [suppliers, setSuppliers] = useState([]);
+  const [supplierId, setSupplierId] = useState("");
+  const [purchaseDate, setPurchaseDate] = useState(new Date().toISOString().split("T")[0]);
+  const [paymentType, setPaymentType] = useState("Cash");
+  const [amountPaid, setAmountPaid] = useState("");
+  const [warehouseShelf, setWarehouseShelf] = useState("");
+
+  useEffect(() => {
+    const loadSuppliers = async () => {
+      try {
+        const res = await api.listSuppliers();
+        setSuppliers(res.suppliers || []);
+      } catch (err) {
+        console.error("Failed to load suppliers:", err);
+      }
+    };
+    loadSuppliers();
+  }, []);
 
   function createEmptyBatch() {
     return {
@@ -198,19 +216,23 @@ function StockEntryTab({ onSaved }) {
     }
 
     try {
-      for (const row of validRows) {
-        await api.saveBatch({
+      await api.createPurchase({
+        supplierId: supplierId ? Number(supplierId) : null,
+        purchaseDate,
+        paymentMethod: paymentType,
+        amountPaid: Number(amountPaid || 0),
+        notes: warehouseShelf ? `Shelf: ${warehouseShelf}` : null,
+        items: validRows.map(row => ({
           productName: row.productName,
           batchNo: row.batchNo,
-          purchaseDate: row.purchaseDate,
-          expiryDate: row.expiryDate,
-          quantityReceived: Number(row.qty),
-          costPrice: Number(row.costPrice),
-          salePrice: Number(row.salePrice),
-          notes: row.notes,
+          qty: Number(row.qty),
           unit: row.unit,
-        });
-      }
+          costPrice: Number(row.costPrice || 0),
+          salePrice: Number(row.salePrice || 0),
+          expiryDate: row.expiryDate || null,
+          notes: row.notes || null,
+        }))
+      });
       setSuccess("Inventory saved successfully!");
       setShowSummary(false);
       setTimeout(() => {
@@ -344,17 +366,52 @@ function StockEntryTab({ onSaved }) {
         <div style={st.infoCard}>
           <h3 style={st.sectionTitleSm}>Global Batch Details (Optional)</h3>
           <div style={st.grid3}>
-            <Field label="Supplier" placeholder="Supplier name" />
-            <Field label="Entry Date" type="date" />
-            <Field label="Warehouse Shelf" placeholder="A-2" />
+            <div style={st.fieldWrap}>
+              <label style={st.fieldLabel}>Supplier</label>
+              <select
+                style={st.fieldInput}
+                value={supplierId}
+                onChange={(e) => setSupplierId(e.target.value)}
+              >
+                <option value="">-- Select Supplier --</option>
+                {suppliers.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <Field 
+              label="Entry Date" 
+              type="date" 
+              value={purchaseDate}
+              onChange={(e) => setPurchaseDate(e.target.value)}
+            />
+            <Field 
+              label="Warehouse Shelf" 
+              placeholder="A-2" 
+              value={warehouseShelf}
+              onChange={(e) => setWarehouseShelf(e.target.value)}
+            />
           </div>
         </div>
 
         <div style={st.infoCard}>
           <h3 style={st.sectionTitleSm}>Payment Tracking</h3>
           <div style={st.grid3}>
-            <FieldSelect label="Payment Type" options={["Cash", "Credit", "Partial"]} />
-            <Field label="Amount Paid" placeholder="0" />
+            <FieldSelect 
+              label="Payment Type" 
+              options={["Cash", "Credit", "Partial"]} 
+              value={paymentType}
+              onChange={(e) => setPaymentType(e.target.value)}
+            />
+            <Field 
+              label="Amount Paid" 
+              placeholder="0" 
+              type="number"
+              value={amountPaid}
+              onChange={(e) => setAmountPaid(e.target.value)}
+            />
             <Field label="Due Date" type="date" />
           </div>
         </div>

@@ -64,6 +64,15 @@ router.post("/batches", async (req, res) => {
   }
 });
 
+router.post("/purchases", async (req, res) => {
+  try {
+    const purchase = await store.createPurchase(req.body);
+    return res.status(201).json({ purchase });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
 // --- CUSTOMERS ---
 
 router.get("/customers", async (req, res) => {
@@ -128,6 +137,15 @@ router.get("/sales", async (req, res) => {
   }
 });
 
+router.get("/sales/next-invoice", async (req, res) => {
+  try {
+    const invoiceNo = await store.getNextInvoiceNo(req.query.date);
+    return res.json({ invoiceNo });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
 router.get("/sales/:id", async (req, res) => {
   try {
     const sale = await store.getSaleById(Number(req.params.id));
@@ -187,6 +205,15 @@ router.get("/suppliers/:id/history", async (req, res) => {
   try {
     const history = await store.getSupplierHistory(Number(req.params.id));
     return res.json({ history });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/purchases/:id/items", async (req, res) => {
+  try {
+    const items = await store.getPurchaseItems(Number(req.params.id));
+    return res.json({ items });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }

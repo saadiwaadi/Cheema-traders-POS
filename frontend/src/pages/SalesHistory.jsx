@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { api } from "../lib/api";
+import { listSales, getSale, voidSale } from "../lib/posApi";
 
 const PAYMENT_METHODS = ["All", "Cash", "HBL Bank", "UBL Bank", "Meezan Bank", "JazzCash", "EasyPaisa", "Credit"];
 
@@ -32,7 +32,7 @@ export default function SalesHistoryPage() {
     if (to)   params.to   = to;
     params.limit = 200;
 
-    api.getSales(params)
+    listSales(params)
       .then(({ sales: s }) => setSales(s || []))
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
@@ -44,7 +44,7 @@ export default function SalesHistoryPage() {
     setDetailLoading(true);
     setDetail(null);
     try {
-      const { sale } = await api.getSale(id);
+      const { sale } = await getSale(id);
       setDetail(sale);
     } catch (e) {
       setError(e.message);
@@ -56,7 +56,7 @@ export default function SalesHistoryPage() {
   async function doVoid(id) {
     setVoiding(true);
     try {
-      await api.voidSale(id);
+      await voidSale(id);
       setVoidTarget(null);
       setDetail(null);
       load();

@@ -190,6 +190,7 @@ class PosStore {
           payment_method AS method,
           subtotal AS total_amount,
           balance_due AS balance_change,
+          notes,
           created_at
         FROM purchases
         WHERE supplier_id = ?
@@ -204,6 +205,7 @@ class PosStore {
           payment_method AS method,
           amount AS total_amount,
           -amount AS balance_change,
+          notes,
           created_at
         FROM supplier_payments
         WHERE supplier_id = ?
@@ -213,6 +215,27 @@ class PosStore {
       [supplierId, supplierId]
     );
   }
+
+  async getPurchaseItems(purchaseId) {
+    const db = await this._db();
+    return all(
+      db,
+      `
+        SELECT 
+          id,
+          product_id AS productId,
+          batch_id AS batchId,
+          product_name AS productName,
+          quantity,
+          unit_price AS unitPrice,
+          line_total AS lineTotal
+        FROM purchase_items
+        WHERE purchase_id = ?
+      `,
+      [purchaseId]
+    );
+  }
+
 
   async saveSupplierPayment(input) {
     const db = await this._db();
@@ -425,7 +448,7 @@ class PosStore {
 
   async getCustomerHistory(customerId) {
     const db = await this._db();
-    // Union sales and payments to generate a ledger
+    // Union sales and standalone payments to generate a combined ledger
     return all(
       db,
       `
@@ -435,8 +458,12 @@ class PosStore {
           sale_date AS date,
           invoice_no AS reference,
           payment_method AS method,
+          payment_status,
           total AS total_amount,
+          amount_paid AS paid_amount,
+          balance_due AS remaining_amount,
           balance_due AS balance_change,
+          created_at || '_1' AS sort_key,
           created_at
         FROM sales
         WHERE customer_id = ? AND COALESCE(voided_at, '') = ''
@@ -449,13 +476,17 @@ class PosStore {
           payment_date AS date,
           notes AS reference,
           payment_method AS method,
+          NULL AS payment_status,
           amount AS total_amount,
+          amount AS paid_amount,
+          0 AS remaining_amount,
           -amount AS balance_change,
+          created_at || '_3' AS sort_key,
           created_at
         FROM customer_payments
         WHERE customer_id = ?
         
-        ORDER BY date DESC, created_at DESC
+        ORDER BY date DESC, created_at DESC, sort_key DESC
       `,
       [customerId, customerId]
     );
@@ -719,6 +750,149 @@ class PosStore {
     });
   }
 
+  async createPurchase(input) {
+    const purchaseDate = input.purchaseDate || new Date().toISOString().slice(0, 10);
+    const items = Array.isArray(input.items) ? input.items : [];
+    if (!items.length) throw new Error("At least one purchase item is required");
+
+    return this.transaction(async (db) => {
+      const invoiceNo = `PUR-${Date.now()}`;
+      
+      let subtotal = 0;
+      let amountPaid = Number(input.amountPaid || 0);
+      const paymentMethod = String(input.paymentMethod || "Cash").trim() || "Cash";
+      
+      for (const item of items) {
+        const qty = Number(item.qty || item.quantityReceived || 0);
+        const costPrice = Number(item.costPrice || 0);
+        subtotal += qty * costPrice;
+      }
+      
+      const balanceDue = Math.max(0, subtotal - amountPaid);
+      
+      const purchaseResult = await run(
+        db,
+        `
+          INSERT INTO purchases
+          (invoice_no, supplier_id, purchase_date, subtotal, amount_paid, balance_due, payment_method, notes)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          invoiceNo,
+          input.supplierId ? Number(input.supplierId) : null,
+          purchaseDate,
+          subtotal,
+          amountPaid,
+          balanceDue,
+          paymentMethod,
+          String(input.notes || "").trim() || null,
+        ]
+      );
+      
+      const purchaseId = purchaseResult.lastID;
+      const savedBatches = [];
+
+      for (const item of items) {
+        const qty = Number(item.qty || item.quantityReceived || 0);
+        const costPrice = Number(item.costPrice || 0);
+        const salePrice = Number(item.salePrice || 0);
+        const unit = String(item.unit || "Piece").trim();
+        
+        const productId = await this.ensureProductByName(item.productName, {
+          unit: unit,
+          costPrice: costPrice,
+          basePrice: salePrice,
+          currentStock: 0
+        });
+        
+        const batchNo = String(item.batchNo || "").trim() || `BATCH-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const batchResult = await run(
+          db,
+          `
+            INSERT INTO batches
+            (product_id, supplier_id, batch_no, purchase_date, expiry_date, quantity_received, quantity_remaining, cost_price, sale_price, purchase_reference, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          [
+            productId,
+            input.supplierId ? Number(input.supplierId) : null,
+            batchNo,
+            purchaseDate,
+            item.expiryDate || null,
+            qty,
+            qty,
+            costPrice,
+            salePrice,
+            invoiceNo,
+            String(item.notes || "").trim() || null,
+          ]
+        );
+        
+        const batchId = batchResult.lastID;
+        
+        await run(
+          db,
+          `UPDATE products 
+           SET current_stock = COALESCE(current_stock, 0) + ?, 
+               cost_price = COALESCE(?, cost_price), 
+               base_price = CASE WHEN ? > 0 THEN ? ELSE base_price END, 
+               updated_at = CURRENT_TIMESTAMP 
+           WHERE id = ?`,
+          [qty, costPrice || null, salePrice, salePrice, productId]
+        );
+        
+        await run(
+          db,
+          `
+            INSERT INTO inventory_movements (product_id, batch_id, movement_type, quantity, unit_cost, reference_type, reference_id, note)
+            VALUES (?, ?, 'purchase', ?, ?, 'purchase', ?, ?)
+          `,
+          [productId, batchId, qty, costPrice, purchaseId, item.notes || null]
+        );
+        
+        await run(
+          db,
+          `
+            INSERT INTO purchase_items (purchase_id, product_id, batch_id, product_name, quantity, unit_price, line_total)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `,
+          [purchaseId, productId, batchId, item.productName, qty, costPrice, qty * costPrice]
+        );
+        
+        savedBatches.push({
+          productId,
+          batchId,
+          productName: item.productName,
+          qty,
+          costPrice,
+          salePrice
+        });
+      }
+      
+      await this.audit("purchase", purchaseId, "create", null, { 
+        id: purchaseId, 
+        invoiceNo, 
+        supplierId: input.supplierId, 
+        subtotal, 
+        amountPaid, 
+        balanceDue, 
+        items: savedBatches 
+      });
+      
+      return {
+        id: purchaseId,
+        invoiceNo,
+        supplierId: input.supplierId,
+        purchaseDate,
+        subtotal,
+        amountPaid,
+        balanceDue,
+        paymentMethod,
+        items: savedBatches
+      };
+    });
+  }
+
   async createSale(input) {
     const saleDate = input.saleDate || new Date().toISOString().slice(0, 10);
     const items = Array.isArray(input.items) ? input.items : [];
@@ -904,15 +1078,30 @@ class PosStore {
 
   async nextInvoiceNo(db, saleDate) {
     const prefix = `INV-${String(saleDate).replace(/-/g, "")}`;
-    const row = await get(
+    const rows = await all(
       db,
-      `SELECT invoice_no FROM sales WHERE invoice_no LIKE ? ORDER BY id DESC LIMIT 1`,
+      `SELECT invoice_no FROM sales WHERE invoice_no LIKE ?`,
       [`${prefix}-%`]
     );
-    if (!row) return `${prefix}-001`;
-    const match = String(row.invoice_no).match(/-(\d+)$/);
-    const next = match ? String(Number(match[1]) + 1).padStart(3, "0") : "001";
+    if (!rows || rows.length === 0) return `${prefix}-001`;
+
+    let maxNum = 0;
+    for (const r of rows) {
+      const match = String(r.invoice_no).match(/-(\d+)$/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (num > maxNum) {
+          maxNum = num;
+        }
+      }
+    }
+    const next = String(maxNum + 1).padStart(3, "0");
     return `${prefix}-${next}`;
+  }
+
+  async getNextInvoiceNo(saleDate) {
+    const db = await this._db();
+    return this.nextInvoiceNo(db, saleDate || new Date().toISOString().slice(0, 10));
   }
 
   async listSales({ limit = 100, search = "", paymentMethod = "", from = "", to = "" } = {}) {
@@ -1026,20 +1215,6 @@ class PosStore {
     const db = await this._db();
     const today = new Date().toISOString().slice(0, 10);
     return this.nextInvoiceNo(db, today);
-  }
-
-  async listCustomers(search = "") {
-    const db = await this._db();
-    return all(
-      db,
-      `SELECT id, name, phone, opening_balance AS openingBalance, created_at AS createdAt
-       FROM customers
-       WHERE COALESCE(deleted_at, '') = ''
-         AND (name LIKE ? OR phone LIKE ?)
-       ORDER BY name COLLATE NOCASE ASC
-       LIMIT 50`,
-      [normalizeSearch(search), normalizeSearch(search)]
-    );
   }
 
   async getDashboardSummary() {
