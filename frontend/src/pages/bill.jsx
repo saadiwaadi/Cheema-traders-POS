@@ -19,9 +19,16 @@ export default function BillingWorkspace() {
   const [customer, setCustomer] = useState("");
   const [paymentType, setPaymentType] = useState("Cash");
   const [invoiceNo, setInvoiceNo] = useState("");
-  const [notes, setNotes] = useState("");
-  const [receivedAmount, setReceivedAmount] = useState("");
+  const [notes, setNotes] = useState(""); const [receivedAmount, setReceivedAmount] = useState(""); const [paymentDraft, setPaymentDraft] = useState({
+    amount: "",
+    method: "Cash",
+    reference: "",
+    notes: ""
+  });
 
+  const [paymentConfirmed, setPaymentConfirmed] = useState(false);
+
+  const [confirmedPayment, setConfirmedPayment] = useState(null);
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [selectedCustomerObj, setSelectedCustomerObj] = useState(null);
@@ -65,6 +72,12 @@ export default function BillingWorkspace() {
     }
     fetchInvoiceNo();
   }, [billingDate]);
+
+  useEffect(() => {
+    if (!selectedCustomerObj && subtotal > 0) {
+      setReceivedAmount(subtotal.toFixed(0));
+    }
+  }, [subtotal, selectedCustomerObj]);
 
   const addRow = () => {
     setRows((prev) => [...prev, createRow()]);
@@ -120,6 +133,19 @@ export default function BillingWorkspace() {
   }, [rows]);
 
   const itemCount = rows.filter((r) => r.product !== "").length;
+  const parsedReceived = parseFloat(paymentDraft.amount) || 0;
+  const isRegisteredCustomer = !!selectedCustomerObj;
+
+  const remainingAmount = Math.max(0, subtotal - parsedReceived);
+
+  const changeAmount = Math.max(0, parsedReceived - subtotal);
+
+  const paymentStatus =
+    parsedReceived <= 0
+      ? "Unpaid"
+      : parsedReceived < subtotal
+        ? "Partial"
+        : "Paid";
 
   const handleGenerateInvoice = async () => {
     const activeRows = rows.filter((r) => r.product);
@@ -137,23 +163,23 @@ export default function BillingWorkspace() {
       discount: parseFloat(r.discount) || 0,
     }));
 
-    const parsedReceived = parseFloat(receivedAmount);
-    const amountPaid = paymentType === "Credit"
-      ? 0
-      : !isNaN(parsedReceived)
-        ? Math.min(subtotal, parsedReceived)
-        : subtotal;
+    const parsedReceived = parseFloat(receivedAmount) || 0;
 
-    let paymentStatus = "Paid";
-    if (paymentType === "Credit") {
-      paymentStatus = "Unpaid";
-    } else if (amountPaid <= 0) {
-      paymentStatus = "Unpaid";
-    } else if (amountPaid < subtotal) {
-      paymentStatus = "Partial";
-    } else {
-      paymentStatus = "Paid";
+    if (!selectedCustomerObj && parsedReceived < subtotal) {
+      alert("Walk-in customers must pay full invoice amount.");
+      return;
     }
+
+    const amountPaid = Math.min(parsedReceived, subtotal);
+
+    const remainingAmount = Math.max(0, subtotal - amountPaid);
+
+    const paymentStatus =
+      amountPaid <= 0
+        ? "Unpaid"
+        : amountPaid < subtotal
+          ? "Partial"
+          : "Paid";
 
     const payload = {
       invoiceNo: invoiceNo,
@@ -162,7 +188,9 @@ export default function BillingWorkspace() {
       customerName: customer ? customer.trim() : "Walk-in Customer",
       phone: selectedCustomerObj ? selectedCustomerObj.phone : null,
       paymentMethod: paymentType,
+      totalAmount: subtotal,
       amountPaid: amountPaid,
+      remainingAmount: remainingAmount,
       paymentStatus: paymentStatus,
       notes: notes,
       items: saleItems,
@@ -372,7 +400,90 @@ export default function BillingWorkspace() {
                 </div>
               ))}
             </div>
+            <div style={st.paymentSettlement}>
+              <div style={st.paymentSettlementTop}>
+                <div>
+                  <h3 style={st.paymentSettlementTitle}>
+                    Payment Settlement
+                  </h3>
 
+                  <p style={st.paymentSettlementSub}>
+                    {selectedCustomerObj
+                      ? "Customer can pay partially or later."
+                      : "Walk-in customers must fully settle invoice."}
+                  </p>
+                </div>
+
+                <div
+                  style={{
+                    ...st.paymentStatusBadge,
+                    background:
+                      paymentStatus === "Paid"
+                        ? "#e8f5e9"
+                        : paymentStatus === "Partial"
+                          ? "#fff3e0"
+                          : "#ffebee",
+                    color:
+                      paymentStatus === "Paid"
+                        ? "#2e7d32"
+                        : paymentStatus === "Partial"
+                          ? "#ef6c00"
+                          : "#c62828"
+                  }}
+                >
+                  {paymentStatus}
+                </div>
+              </div>
+
+              <div style={st.paymentGrid}>
+                <div style={st.paymentBox}>
+                  <span style={st.paymentLabel}>Grand Total</span>
+                  <strong style={st.paymentValue}>
+                    Rs {subtotal.toFixed(0)}
+                  </strong>
+                </div>
+
+                <div style={st.paymentBox}>
+                  <span style={st.paymentLabel}>Amount Received</span>
+
+                  <input
+                    type="number"
+                    value={receivedAmount}
+                    onChange={(e) => setReceivedAmount(e.target.value)}
+                    style={st.paymentInput}
+                    placeholder="0"
+                  />
+                </div>
+
+                <div style={st.paymentBox}>
+                  <span style={st.paymentLabel}>
+                    {changeAmount > 0
+                      ? "Change Return"
+                      : "Remaining Due"}
+                  </span>
+
+                  <strong
+                    style={{
+                      ...st.paymentValue,
+                      color:
+                        changeAmount > 0
+                          ? "#2e7d32"
+                          : remainingAmount > 0
+                            ? "#c62828"
+                            : "#2e7d32"
+                    }}
+                  >
+                    Rs {(changeAmount || remainingAmount).toFixed(0)}
+                  </strong>
+                </div>
+              </div>
+
+              {!selectedCustomerObj && remainingAmount > 0 && (
+                <div style={st.walkInWarning}>
+                  Walk-in customer invoices cannot remain unpaid.
+                </div>
+              )}
+            </div>
             <div style={st.notesArea}>
               <textarea
                 style={st.notesInput}
@@ -905,7 +1016,100 @@ const st = {
   },
 
 
+  contextItem: {
+    padding: "13px 14px",
+    borderRadius: 10,
+    background: "#f8fbf8",
+    border: "1px solid #e5eee5",
+    fontSize: 13,
+    marginBottom: 10,
+    color: "#4d654f",
+  },
 
+  paymentSettlement: {
+    marginTop: 18,
+    border: "1px solid #dbe7db",
+    borderRadius: 14,
+    background: "#f8fbf8",
+    padding: 18,
+  },
+
+  paymentSettlementTop: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 18,
+  },
+
+  paymentSettlementTitle: {
+    margin: 0,
+    fontSize: 16,
+    fontWeight: 700,
+  },
+
+  paymentSettlementSub: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#758977",
+  },
+
+  paymentStatusBadge: {
+    padding: "8px 12px",
+    borderRadius: 999,
+    fontSize: 12,
+    fontWeight: 700,
+  },
+
+  paymentGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, 1fr)",
+    gap: 14,
+  },
+
+  paymentBox: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    padding: 14,
+    borderRadius: 12,
+    background: "#fff",
+    border: "1px solid #e2ebe2",
+  },
+
+  paymentLabel: {
+    fontSize: 11,
+    fontWeight: 700,
+    textTransform: "uppercase",
+    color: "#738675",
+  },
+
+  paymentValue: {
+    fontSize: 22,
+    fontWeight: 700,
+    color: "#1f5824",
+  },
+
+  paymentInput: {
+    height: 42,
+    borderRadius: 10,
+    border: "1px solid #d4e1d4",
+    background: "#fbfdfb",
+    padding: "0 12px",
+    fontSize: 16,
+    fontWeight: 700,
+    outline: "none",
+  },
+
+  walkInWarning: {
+    marginTop: 14,
+    padding: "12px 14px",
+    borderRadius: 10,
+    background: "#fff4f4",
+    border: "1px solid #ffd4d4",
+    color: "#c62828",
+    fontWeight: 600,
+    fontSize: 13,
+  },
   bottomBar: {
     background: "#ffffff",
     border: "1px solid #dbe7db",
