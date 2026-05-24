@@ -1,0 +1,25 @@
+{
+  "name": "pos-system",
+  "version": "1.0.0",
+  "main": "electron/main.js",
+  "scripts": {
+    "backend": "cd backend && npm run dev",
+    "frontend": "cd frontend && npm run dev",
+    "electron": "wait-on http://localhost:5173 && electron .",
+    "dev": "concurrently \"npm run backend\" \"npm run frontend\" \"npm run electron\"",
+    "desktop": "concurrently \"npm run frontend\" \"npm run electron\"",
+    "build": "cd frontend && npm run build"
+  },
+  "dependencies": {
+    "electron": "^30.0.0",
+    "framer-motion": "^12.38.0",
+    "lucide-react": "^1.16.0"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.5.0",
+    "concurrently": "^8.2.0",
+    "postcss": "^8.5.15",
+    "tailwindcss": "^4.3.0",
+    "wait-on": "^7.2.0"
+  }
+}
