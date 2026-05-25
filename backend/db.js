@@ -187,6 +187,7 @@ db.serialize(() => {
       total REAL NOT NULL DEFAULT 0,
       amount_paid REAL NOT NULL DEFAULT 0,
       balance_due REAL NOT NULL DEFAULT 0,
+      credit_applied REAL NOT NULL DEFAULT 0,
       paid_at TEXT,
       notes TEXT,
       voided_at TEXT,
@@ -212,6 +213,21 @@ db.serialize(() => {
       FOREIGN KEY (sale_id) REFERENCES sales(id),
       FOREIGN KEY (product_id) REFERENCES products(id),
       FOREIGN KEY (batch_id) REFERENCES batches(id)
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS sales_returns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sale_id INTEGER NOT NULL,
+      product_id INTEGER NOT NULL,
+      product_name TEXT NOT NULL,
+      quantity REAL NOT NULL,
+      unit_price REAL NOT NULL,
+      refund_amount REAL NOT NULL,
+      returned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (sale_id) REFERENCES sales(id),
+      FOREIGN KEY (product_id) REFERENCES products(id)
     )
   `);
 
@@ -339,6 +355,8 @@ db.serialize(() => {
   db.run(`ALTER TABLE customer_payments ADD COLUMN sale_id INTEGER`, ignoreColumnExists);
   db.run(`ALTER TABLE customer_payments ADD COLUMN applied_amount REAL NOT NULL DEFAULT 0`, ignoreColumnExists);
   db.run(`ALTER TABLE customer_payments ADD COLUMN unapplied_amount REAL NOT NULL DEFAULT 0`, ignoreColumnExists);
+  db.run(`ALTER TABLE customer_payments ADD COLUMN type TEXT DEFAULT 'payment'`, ignoreColumnExists);
+  db.run(`ALTER TABLE sales ADD COLUMN credit_applied REAL NOT NULL DEFAULT 0`, ignoreColumnExists);
 
   db.run(`
     UPDATE customer_payments

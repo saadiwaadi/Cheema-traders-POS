@@ -381,6 +381,236 @@ class PosStore {
     }
   }
 
+  async getCashBook(input) {
+    const db = await this._db();
+    const fromDate = input.fromDate || new Date().toISOString().split("T")[0];
+    const toDate = input.toDate || new Date().toISOString().split("T")[0];
+
+    const bankOpeningRow = await get(
+      db,
+      `SELECT SUM(opening_balance) AS total_bank_opening FROM bank_accounts WHERE deleted_at IS NULL`
+    );
+    const totalBankOpening = Number(bankOpeningRow?.total_bank_opening || 0);
+
+    const startingTotals = await get(
+      db,
+      `
+      SELECT
+        SUM(cash_in) AS start_cash_in,
+        SUM(cash_out) AS start_cash_out,
+        SUM(bank_in) AS start_bank_in,
+        SUM(bank_out) AS start_bank_out
+      FROM (
+        SELECT
+          CASE WHEN LOWER(s.payment_method) = 'cash' THEN (s.amount_paid - COALESCE((SELECT SUM(applied_amount) FROM customer_payments WHERE sale_id = s.id), 0)) ELSE 0 END AS cash_in,
+          0 AS cash_out,
+          CASE WHEN LOWER(s.payment_method) <> 'cash' THEN (s.amount_paid - COALESCE((SELECT SUM(applied_amount) FROM customer_payments WHERE sale_id = s.id), 0)) ELSE 0 END AS bank_in,
+          0 AS bank_out,
+          s.sale_date AS entry_date
+        FROM sales s
+        WHERE COALESCE(s.voided_at, '') = ''
+
+        UNION ALL
+
+        SELECT
+          CASE WHEN LOWER(cp.payment_method) = 'cash' THEN cp.amount ELSE 0 END AS cash_in,
+          0 AS cash_out,
+          CASE WHEN LOWER(cp.payment_method) <> 'cash' THEN cp.amount ELSE 0 END AS bank_in,
+          0 AS bank_out,
+          cp.payment_date AS entry_date
+        FROM customer_payments cp
+
+        UNION ALL
+
+        SELECT
+          0 AS cash_in,
+          CASE WHEN LOWER(p.payment_method) = 'cash' THEN p.amount_paid ELSE 0 END AS cash_out,
+          0 AS bank_in,
+          CASE WHEN LOWER(p.payment_method) <> 'cash' THEN p.amount_paid ELSE 0 END AS bank_out,
+          p.purchase_date AS entry_date
+        FROM purchases p
+
+        UNION ALL
+
+        SELECT
+          0 AS cash_in,
+          CASE WHEN LOWER(sp.payment_method) = 'cash' THEN sp.amount ELSE 0 END AS cash_out,
+          0 AS bank_in,
+          CASE WHEN LOWER(sp.payment_method) <> 'cash' THEN sp.amount ELSE 0 END AS bank_out,
+          sp.payment_date AS entry_date
+        FROM supplier_payments sp
+
+        UNION ALL
+
+        SELECT
+          0 AS cash_in,
+          CASE WHEN LOWER(e.payment_method) = 'cash' THEN e.amount ELSE 0 END AS cash_out,
+          0 AS bank_in,
+          CASE WHEN LOWER(e.payment_method) <> 'cash' THEN e.amount ELSE 0 END AS bank_out,
+          e.expense_date AS entry_date
+        FROM expenses e
+
+        UNION ALL
+
+        SELECT
+          CASE WHEN count_rows = 1 AND type = 'Withdrawal' THEN amount ELSE 0 END AS cash_in,
+          CASE WHEN count_rows = 1 AND type = 'Deposit' THEN amount ELSE 0 END AS cash_out,
+          CASE WHEN type = 'Deposit' THEN amount ELSE 0 END AS bank_in,
+          CASE WHEN type = 'Withdrawal' THEN amount ELSE 0 END AS bank_out,
+          date AS entry_date
+        FROM (
+          SELECT
+            bt.type,
+            bt.amount,
+            bt.date,
+            bt.reference,
+            bt.created_at,
+            COUNT(*) OVER(PARTITION BY bt.reference, bt.date, bt.created_at) as count_rows
+          FROM bank_transactions bt
+        )
+      )
+      WHERE entry_date < ?
+      `,
+      [fromDate]
+    );
+
+    const startCashIn = Number(startingTotals?.start_cash_in || 0);
+    const startCashOut = Number(startingTotals?.start_cash_out || 0);
+    const startBankIn = Number(startingTotals?.start_bank_in || 0);
+    const startBankOut = Number(startingTotals?.start_bank_out || 0);
+
+    const startingCash = startCashIn - startCashOut;
+    const startingBank = totalBankOpening + startBankIn - startBankOut;
+
+    const entries = await all(
+      db,
+      `
+      SELECT * FROM (
+        SELECT
+          s.sale_date AS entry_date,
+          'Sale: ' || s.invoice_no || ' (' || COALESCE(s.customer_name, 'Walk-in') || ')' AS description,
+          s.invoice_no AS receipt_number,
+          CASE WHEN LOWER(s.payment_method) = 'cash' THEN (s.amount_paid - COALESCE((SELECT SUM(applied_amount) FROM customer_payments WHERE sale_id = s.id), 0)) ELSE 0 END AS cash_in,
+          0 AS cash_out,
+          CASE WHEN LOWER(s.payment_method) <> 'cash' THEN (s.amount_paid - COALESCE((SELECT SUM(applied_amount) FROM customer_payments WHERE sale_id = s.id), 0)) ELSE 0 END AS bank_in,
+          0 AS bank_out,
+          s.created_at
+        FROM sales s
+        WHERE COALESCE(s.voided_at, '') = ''
+          AND (s.amount_paid - COALESCE((SELECT SUM(applied_amount) FROM customer_payments WHERE sale_id = s.id), 0)) > 0
+
+        UNION ALL
+
+        SELECT
+          cp.payment_date AS entry_date,
+          'Customer Payment: ' || c.name || COALESCE(' (' || cp.notes || ')', '') AS description,
+          COALESCE((SELECT invoice_no FROM sales WHERE id = cp.sale_id), '') AS receipt_number,
+          CASE WHEN LOWER(cp.payment_method) = 'cash' THEN cp.amount ELSE 0 END AS cash_in,
+          0 AS cash_out,
+          CASE WHEN LOWER(cp.payment_method) <> 'cash' THEN cp.amount ELSE 0 END AS bank_in,
+          0 AS bank_out,
+          cp.created_at
+        FROM customer_payments cp
+        JOIN customers c ON cp.customer_id = c.id
+        WHERE cp.amount > 0
+
+        UNION ALL
+
+        SELECT
+          p.purchase_date AS entry_date,
+          'Purchase: ' || p.invoice_no || ' (' || COALESCE(sup.name, 'Walk-in') || ')' AS description,
+          p.invoice_no AS receipt_number,
+          0 AS cash_in,
+          CASE WHEN LOWER(p.payment_method) = 'cash' THEN p.amount_paid ELSE 0 END AS cash_out,
+          0 AS bank_in,
+          CASE WHEN LOWER(p.payment_method) <> 'cash' THEN p.amount_paid ELSE 0 END AS bank_out,
+          p.created_at
+        FROM purchases p
+        LEFT JOIN suppliers sup ON p.supplier_id = sup.id
+        WHERE p.amount_paid > 0
+
+        UNION ALL
+
+        SELECT
+          sp.payment_date AS entry_date,
+          'Supplier Payment: ' || sup.name || COALESCE(' (' || sp.notes || ')', '') AS description,
+          '' AS receipt_number,
+          0 AS cash_in,
+          CASE WHEN LOWER(sp.payment_method) = 'cash' THEN sp.amount ELSE 0 END AS cash_out,
+          0 AS bank_in,
+          CASE WHEN LOWER(sp.payment_method) <> 'cash' THEN sp.amount ELSE 0 END AS bank_out,
+          sp.created_at
+        FROM supplier_payments sp
+        JOIN suppliers sup ON sp.supplier_id = sup.id
+        WHERE sp.amount > 0
+
+        UNION ALL
+
+        SELECT
+          e.expense_date AS entry_date,
+          'Expense: ' || e.category || COALESCE(' (' || e.description || ')', '') AS description,
+          '' AS receipt_number,
+          0 AS cash_in,
+          CASE WHEN LOWER(e.payment_method) = 'cash' THEN e.amount ELSE 0 END AS cash_out,
+          0 AS bank_in,
+          CASE WHEN LOWER(e.payment_method) <> 'cash' THEN e.amount ELSE 0 END AS bank_out,
+          e.created_at
+        FROM expenses e
+        WHERE e.amount > 0
+
+        UNION ALL
+
+        SELECT
+          date AS entry_date,
+          CASE
+            WHEN count_rows = 1 AND type = 'Deposit' THEN 'Transfer from Cash to Bank' || COALESCE(' (' || reference || ')', '')
+            WHEN count_rows = 1 AND type = 'Withdrawal' THEN 'Transfer from Bank to Cash' || COALESCE(' (' || reference || ')', '')
+            ELSE 'Transfer between Bank Accounts' || COALESCE(' (' || reference || ')', '')
+          END AS description,
+          COALESCE(reference, '') AS receipt_number,
+          CASE WHEN count_rows = 1 AND type = 'Withdrawal' THEN amount ELSE 0 END AS cash_in,
+          CASE WHEN count_rows = 1 AND type = 'Deposit' THEN amount ELSE 0 END AS cash_out,
+          CASE WHEN type = 'Deposit' THEN amount ELSE 0 END AS bank_in,
+          CASE WHEN type = 'Withdrawal' THEN amount ELSE 0 END AS bank_out,
+          created_at
+        FROM (
+          SELECT
+            bt.type,
+            bt.amount,
+            bt.date,
+            bt.reference,
+            bt.created_at,
+            COUNT(*) OVER(PARTITION BY bt.reference, bt.date, bt.created_at) as count_rows
+          FROM bank_transactions bt
+        )
+      )
+      WHERE entry_date >= ? AND entry_date <= ?
+      ORDER BY entry_date ASC, created_at ASC
+      `,
+      [fromDate, toDate]
+    );
+
+    const finalEntries = [
+      {
+        id: 'opening',
+        entry_date: fromDate,
+        description: 'Opening Balance',
+        receipt_number: '',
+        cash_in: startingCash,
+        cash_out: 0,
+        bank_in: startingBank,
+        bank_out: 0,
+      },
+      ...entries,
+    ];
+
+    return {
+      entries: finalEntries,
+      startingCash,
+      startingBank,
+    };
+  }
+
   // ============================================================================
   // CUSTOMERS
   // ============================================================================
@@ -446,6 +676,12 @@ class PosStore {
     return { id: result.lastID, name, phone, opening_balance };
   }
 
+  async softDeleteCustomer(id) {
+    const db = await this._db();
+    await run(db, `UPDATE customers SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, [id]);
+    await this.audit("customer", id, "delete", null, null);
+  }
+
   async getCustomerHistory(customerId) {
     const db = await this._db();
     // Union sales and standalone payments to generate a combined ledger
@@ -505,6 +741,7 @@ class PosStore {
     const paymentDate = input.date || new Date().toISOString().split("T")[0];
     const paymentMethod = String(input.method || "Cash").trim() || "Cash";
     const notes = String(input.notes || "").trim() || null;
+    const type = String(input.type || "payment").trim();
 
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new Error("Amount must be greater than 0");
@@ -553,41 +790,47 @@ class PosStore {
         appliedAmount += applied;
       };
 
-      if (saleId) {
-        const selectedSale = await get(
-          db,
-          `SELECT id, amount_paid, balance_due, payment_status, paid_at
-           FROM sales
-           WHERE id = ?
-             AND customer_id = ?
-             AND COALESCE(voided_at, '') = ''`,
-          [saleId, customerId]
-        );
+      if (type !== "advance") {
+        if (saleId) {
+          const selectedSale = await get(
+            db,
+            `SELECT id, amount_paid, balance_due, payment_status, paid_at
+             FROM sales
+             WHERE id = ?
+               AND customer_id = ?
+               AND COALESCE(voided_at, '') = ''`,
+            [saleId, customerId]
+          );
 
-        if (!selectedSale) {
-          throw new Error("Sale not found for this customer");
+          if (!selectedSale) {
+            throw new Error("Sale not found for this customer");
+          }
+
+          await applyToSale(selectedSale);
         }
 
-        await applyToSale(selectedSale);
-      }
+        if (remainingToApply > 0) {
+          const openSales = await all(
+            db,
+            `SELECT id, amount_paid, balance_due, payment_status, paid_at
+             FROM sales
+             WHERE customer_id = ?
+               AND balance_due > 0
+               AND COALESCE(voided_at, '') = ''
+               AND (? IS NULL OR id <> ?)
+             ORDER BY sale_date ASC, id ASC`,
+            [customerId, saleId, saleId]
+          );
 
-      if (remainingToApply > 0) {
-        const openSales = await all(
-          db,
-          `SELECT id, amount_paid, balance_due, payment_status, paid_at
-           FROM sales
-           WHERE customer_id = ?
-             AND balance_due > 0
-             AND COALESCE(voided_at, '') = ''
-             AND (? IS NULL OR id <> ?)
-           ORDER BY sale_date ASC, id ASC`,
-          [customerId, saleId, saleId]
-        );
-
-        for (const sale of openSales) {
-          if (remainingToApply <= 0) break;
-          await applyToSale(sale);
+          for (const sale of openSales) {
+            if (remainingToApply <= 0) break;
+            await applyToSale(sale);
+          }
         }
+      } else {
+        // Skip applying to any open sales for advance/store credit
+        remainingToApply = amount;
+        appliedAmount = 0;
       }
 
       const unappliedAmount = Math.max(0, remainingToApply);
@@ -595,9 +838,9 @@ class PosStore {
       const insertResult = await run(
         db,
         `INSERT INTO customer_payments
-           (customer_id, sale_id, payment_date, amount, applied_amount, unapplied_amount, payment_method, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [customerId, saleId, paymentDate, amount, appliedAmount, unappliedAmount, paymentMethod, notes]
+           (customer_id, sale_id, payment_date, amount, applied_amount, unapplied_amount, payment_method, notes, type)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [customerId, saleId, paymentDate, amount, appliedAmount, unappliedAmount, paymentMethod, notes, type]
       );
 
       return {
@@ -607,6 +850,7 @@ class PosStore {
         amount,
         appliedAmount,
         unappliedAmount,
+        type,
       };
     });
   }
@@ -1011,6 +1255,7 @@ class PosStore {
       let discountTotal = 0;
       let total = 0;
       let amountPaid = Number(input.amountPaid || 0);
+      const creditApplied = Number(input.creditApplied || 0);
       const paymentMethod = String(input.paymentMethod || "Cash").trim() || "Cash";
       const paymentStatus = input.paymentStatus || (paymentMethod === "Credit" ? "Credit" : "Paid");
 
@@ -1018,8 +1263,8 @@ class PosStore {
         db,
         `
           INSERT INTO sales
-          (invoice_no, sale_date, customer_id, customer_name, phone, payment_method, payment_status, subtotal, discount_total, total, amount_paid, balance_due, notes)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, 0, ?)
+          (invoice_no, sale_date, customer_id, customer_name, phone, payment_method, payment_status, subtotal, discount_total, total, amount_paid, balance_due, credit_applied, notes)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, 0, ?, ?)
         `,
         [
           invoiceNo,
@@ -1030,6 +1275,7 @@ class PosStore {
           paymentMethod,
           paymentStatus,
           amountPaid,
+          creditApplied,
           String(input.notes || "").trim() || null,
         ]
       );
@@ -1107,12 +1353,46 @@ class PosStore {
       await run(
         db,
         `UPDATE sales
-         SET subtotal = ?, discount_total = ?, total = ?, amount_paid = ?, balance_due = ?, payment_status = ?, paid_at = ?, updated_at = CURRENT_TIMESTAMP
+         SET subtotal = ?, discount_total = ?, total = ?, amount_paid = ?, balance_due = ?, credit_applied = ?, payment_status = ?, paid_at = ?, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
-        [subtotal, discountTotal, total, amountPaid, balanceDue, normalizedStatus, paidAt, saleId]
+        [subtotal, discountTotal, total, amountPaid, balanceDue, creditApplied, normalizedStatus, paidAt, saleId]
       );
 
-      await this.audit("sale", saleId, "create", null, { ...input, invoiceNo, items: auditItems, subtotal, discountTotal, total, amountPaid, balanceDue });
+      if (creditApplied > 0 && input.customerId) {
+        let remaining = creditApplied;
+        const payments = await all(
+          db,
+          `SELECT id, unapplied_amount FROM customer_payments
+           WHERE customer_id = ? AND unapplied_amount > 0
+           ORDER BY payment_date ASC, id ASC`,
+          [input.customerId]
+        );
+        for (const payment of payments) {
+          if (remaining <= 0) break;
+          const take = Math.min(payment.unapplied_amount, remaining);
+          await run(
+            db,
+            `UPDATE customer_payments SET unapplied_amount = MAX(unapplied_amount - ?, 0) WHERE id = ?`,
+            [take, payment.id]
+          );
+          remaining -= take;
+        }
+
+        if (remaining > 0) {
+          const cust = await get(db, `SELECT opening_balance FROM customers WHERE id = ?`, [input.customerId]);
+          if (cust && cust.opening_balance < 0) {
+            const take = Math.min(Math.abs(cust.opening_balance), remaining);
+            await run(
+              db,
+              `UPDATE customers SET opening_balance = opening_balance + ? WHERE id = ?`,
+              [take, input.customerId]
+            );
+            remaining -= take;
+          }
+        }
+      }
+
+      await this.audit("sale", saleId, "create", null, { ...input, invoiceNo, items: auditItems, subtotal, discountTotal, total, amountPaid, balanceDue, creditApplied });
       return {
         id: saleId,
         invoiceNo,
@@ -1122,6 +1402,7 @@ class PosStore {
         total,
         amountPaid,
         balanceDue,
+        creditApplied,
         paymentMethod,
         paymentStatus: normalizedStatus,
         items: auditItems,
@@ -1214,9 +1495,12 @@ class PosStore {
     return this.nextInvoiceNo(db, saleDate || new Date().toISOString().slice(0, 10));
   }
 
-  async listSales({ limit = 100, search = "", paymentMethod = "", from = "", to = "" } = {}) {
+  async listSales({ limit = 100, search = "", paymentMethod = "", from = "", to = "", includeVoided = false } = {}) {
     const db = await this._db();
-    const conditions = ["COALESCE(voided_at, '') = ''"];
+    const conditions = [];
+    if (!includeVoided) {
+      conditions.push("COALESCE(voided_at, '') = ''");
+    }
     const params = [];
 
     if (search) {
@@ -1238,6 +1522,7 @@ class PosStore {
     }
 
     params.push(limit);
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     return all(
       db,
       `SELECT
@@ -1254,9 +1539,10 @@ class PosStore {
           amount_paid AS amountPaid,
           balance_due AS balanceDue,
           notes,
+          voided_at AS voidedAt,
           created_at AS createdAt
        FROM sales
-       WHERE ${conditions.join(" AND ")}
+       ${whereClause}
        ORDER BY id DESC
        LIMIT ?`,
       params
@@ -1267,7 +1553,7 @@ class PosStore {
     const db = await this._db();
     return all(
       db,
-      `SELECT id, product_name AS productName, quantity, unit, unit_price AS unitPrice, discount, line_total AS lineTotal
+      `SELECT id, product_id AS productId, product_name AS productName, quantity, unit, unit_price AS unitPrice, discount, line_total AS lineTotal
        FROM sale_items WHERE sale_id = ? ORDER BY id ASC`,
       [saleId]
     );
@@ -1289,6 +1575,16 @@ class PosStore {
     );
     if (!sale) return null;
     sale.items = await this.getSaleItems(id);
+    try {
+      sale.returns = await all(
+        db,
+        `SELECT id, product_id AS productId, product_name AS productName, quantity, unit_price AS unitPrice, refund_amount AS refundAmount, returned_at AS returnedAt
+         FROM sales_returns WHERE sale_id = ? ORDER BY id ASC`,
+        [id]
+      );
+    } catch {
+      sale.returns = [];
+    }
     return sale;
   }
 
@@ -1316,8 +1612,79 @@ class PosStore {
       }
 
       await run(db, `UPDATE sales SET voided_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [id]);
+
+      if (sale.credit_applied > 0 && sale.customer_id) {
+        await run(
+          db,
+          `INSERT INTO customer_payments (customer_id, sale_id, payment_date, amount, applied_amount, unapplied_amount, payment_method, notes, type)
+           VALUES (?, ?, ?, 0, 0, ?, 'Adjustment', 'Refund of applied credit from voided sale', 'advance')`,
+          [sale.customer_id, id, new Date().toISOString().slice(0, 10), sale.credit_applied]
+        );
+      }
+
       await this.audit("sale", id, "void", { invoiceNo: sale.invoice_no }, null);
       return { id, invoiceNo: sale.invoice_no, voidedAt: new Date().toISOString() };
+    });
+  }
+
+  async returnSaleItems(saleId, items) {
+    return this.transaction(async (db) => {
+      const sale = await get(db, `SELECT * FROM sales WHERE id = ? LIMIT 1`, [saleId]);
+      if (!sale) throw new Error("Sale not found");
+
+      await run(db, `
+        CREATE TABLE IF NOT EXISTS sales_returns (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          sale_id INTEGER NOT NULL,
+          product_id INTEGER NOT NULL,
+          product_name TEXT NOT NULL,
+          quantity REAL NOT NULL,
+          unit_price REAL NOT NULL,
+          refund_amount REAL NOT NULL,
+          returned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (sale_id) REFERENCES sales(id),
+          FOREIGN KEY (product_id) REFERENCES products(id)
+        )
+      `);
+
+      for (const item of items) {
+        const refundAmount = item.quantity * item.price;
+        await run(
+          db,
+          `INSERT INTO sales_returns (sale_id, product_id, product_name, quantity, unit_price, refund_amount)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [saleId, item.productId, item.productName, item.quantity, item.price, refundAmount]
+        );
+
+        // Reverse stock deduction
+        await run(
+          db,
+          `UPDATE products SET current_stock = COALESCE(current_stock, 0) + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+          [item.quantity, item.productId]
+        );
+
+        // Write return movement
+        await run(
+          db,
+          `INSERT INTO inventory_movements (product_id, movement_type, quantity, unit_cost, reference_type, reference_id, note)
+           VALUES (?, 'return', ?, ?, 'sale', ?, ?)`,
+          [item.productId, item.quantity, item.price, saleId, `return:${sale.invoice_no}`]
+        );
+      }
+
+      await run(db, `UPDATE sales SET voided_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [saleId]);
+
+      if (sale.credit_applied > 0 && sale.customer_id) {
+        await run(
+          db,
+          `INSERT INTO customer_payments (customer_id, sale_id, payment_date, amount, applied_amount, unapplied_amount, payment_method, notes, type)
+           VALUES (?, ?, ?, 0, 0, ?, 'Adjustment', 'Refund of applied credit from returned sale', 'advance')`,
+          [sale.customer_id, saleId, new Date().toISOString().slice(0, 10), sale.credit_applied]
+        );
+      }
+
+      await this.audit("sale", saleId, "return", { invoiceNo: sale.invoice_no, items }, null);
+      return { id: saleId, invoiceNo: sale.invoice_no, returnedAt: new Date().toISOString() };
     });
   }
 

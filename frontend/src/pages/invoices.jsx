@@ -18,143 +18,8 @@ import {
   ChevronDown,
 } from "lucide-react";
 
-const invoicesSeed = [
-  {
-    id: "INV-1001",
-    client: "Apex Logistics",
-    issueDate: "2026-05-02",
-    dueDate: "2026-05-18",
-    amount: 4800,
-    tax: 240,
-    status: "Paid",
-    items: [
-      { name: "Freight Services", qty: 2, price: 2200, discount: 0 },
-      { name: "Handling Charges", qty: 1, price: 400, discount: 0 },
-    ],
-    paymentHistory: [
-      { date: "2026-05-15", amount: 5040, method: "Bank Transfer" },
-    ],
-  },
-  {
-    id: "INV-1002",
-    client: "BluePeak Studio",
-    issueDate: "2026-04-12",
-    dueDate: "2026-04-25",
-    amount: 1200,
-    tax: 60,
-    status: "Pending",
-    items: [{ name: "Brand Identity", qty: 1, price: 1200, discount: 0 }],
-    paymentHistory: [],
-  },
-  {
-    id: "INV-1003",
-    client: "Nova Retail",
-    issueDate: "2026-05-10",
-    dueDate: "2026-06-02",
-    amount: 8650,
-    tax: 432.5,
-    status: "Pending",
-    items: [
-      { name: "POS System", qty: 1, price: 7200, discount: 0 },
-      { name: "Support", qty: 1, price: 1450, discount: 0 },
-    ],
-    paymentHistory: [],
-  },
-  {
-    id: "INV-1004",
-    client: "Cedar Media",
-    issueDate: "2026-01-20",
-    dueDate: "2026-02-01",
-    amount: 2400,
-    tax: 120,
-    status: "Paid",
-    items: [{ name: "Video Editing", qty: 12, price: 200, discount: 0 }],
-    paymentHistory: [
-      { date: "2026-01-31", amount: 2520, method: "Stripe" },
-    ],
-  },
-  {
-    id: "INV-1005",
-    client: "Northwind Traders",
-    issueDate: "2026-03-10",
-    dueDate: "2026-03-22",
-    amount: 3200,
-    tax: 160,
-    status: "Pending",
-    items: [{ name: "Inventory Audit", qty: 4, price: 800, discount: 0 }],
-    paymentHistory: [],
-  },
-  {
-    id: "INV-1006",
-    client: "PixelForge",
-    issueDate: "2026-02-14",
-    dueDate: "2026-02-28",
-    amount: 960,
-    tax: 48,
-    status: "Pending",
-    items: [{ name: "Landing Page", qty: 1, price: 960, discount: 0 }],
-    paymentHistory: [],
-  },
-];
+import { listSales, getSale, voidSale, saveCustomerPayment } from "../lib/posApi";
 
-while (invoicesSeed.length < 24) {
-  const statuses = [
-    "Paid",
-    "Pending",
-  ];
-
-  const clients = [
-    "Vertex Labs",
-    "Motionly",
-    "Orbit Tech",
-    "Cheema Traders",
-    "Everline Group",
-    "Oakstone",
-    "Skyline Ventures",
-    "BrightPath",
-  ];
-
-  const randomStatus =
-    statuses[Math.floor(Math.random() * statuses.length)];
-
-  const randomAmount = Math.floor(Math.random() * 9000) + 700;
-
-  const index = invoicesSeed.length + 1;
-
-  invoicesSeed.push({
-    id: `INV-${1000 + index}`,
-    client: clients[Math.floor(Math.random() * clients.length)],
-    issueDate: `2026-${String(Math.floor(Math.random() * 5) + 1).padStart(
-      2,
-      "0"
-    )}-${String(Math.floor(Math.random() * 28) + 1).padStart(2, "0")}`,
-    dueDate: `2026-${String(Math.floor(Math.random() * 5) + 1).padStart(
-      2,
-      "0"
-    )}-${String(Math.floor(Math.random() * 28) + 1).padStart(2, "0")}`,
-    amount: randomAmount,
-    tax: randomAmount * 0.05,
-    status: randomStatus,
-    items: [
-      {
-        name: "Consulting Services",
-        qty: Math.floor(Math.random() * 5) + 1,
-        price: randomAmount / 2,
-        discount: 0,
-      },
-    ],
-    paymentHistory:
-      randomStatus === "Paid"
-        ? [
-          {
-            date: "2026-04-12",
-            amount: randomAmount * 1.05,
-            method: "Card",
-          },
-        ]
-        : [],
-  });
-}
 
 const statusStyles = {
   Paid: "bg-[#EAF3DE] text-[#3B6D11]",
@@ -178,7 +43,9 @@ const formatDate = (date) =>
   });
 
 export default function InvoiceHistoryModule() {
-  const [invoices, setInvoices] = useState(invoicesSeed);
+  const [invoices, setInvoices] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("All");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("newest");
@@ -186,13 +53,83 @@ export default function InvoiceHistoryModule() {
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [page, setPage] = useState(1);
   const [selectedRows, setSelectedRows] = useState([]);
-  const [editingInvoice, setEditingInvoice] = useState(null);
   const [returnInvoice, setReturnInvoice] = useState(null);
   const [expandedRows, setExpandedRows] = useState({});
   const [expandedRowY, setExpandedRowY] = useState(0);
   const [returnSelections, setReturnSelections] = useState({});
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+
+  const loadInvoices = () => {
+    setLoading(true);
+    setError("");
+    listSales({ limit: 1000 })
+      .then(({ sales }) => {
+        const mapped = (sales || []).map(s => ({
+          id: s.id,
+          invoiceNo: s.invoiceNo,
+          customerId: s.customerId,
+          client: s.customerName || "Walk-in Customer",
+          issueDate: s.saleDate,
+          dueDate: s.saleDate,
+          amount: s.subtotal,
+          discountTotal: s.discountTotal || 0,
+          tax: 0,
+          total: s.total,
+          balanceDue: s.balanceDue,
+          status: s.paymentStatus === "Paid" ? "Paid" : "Pending",
+          items: [],
+          itemsLoaded: false,
+          paymentHistory: s.amountPaid > 0 ? [{ date: s.saleDate, amount: s.amountPaid, method: s.paymentMethod }] : [],
+        }));
+        setInvoices(mapped);
+      })
+      .catch(e => {
+        console.error("Failed to load invoices:", e);
+        setError(e.message || "Failed to load invoices.");
+      })
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    loadInvoices();
+  }, []);
+
+  const fetchInvoiceDetails = async (id) => {
+    const inv = invoices.find(i => i.id === id);
+    if (!inv || inv.itemsLoaded) return inv;
+
+    try {
+      const { sale } = await getSale(id);
+      if (sale) {
+        const mappedItems = (sale.items || []).map(item => ({
+          name: item.productName || item.name,
+          qty: item.quantity || item.qty,
+          price: item.unitPrice || item.price,
+          discount: item.discount || 0,
+          lineTotal: item.lineTotal || ((item.quantity || item.qty) * (item.unitPrice || item.price))
+        }));
+        const updatedInvoice = {
+          ...inv,
+          itemsLoaded: true,
+          items: mappedItems
+        };
+        setInvoices(prev => prev.map(item => item.id === id ? updatedInvoice : item));
+        return updatedInvoice;
+      }
+    } catch (e) {
+      console.error("Error loading invoice items:", e);
+    }
+    return inv;
+  };
+
+  const openDrawer = async (inv) => {
+    setDrawerInvoice(inv);
+    const updated = await fetchInvoiceDetails(inv.id);
+    if (updated) {
+      setDrawerInvoice(updated);
+    }
+  };
 
   useEffect(() => {
     const close = (e) => {
@@ -248,7 +185,8 @@ export default function InvoiceHistoryModule() {
 
     if (search) {
       data = data.filter((i) =>
-        i.client.toLowerCase().includes(search.toLowerCase())
+        i.client.toLowerCase().includes(search.toLowerCase()) ||
+        i.invoiceNo.toLowerCase().includes(search.toLowerCase())
       );
     }
 
@@ -268,10 +206,10 @@ export default function InvoiceHistoryModule() {
         );
         break;
       case "high":
-        data.sort((a, b) => b.amount - a.amount);
+        data.sort((a, b) => b.total - a.total);
         break;
       case "low":
-        data.sort((a, b) => a.amount - b.amount);
+        data.sort((a, b) => a.total - b.total);
         break;
     }
 
@@ -289,11 +227,11 @@ export default function InvoiceHistoryModule() {
 
   const totalCollected = invoices
     .filter((i) => i.status === "Paid")
-    .reduce((acc, curr) => acc + curr.amount + curr.tax, 0);
+    .reduce((acc, curr) => acc + curr.total, 0);
 
   const outstanding = invoices
     .filter((i) => i.status === "Pending")
-    .reduce((acc, curr) => acc + curr.amount + curr.tax, 0);
+    .reduce((acc, curr) => acc + curr.balanceDue, 0);
 
   const totalPages = Math.ceil(filteredInvoices.length / rowsPerPage);
 
@@ -310,35 +248,73 @@ export default function InvoiceHistoryModule() {
     );
   };
 
-  const markSelectedPaid = () => {
-    setInvoices((prev) =>
-      prev.map((i) =>
-        selectedRows.includes(i.id)
-          ? { ...i, status: "Paid" }
-          : i
-      )
-    );
+  const markSelectedPaid = async () => {
+    const pendingRows = invoices.filter(i => selectedRows.includes(i.id) && i.status !== "Paid");
+    if (!pendingRows.length) {
+      setSelectedRows([]);
+      return;
+    }
+    
+    const hasWalkIn = pendingRows.some(i => !i.customerId);
+    if (hasWalkIn) {
+      alert("One or more selected invoices belong to Walk-in customers. Bulk payment is only supported for registered customers.");
+      return;
+    }
 
-    setSelectedRows([]);
+    try {
+      for (const inv of pendingRows) {
+        await saveCustomerPayment({
+          customerId: inv.customerId,
+          saleId: inv.id,
+          amount: inv.balanceDue,
+          method: "Cash",
+          notes: "Marked as paid in bulk"
+        });
+      }
+      loadInvoices();
+      setSelectedRows([]);
+    } catch (err) {
+      alert("Error marking some invoices as paid: " + err.message);
+    }
   };
 
-  const saveEdit = (updated) => {
-    setInvoices((prev) =>
-      prev.map((i) => (i.id === updated.id ? updated : i))
-    );
-    setEditingInvoice(null);
-    setDrawerInvoice(updated);
+  const markOnePaid = async (id) => {
+    const inv = invoices.find(i => i.id === id);
+    if (!inv) return;
+    if (!inv.customerId) {
+      alert("Walk-in customer sales cannot be paid via account payment. Please void or edit the sale.");
+      return;
+    }
+    if (inv.balanceDue <= 0) {
+      alert("Invoice is already paid.");
+      return;
+    }
+    try {
+      await saveCustomerPayment({
+        customerId: inv.customerId,
+        saleId: id,
+        amount: inv.balanceDue,
+        method: "Cash",
+        notes: "Marked as paid from invoice history"
+      });
+      loadInvoices();
+      if (drawerInvoice?.id === id) {
+        setDrawerInvoice(prev => ({ ...prev, status: "Paid", balanceDue: 0 }));
+      }
+    } catch (err) {
+      alert("Failed to mark as paid: " + err.message);
+    }
   };
 
-  const markOnePaid = (id) => {
-    setInvoices(prev => prev.map(i => i.id === id ? { ...i, status: "Paid" } : i));
-    if (drawerInvoice?.id === id) setDrawerInvoice(prev => ({ ...prev, status: "Paid" }));
-  };
-
-  const deleteInvoice = (id) => {
-    if (!window.confirm("Delete this invoice? This cannot be undone.")) return;
-    setInvoices(prev => prev.filter(i => i.id !== id));
-    if (drawerInvoice?.id === id) setDrawerInvoice(null);
+  const deleteInvoice = async (id) => {
+    if (!window.confirm("Delete (void) this invoice? This cannot be undone.")) return;
+    try {
+      await voidSale(id);
+      loadInvoices();
+      if (drawerInvoice?.id === id) setDrawerInvoice(null);
+    } catch (err) {
+      alert("Failed to void invoice: " + err.message);
+    }
   };
 
   return (
@@ -435,10 +411,10 @@ export default function InvoiceHistoryModule() {
             <div className="flex gap-2">
               <button
                 onClick={() => {
-                  const headers = ["Invoice", "Client", "Issue Date", "Due Date", "Amount", "Tax", "Total", "Status"];
+                  const headers = ["Invoice", "Client", "Issue Date", "Due Date", "Subtotal", "Total", "Balance Due", "Status"];
                   const rows = filteredInvoices.map(i => [
-                    i.id, i.client, i.issueDate, i.dueDate,
-                    i.amount, i.tax, (i.amount + i.tax).toFixed(2), i.status
+                    i.invoiceNo, i.client, i.issueDate, i.dueDate,
+                    i.amount, i.total, i.balanceDue, i.status
                   ]);
                   const csv = [headers, ...rows].map(r => r.join(",")).join("\n");
                   const blob = new Blob([csv], { type: "text/csv" });
@@ -521,10 +497,14 @@ export default function InvoiceHistoryModule() {
                     <React.Fragment key={invoice.id}>
                       <tr
                         className="cursor-pointer border-b transition hover:bg-[#fafdfa]"
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           const rect = e.currentTarget.getBoundingClientRect();
                           setExpandedRowY(rect.top);
-                          setExpandedRows(prev => ({ ...prev, [invoice.id]: !prev[invoice.id] }));
+                          const isOpening = !expandedRows[invoice.id];
+                          setExpandedRows(prev => ({ ...prev, [invoice.id]: isOpening }));
+                          if (isOpening) {
+                            await fetchInvoiceDetails(invoice.id);
+                          }
                         }}
                       >
                         <td
@@ -546,7 +526,7 @@ export default function InvoiceHistoryModule() {
                           <div className="flex items-center gap-2">
                             {expandedRows[invoice.id] ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                             <div>
-                              <p className="font-semibold">{invoice.id}</p>
+                              <p className="font-semibold">{invoice.invoiceNo || invoice.id}</p>
                               <p className="text-sm text-neutral-500">{invoice.client}</p>
                             </div>
                           </div>
@@ -567,11 +547,8 @@ export default function InvoiceHistoryModule() {
 
                         <td
                           className="px-5 py-4 text-right font-medium"
-                          title={`Tax: ${formatMoney(
-                            invoice.tax
-                          )}`}
                         >
-                          {formatMoney(invoice.amount)}
+                          {formatMoney(invoice.total)}
                         </td>
 
                         <td className="px-5 py-4">
@@ -593,11 +570,13 @@ export default function InvoiceHistoryModule() {
 
                             <div className="invisible absolute right-0 z-20 mt-2 w-52 rounded-2xl border bg-white p-2 opacity-0 shadow-xl transition-all group-hover:visible group-hover:opacity-100">
                               {[
-                                { label: "View", icon: FileText, action: (inv) => setDrawerInvoice(inv) },
+                                { label: "View", icon: FileText, action: (inv) => openDrawer(inv) },
                                 { label: "Download PDF", icon: Download, action: () => { } },
                                 { label: "Mark as paid", icon: CheckCircle2, action: (inv) => markOnePaid(inv.id) },
-                                { label: "Edit", icon: Pencil, action: (inv) => setEditingInvoice({ ...inv }) },
-                                { label: "Return Items", icon: RotateCcw, action: (inv) => setReturnInvoice(inv) },
+                                { label: "Return Items", icon: RotateCcw, action: (inv) => {
+                                  setReturnInvoice(inv);
+                                  fetchInvoiceDetails(inv.id);
+                                } },
                                 { label: "Delete", icon: Trash2, action: (inv) => deleteInvoice(inv.id) },
                               ].map((item) => (
                                 <button
@@ -676,7 +655,7 @@ export default function InvoiceHistoryModule() {
           </div>
           {Object.entries(expandedRows).map(([id, open]) => {
             if (!open) return null;
-            const inv = paginated.find(i => i.id === id);
+            const inv = paginated.find(i => String(i.id) === id);
             if (!inv) return null;
             return (
               <div
@@ -685,34 +664,41 @@ export default function InvoiceHistoryModule() {
                 className="fixed right-6 z-50 w-[520px] rounded-3xl bg-white shadow-2xl border border-[#e8f0e8] p-5"
               >
                 <div className="flex justify-between items-center mb-3">
-                  <p className="font-bold">{inv.id} — {inv.client}</p>
+                  <p className="font-bold">{inv.invoiceNo || inv.id} — {inv.client}</p>
                   <button onClick={() => setExpandedRows(prev => ({ ...prev, [id]: false }))}>
                     <X size={16} />
                   </button>
                 </div>
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-neutral-500 border-b">
-                      <th className="text-left pb-2">Product</th>
-                      <th className="text-right pb-2">Qty</th>
-                      <th className="text-right pb-2">Unit Price</th>
-                      <th className="text-right pb-2">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {inv.items.map((item, i) => (
-                      <tr key={i} className="border-b last:border-0">
-                        <td className="py-2">{item.name}</td>
-                        <td className="text-right">{item.qty}</td>
-                        <td className="text-right">{formatMoney(item.price)}</td>
-                        <td className="text-right font-semibold">{formatMoney(item.qty * item.price)}</td>
+                {!inv.itemsLoaded ? (
+                  <div className="py-6 text-center text-sm text-[#2e7d32] font-medium">Loading items...</div>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-neutral-500 border-b">
+                        <th className="text-left pb-2">Product</th>
+                        <th className="text-right pb-2">Qty</th>
+                        <th className="text-right pb-2">Unit Price</th>
+                        <th className="text-right pb-2">Total</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {inv.items.map((item, i) => (
+                        <tr key={i} className="border-b last:border-0">
+                          <td className="py-2">{item.name}</td>
+                          <td className="text-right">{item.qty}</td>
+                          <td className="text-right">{formatMoney(item.price)}</td>
+                          <td className="text-right font-semibold">{formatMoney(item.lineTotal || (item.qty * item.price))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
                 <div className="mt-3 flex gap-3 justify-end">
-                  <button onClick={() => setReturnInvoice(inv)} className="text-sm px-3 py-1.5 rounded-lg border hover:bg-neutral-50">↩ Return Items</button>
-                  <button onClick={() => setDrawerInvoice(inv)} className="text-sm px-3 py-1.5 rounded-lg bg-[#2e7d32] text-white hover:opacity-90">Full Details</button>
+                  <button onClick={() => {
+                    setReturnInvoice(inv);
+                    fetchInvoiceDetails(inv.id);
+                  }} className="text-sm px-3 py-1.5 rounded-lg border hover:bg-neutral-50">↩ Return Items</button>
+                  <button onClick={() => openDrawer(inv)} className="text-sm px-3 py-1.5 rounded-lg bg-[#2e7d32] text-white hover:opacity-90">Full Details</button>
                 </div>
               </div>
             );
@@ -732,7 +718,7 @@ export default function InvoiceHistoryModule() {
             <div className="flex items-center justify-between border-b px-6 py-5">
               <div>
                 <h2 className="text-xl font-bold">
-                  {drawerInvoice.id}
+                  {drawerInvoice.invoiceNo || drawerInvoice.id}
                 </h2>
                 <p className="text-sm text-neutral-500">
                   {drawerInvoice.client}
@@ -766,22 +752,26 @@ export default function InvoiceHistoryModule() {
                   </div>
                 </div>
 
-                <div className="space-y-2 text-sm">
-                  {drawerInvoice.items.map((item, idx) => (
-                    <div
-                      key={idx}
-                      className="flex items-center justify-between"
-                    >
-                      <span>
-                        {item.name} × {item.qty}
-                      </span>
+                {!drawerInvoice.itemsLoaded ? (
+                  <div className="py-6 text-center text-sm text-[#2e7d32] font-medium">Loading details...</div>
+                ) : (
+                  <div className="space-y-2 text-sm">
+                    {drawerInvoice.items.map((item, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between"
+                      >
+                        <span>
+                          {item.name} × {item.qty}
+                        </span>
 
-                      <span>
-                        {formatMoney(item.price)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                        <span>
+                          {formatMoney(item.price)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 <div className="mt-6 space-y-2 border-t pt-4 text-sm">
                   <div className="flex justify-between">
@@ -791,22 +781,30 @@ export default function InvoiceHistoryModule() {
                     </span>
                   </div>
 
-                  <div className="flex justify-between">
-                    <span>Tax</span>
-                    <span>
-                      {formatMoney(drawerInvoice.tax)}
-                    </span>
-                  </div>
+                  {drawerInvoice.discountTotal > 0 && (
+                    <div className="flex justify-between text-red-600">
+                      <span>Discount</span>
+                      <span>
+                        -{formatMoney(drawerInvoice.discountTotal)}
+                      </span>
+                    </div>
+                  )}
 
                   <div className="flex justify-between text-base font-bold">
                     <span>Total</span>
                     <span>
-                      {formatMoney(
-                        drawerInvoice.amount +
-                        drawerInvoice.tax
-                      )}
+                      {formatMoney(drawerInvoice.total)}
                     </span>
                   </div>
+
+                  {drawerInvoice.balanceDue > 0 && (
+                    <div className="flex justify-between text-sm font-semibold text-red-600">
+                      <span>Outstanding Balance</span>
+                      <span>
+                        {formatMoney(drawerInvoice.balanceDue)}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -815,8 +813,7 @@ export default function InvoiceHistoryModule() {
                   Payment History
                 </h4>
 
-                {drawerInvoice.paymentHistory.length >
-                  0 ? (
+                {drawerInvoice.paymentHistory && drawerInvoice.paymentHistory.length > 0 ? (
                   <div className="space-y-3">
                     {drawerInvoice.paymentHistory.map(
                       (payment, idx) => (
@@ -862,117 +859,15 @@ export default function InvoiceHistoryModule() {
                   Delete Invoice
                 </button>
 
-                <button
-                  onClick={() => markOnePaid(drawerInvoice.id)}
-                  className="rounded-2xl border px-5 py-3 font-medium hover:bg-neutral-50"
-                >
-                  Mark as Paid
-                </button>
-
-                <button
-                  onClick={() => setEditingInvoice({ ...drawerInvoice })}
-                  className="rounded-2xl border px-5 py-3 font-medium"
-                >
-                  Edit Invoice
-                </button>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
-
-      {editingInvoice && (
-        <>
-          <div
-            className="fixed inset-0 z-60 bg-black/40"
-            onClick={() => setEditingInvoice(null)}
-          />
-          <div className="fixed left-1/2 top-1/2 z-70 w-[480px] -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white p-8 shadow-2xl">
-            <h2 className="mb-6 text-xl font-bold">Edit Invoice</h2>
-
-            <div className="space-y-4">
-              <div>
-                <label className="mb-1 block text-sm text-neutral-500">Client</label>
-                <input
-                  className="w-full rounded-xl border px-4 py-2"
-                  value={editingInvoice.client}
-                  onChange={(e) =>
-                    setEditingInvoice((prev) => ({ ...prev, client: e.target.value }))
-                  }
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="mb-1 block text-sm text-neutral-500">Issue Date</label>
-                  <input
-                    type="date"
-                    className="w-full rounded-xl border px-4 py-2"
-                    value={editingInvoice.issueDate}
-                    onChange={(e) =>
-                      setEditingInvoice((prev) => ({ ...prev, issueDate: e.target.value }))
-                    }
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm text-neutral-500">Due Date</label>
-                  <input
-                    type="date"
-                    className="w-full rounded-xl border px-4 py-2"
-                    value={editingInvoice.dueDate}
-                    onChange={(e) =>
-                      setEditingInvoice((prev) => ({ ...prev, dueDate: e.target.value }))
-                    }
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="mb-1 block text-sm text-neutral-500">Amount (₨)</label>
-                  <input
-                    type="number"
-                    className="w-full rounded-xl border px-4 py-2"
-                    value={editingInvoice.amount}
-                    onChange={(e) =>
-                      setEditingInvoice((prev) => ({
-                        ...prev,
-                        amount: Number(e.target.value),
-                        tax: Number(e.target.value) * 0.05,
-                      }))
-                    }
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm text-neutral-500">Status</label>
-                  <select
-                    className="w-full rounded-xl border px-4 py-2"
-                    value={editingInvoice.status}
-                    onChange={(e) =>
-                      setEditingInvoice((prev) => ({ ...prev, status: e.target.value }))
-                    }
+                {drawerInvoice.status !== "Paid" && (
+                  <button
+                    onClick={() => markOnePaid(drawerInvoice.id)}
+                    className="rounded-2xl border px-5 py-3 font-medium hover:bg-neutral-50"
                   >
-                    {["Paid", "Pending", "Returned"].map((s) => (
-                      <option key={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
+                    Mark as Paid
+                  </button>
+                )}
               </div>
-            </div>
-
-            <div className="mt-8 flex gap-3">
-              <button
-                onClick={() => saveEdit(editingInvoice)}
-                className="flex-1 rounded-2xl bg-[#2e7d32] py-3 font-medium text-white hover:opacity-90"
-              >
-                Save Changes
-              </button>
-              <button
-                onClick={() => setEditingInvoice(null)}
-                className="flex-1 rounded-2xl border py-3 font-medium"
-              >
-                Cancel
-              </button>
             </div>
           </div>
         </>
@@ -983,46 +878,55 @@ export default function InvoiceHistoryModule() {
           <div className="fixed inset-0 z-60 bg-black/40" onClick={() => setReturnInvoice(null)} />
           <div className="fixed left-1/2 top-1/2 z-70 w-[520px] -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white p-8 shadow-2xl text-left">
             <h2 className="mb-2 text-xl font-bold">Return Items</h2>
-            <p className="text-sm text-neutral-500 mb-6">{returnInvoice.id} · {returnInvoice.client}</p>
+            <p className="text-sm text-neutral-500 mb-6">{returnInvoice.invoiceNo || returnInvoice.id} · {returnInvoice.client}</p>
 
-            <div className="space-y-3 mb-6">
-              {returnInvoice.items.map((item, idx) => {
-                const key = `${returnInvoice.id}-${idx}`;
-                const sel = returnSelections[key] || { checked: false, qty: item.qty };
-                return (
-                  <div key={idx} className="flex items-center gap-4 rounded-xl border p-3">
-                    <input type="checkbox" checked={sel.checked}
-                      onChange={e => setReturnSelections(prev => ({ ...prev, [key]: { ...sel, checked: e.target.checked } }))} />
-                    <div className="flex-1">
-                      <p className="font-medium text-sm">{item.name}</p>
-                      <p className="text-xs text-neutral-500">Max: {item.qty}</p>
+            {!returnInvoice.itemsLoaded ? (
+              <div className="py-12 text-center text-sm text-[#2e7d32] font-medium">Loading items...</div>
+            ) : (
+              <div className="space-y-3 mb-6">
+                {(returnInvoice.items || []).map((item, idx) => {
+                  const key = `${returnInvoice.id}-${idx}`;
+                  const sel = returnSelections[key] || { checked: false, qty: item.qty };
+                  return (
+                    <div key={idx} className="flex items-center gap-4 rounded-xl border p-3">
+                      <input type="checkbox" checked={sel.checked}
+                        onChange={e => setReturnSelections(prev => ({ ...prev, [key]: { ...sel, checked: e.target.checked } }))} />
+                      <div className="flex-1">
+                        <p className="font-medium text-sm">{item.name}</p>
+                        <p className="text-xs text-neutral-500">Max: {item.qty}</p>
+                      </div>
+                      <input type="number" min={1} max={item.qty} value={sel.qty}
+                        disabled={!sel.checked}
+                        onChange={e => setReturnSelections(prev => ({ ...prev, [key]: { ...sel, qty: Math.min(item.qty, Number(e.target.value)) } }))}
+                        className="w-20 rounded-lg border px-2 py-1 text-sm disabled:opacity-40" />
+                      <span className="text-sm font-medium w-24 text-right">
+                        {formatMoney(item.price * (sel.checked ? sel.qty : 0))}
+                      </span>
                     </div>
-                    <input type="number" min={1} max={item.qty} value={sel.qty}
-                      disabled={!sel.checked}
-                      onChange={e => setReturnSelections(prev => ({ ...prev, [key]: { ...sel, qty: Math.min(item.qty, Number(e.target.value)) } }))}
-                      className="w-20 rounded-lg border px-2 py-1 text-sm disabled:opacity-40" />
-                    <span className="text-sm font-medium w-24 text-right">
-                      {formatMoney(item.price * (sel.checked ? sel.qty : 0))}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
 
             <div className="flex gap-3">
               <button
-                onClick={() => {
+                onClick={async () => {
                   const hasSelection = Object.values(returnSelections).some(s => s.checked);
                   if (!hasSelection) { alert("Select at least one item to return."); return; }
-                  setInvoices(prev => prev.map(i => i.id === returnInvoice.id
-                    ? { ...i, status: "Returned" }
-                    : i
-                  ));
-                  if (drawerInvoice && drawerInvoice.id === returnInvoice.id) {
-                    setDrawerInvoice(prev => ({ ...prev, status: "Returned" }));
+
+                  if (!window.confirm("Confirm return of items? This will void the invoice and restore stock.")) return;
+
+                  try {
+                    await voidSale(returnInvoice.id);
+                    loadInvoices();
+                    setReturnInvoice(null);
+                    setReturnSelections({});
+                    if (drawerInvoice && drawerInvoice.id === returnInvoice.id) {
+                      setDrawerInvoice(null);
+                    }
+                  } catch (err) {
+                    alert("Failed to void sale for return: " + err.message);
                   }
-                  setReturnInvoice(null);
-                  setReturnSelections({});
                 }}
                 className="flex-1 rounded-2xl bg-[#2e7d32] py-3 font-medium text-white hover:opacity-90"
               >
@@ -1036,6 +940,7 @@ export default function InvoiceHistoryModule() {
           </div>
         </>
       )}
+
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Search, Printer, FileDown } from 'lucide-react';
+import { getCashBook } from '../lib/posApi';
 
 function fmt(n) { return (n || 0).toLocaleString(); }
 
@@ -94,16 +95,6 @@ function computeRunning(entries) {
     });
 }
 
-const MOCK_ENTRIES = [
-    { id: 1, entry_date: '2026-05-18', description: 'Opening Balance', receipt_number: '', cash_in: 50000, cash_out: 0, bank_in: 150000, bank_out: 0 },
-    { id: 2, entry_date: '2026-05-18', description: 'Sale: INV-1042 (Walk-in)', receipt_number: 'INV-1042', cash_in: 15400, cash_out: 0, bank_in: 0, bank_out: 0 },
-    { id: 3, entry_date: '2026-05-18', description: 'WAPDA Electricity Bill', receipt_number: '', cash_in: 0, cash_out: 4500, bank_in: 0, bank_out: 0 },
-    { id: 4, entry_date: '2026-05-19', description: 'Sale: INV-1043 (Ali Traders)', receipt_number: 'INV-1043', cash_in: 0, cash_out: 0, bank_in: 42000, bank_out: 0 },
-    { id: 5, entry_date: '2026-05-19', description: 'Office Supplies', receipt_number: '', cash_in: 0, cash_out: 1200, bank_in: 0, bank_out: 0 },
-    { id: 6, entry_date: '2026-05-20', description: 'Supplier Payment (Bayer)', receipt_number: 'BILL-55', cash_in: 0, cash_out: 0, bank_in: 0, bank_out: 12000 },
-    { id: 7, entry_date: '2026-05-20', description: 'Transfer to Bank', receipt_number: '', cash_in: 0, cash_out: 20000, bank_in: 20000, bank_out: 0 },
-];
-
 export default function CashBookPage() {
     const now = new Date();
     const [startDate, setStartDate] = useState(
@@ -118,12 +109,17 @@ export default function CashBookPage() {
 
     const load = useCallback(async () => {
         setLoading(true);
-        // Simulating API load for the frontend design preview
-        setTimeout(() => {
-            setEntries(MOCK_ENTRIES);
+        try {
+            const res = await getCashBook({ fromDate: startDate, toDate: endDate });
+            if (res && res.entries) {
+                setEntries(res.entries);
+            }
+        } catch (e) {
+            console.error("Failed to load cashbook", e);
+        } finally {
             setLoading(false);
-        }, 400);
-    }, []);
+        }
+    }, [startDate, endDate]);
 
     useEffect(() => { load(); }, [load]);
 

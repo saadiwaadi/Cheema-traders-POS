@@ -121,6 +121,18 @@ export default function Dashboard() {
             Logout
           </motion.button>
         </div>
+        <div style={{
+          textAlign: "center",
+          padding: "10px 0 14px",
+          fontSize: 10,
+          color: "#9aab9c",
+          letterSpacing: "0.04em",
+          borderTop: "1px solid #c8e6c9",
+          userSelect: "none",
+        }}>
+          Powered by <strong style={{ color: "#6a8f6c" }}>BitLogic</strong>
+          &nbsp;·&nbsp; 0317-8440437
+        </div>
       </aside>
 
       <div style={s.main}>

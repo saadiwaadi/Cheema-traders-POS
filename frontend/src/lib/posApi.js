@@ -107,6 +107,11 @@ export async function listSales(args = {}) {
   if (usingIpc()) return window.pos.listSales(args);
   const query = new URLSearchParams();
   if (args.limit) query.set("limit", String(args.limit));
+  if (args.search) query.set("search", args.search);
+  if (args.paymentMethod) query.set("paymentMethod", args.paymentMethod);
+  if (args.from) query.set("from", args.from);
+  if (args.to) query.set("to", args.to);
+  if (args.includeVoided) query.set("includeVoided", "true");
   return httpJson(`/sales?${query.toString()}`);
 }
 
@@ -127,6 +132,14 @@ export async function voidSale(id) {
   if (usingIpc()) return window.pos.voidSale(id);
   return httpJson(`/sales/${id}/void`, {
     method: "POST",
+  });
+}
+
+export async function returnSale(id, payload) {
+  if (usingIpc()) return window.pos.returnSale(id, payload);
+  return httpJson(`/sales/${id}/return`, {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }
 
@@ -222,4 +235,17 @@ export async function importBackup(sourcePath) {
     method: "POST",
     body: JSON.stringify({ path: sourcePath }),
   });
+}
+
+export async function getCashBook(args = {}) {
+  if (usingIpc()) return window.pos.getCashBook(args);
+  const query = new URLSearchParams();
+  if (args.fromDate) query.set("from", args.fromDate);
+  if (args.toDate) query.set("to", args.toDate);
+  return httpJson(`/cashbook?${query.toString()}`);
+}
+
+export async function deleteCustomer(id) {
+  if (usingIpc()) return window.pos.deleteCustomer(id);
+  return httpJson(`/customers/${id}`, { method: "DELETE" });
 }

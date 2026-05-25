@@ -5,19 +5,13 @@ export default function SuccessNotification({
   onClose,
   title = "Payment Recorded",
   lines = [],
+  onPrint,
 }) {
   const [show, setShow] = useState(false);
 
   useEffect(() => {
-    if (visible) {
-      setShow(true);
-      const t = setTimeout(() => {
-        setShow(false);
-        setTimeout(onClose, 300);
-      }, 3800);
-      return () => clearTimeout(t);
-    }
-  }, [visible, onClose]);
+    if (visible) setShow(true);
+  }, [visible]);
 
   if (!visible && !show) return null;
 
@@ -139,25 +133,49 @@ export default function SuccessNotification({
           ))}
         </div>
 
-        <button
-          onClick={() => {
-            setShow(false);
-            setTimeout(onClose, 300);
-          }}
-          style={{
-            padding: "10px 32px",
-            borderRadius: 8,
-            border: "none",
-            background: "#2e7d32",
-            color: "#fff",
-            fontWeight: 700,
-            fontSize: 14,
-            cursor: "pointer",
-            letterSpacing: 0.3,
-          }}
-        >
-          Done
-        </button>
+        <div style={{ display: "flex", gap: 10, width: "100%" }}>
+          {onPrint && (
+            <button
+              onClick={onPrint}
+              style={{
+                flex: 1,
+                padding: "10px 0",
+                borderRadius: 8,
+                border: "1px solid #c8e6c9",
+                background: "#f1f8f1",
+                color: "#2e7d32",
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+              }}
+            >
+              🖨 Print Bill
+            </button>
+          )}
+          <button
+            onClick={() => {
+              setShow(false);
+              setTimeout(onClose, 300);
+            }}
+            style={{
+              flex: 1,
+              padding: "10px 0",
+              borderRadius: 8,
+              border: "none",
+              background: "#2e7d32",
+              color: "#fff",
+              fontWeight: 700,
+              fontSize: 14,
+              cursor: "pointer",
+            }}
+          >
+            Done
+          </button>
+        </div>
       </div>
     </div>
   );

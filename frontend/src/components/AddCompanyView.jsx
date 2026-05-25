@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { deleteSupplier, listSuppliers, saveSupplier } from "../lib/posApi";
+import WarningNotification from "./Warningnotification";
 
 const EMPTY_FORM = { name: "", phone: "", salesOfficerPhone: "", address: "" };
 
@@ -44,12 +45,17 @@ export default function AddCompanyView() {
   const [loading, setLoading] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [companies, setCompanies] = useState([]);
+  const [warnData, setWarnData] = useState(null);
   const toastIdRef = useRef(0);
 
-  useEffect(() => {
+  const loadSuppliers = () => {
     listSuppliers("")
       .then((data) => setCompanies(data.suppliers || []))
       .catch(() => {});
+  };
+
+  useEffect(() => {
+    loadSuppliers();
   }, []);
 
   const addToast = (type, message) => {
@@ -85,10 +91,10 @@ export default function AddCompanyView() {
     try {
       const data = await saveSupplier(form);
       if (data) {
-        setCompanies((p) => [data.supplier || { ...form, id: `supplier-${Math.random().toString(36).slice(2, 10)}` }, ...p]);
         setForm(EMPTY_FORM);
         setErrors({});
         addToast("success", `"${form.name}" added successfully`);
+        loadSuppliers();
       } else {
         addToast("error", "Failed to add supplier");
       }
@@ -104,12 +110,58 @@ export default function AddCompanyView() {
   };
 
   const handleDelete = async (id) => {
-    try {
-      await deleteSupplier(id);
-      setCompanies((prev) => prev.filter((c) => c.id !== id));
-      addToast("success", "Supplier deleted successfully");
-    } catch {
-      addToast("error", "Server error");
+    const comp = companies.find(c => c.id === id);
+    if (!comp) return;
+
+    const executeDelete = async () => {
+      try {
+        await deleteSupplier(id);
+        setCompanies((prev) => prev.filter((c) => c.id !== id));
+        addToast("success", "Supplier deleted successfully");
+      } catch {
+        addToast("error", "Server error");
+      }
+    };
+
+    const bal = comp.current_balance || 0;
+    if (bal !== 0) {
+      const formattedType = bal > 0 ? "Credit (We owe them)" : "Debit (They owe us)";
+      const formattedAmount = Math.abs(bal).toLocaleString();
+      setWarnData({
+        title: `Delete Supplier: ${comp.name}?`,
+        lines: [
+          { label: "Supplier Name", value: comp.name },
+          { label: "Action", value: "This will remove the supplier from dropdown select and active lists." }
+        ],
+        confirmLabel: "Proceed",
+        cancelLabel: "Cancel",
+        onConfirm: () => {
+          setTimeout(() => {
+            setWarnData({
+              title: `WARNING: Outstanding Balance!`,
+              lines: [
+                { label: "Supplier Name", value: comp.name },
+                { label: "Pending Balance", value: `${formattedType} of Rs ${formattedAmount}`, mono: true },
+                { label: "Warning", value: "Deleting active suppliers with outstanding balances is discouraged. Are you absolutely sure you want to proceed?" }
+              ],
+              confirmLabel: "Yes, Delete Supplier",
+              cancelLabel: "Cancel",
+              onConfirm: executeDelete
+            });
+          }, 350);
+        }
+      });
+    } else {
+      setWarnData({
+        title: `Delete Supplier: ${comp.name}?`,
+        lines: [
+          { label: "Supplier Name", value: comp.name },
+          { label: "Action", value: "This will remove the supplier from dropdown select and active lists." }
+        ],
+        confirmLabel: "Delete Supplier",
+        cancelLabel: "Cancel",
+        onConfirm: executeDelete
+      });
     }
   };
 
@@ -134,7 +186,7 @@ export default function AddCompanyView() {
               name="name"
               value={form.name}
               onChange={handleChange}
-                placeholder="e.g. Bayer Pakistan Ltd."
+              placeholder="e.g. Bayer Pakistan Ltd."
               maxLength={100}
               style={{ ...ts.input, ...(errors.name ? ts.inputError : {}) }}
             />
@@ -143,7 +195,7 @@ export default function AddCompanyView() {
 
           <div style={ts.row}>
             <div style={ts.fieldHalf}>
-                <label style={ts.label}>Phone</label>
+              <label style={ts.label}>Phone</label>
               <input
                 name="phone"
                 value={form.phone}
@@ -227,45 +279,59 @@ export default function AddCompanyView() {
                 <thead>
                   <tr>
                     <th style={{ ...ts.th, width: "32%" }}>Supplier</th>
-                    <th style={{ ...ts.th, width: "22%" }}>Phone</th>
-                    <th style={{ ...ts.th, width: "22%" }}>Sales Officer</th>
-                    <th style={{ ...ts.th, width: "14%" }}>Status</th>
+                    <th style={{ ...ts.th, width: "20%" }}>Phone</th>
+                    <th style={{ ...ts.th, width: "20%" }}>Sales Officer</th>
+                    <th style={{ ...ts.th, width: "18%" }}>Current Balance</th>
                     <th style={{ ...ts.th, width: "10%" }}></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {companies.map((c, i) => (
-                    <tr key={c.id || i} style={i % 2 === 0 ? ts.trEven : ts.trOdd}>
-                      <td style={ts.td}>
-                        <div style={ts.companyName}>{c.name}</div>
-                        {c.address && <div style={ts.companyAddress}>{c.address}</div>}
-                      </td>
-                      <td style={ts.tdMono}>{c.phone || "—"}</td>
-                      <td style={ts.tdMono}>{c.salesOfficerPhone || "—"}</td>
-                      <td style={ts.td}>
-                        <span style={ts.badge}>Active</span>
-                      </td>
-                      <td style={{ ...ts.td, textAlign: "center" }}>
-                        <motion.button
-                          whileHover={{ scale: 1.15 }}
-                          whileTap={{ scale: 0.9 }}
-                          onClick={() => handleDelete(c.id)}
-                          style={ts.deleteBtn}
-                          title="Delete supplier"
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="#ef5350">
-                            <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-                          </svg>
-                        </motion.button>
-                      </td>
-                    </tr>
-                  ))}
+                  {companies.map((c, i) => {
+                    const bal = c.current_balance || 0;
+                    const balanceText = bal === 0 ? "Rs 0" : bal > 0 ? `(Cr) Rs ${bal.toLocaleString()}` : `(Dr) Rs ${Math.abs(bal).toLocaleString()}`;
+                    const balanceColor = bal === 0 ? "#555" : bal > 0 ? "#c62828" : "#2e7d32";
+                    return (
+                      <tr key={c.id || i} style={i % 2 === 0 ? ts.trEven : ts.trOdd}>
+                        <td style={ts.td}>
+                          <div style={ts.companyName}>{c.name}</div>
+                          {c.address && <div style={ts.companyAddress}>{c.address}</div>}
+                        </td>
+                        <td style={ts.tdMono}>{c.phone || "—"}</td>
+                        <td style={ts.tdMono}>{c.salesOfficerPhone || "—"}</td>
+                        <td style={{ ...ts.td, color: balanceColor, fontWeight: "700", fontFamily: "monospace" }}>
+                          {balanceText}
+                        </td>
+                        <td style={{ ...ts.td, textAlign: "center" }}>
+                          <motion.button
+                            whileHover={{ scale: 1.15 }}
+                            whileTap={{ scale: 0.9 }}
+                            onClick={() => handleDelete(c.id)}
+                            style={ts.deleteBtn}
+                            title="Delete supplier"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="#ef5350">
+                              <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                            </svg>
+                          </motion.button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           )}
         </div>
       </div>
+      <WarningNotification
+        visible={!!warnData}
+        title={warnData?.title}
+        lines={warnData?.lines}
+        onConfirm={warnData?.onConfirm}
+        confirmLabel={warnData?.confirmLabel}
+        cancelLabel={warnData?.cancelLabel}
+        onClose={() => setWarnData(null)}
+      />
     </div>
   );
 }

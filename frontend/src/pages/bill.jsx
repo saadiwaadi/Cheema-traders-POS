@@ -1,6 +1,9 @@
 import { useMemo, useState, useEffect } from "react";
 import DropdownSelect from "../components/DropdownSelect";
 import { listCustomers, saveCustomer, listProducts, saveSale, getNextInvoiceNo } from "../lib/posApi";
+import SuccessNotification from "../components/SuccessNotification";
+import WarningNotification from "../components/Warningnotification";
+import { printReceipt } from "../components/Thermalreceipt";
 
 const palette = {
   pageBg: "#f2f6f2",
@@ -34,6 +37,9 @@ export default function BillingWorkspace() {
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [selectedCustomerObj, setSelectedCustomerObj] = useState(null);
+  const [successData, setSuccessData] = useState(null);
+  const [warnData, setWarnData] = useState(null);
+  const [applyCredit, setApplyCredit] = useState(false);
 
   const isNewCustomer = useMemo(() => {
     const trimmed = customer.trim();
@@ -89,22 +95,6 @@ export default function BillingWorkspace() {
     setRows((prev) => [...prev, createRow()]);
   };
 
-  function createRowWithProduct(p) {
-    const qty = 1;
-    const price = p.basePrice || p.price || 0;
-    const discount = 0;
-    return {
-      id: Date.now() + Math.random(),
-      product: p.name,
-      productId: p.id,
-      qty,
-      unit: p.unit || "",
-      price,
-      discount,
-      total: Math.max(0, qty * price - discount),
-    };
-  }
-
   const removeRow = (id) => {
     if (rows.length === 1) return;
     setRows((prev) => prev.filter((r) => r.id !== id));
@@ -129,6 +119,12 @@ export default function BillingWorkspace() {
             updated.productId = selected.id;
             updated.unit = selected.unit;
             updated.price = selected.basePrice || selected.price || 0;
+            updated.outOfStock = (selected.currentStock ?? selected.quantity ?? 1) <= 0;
+          } else {
+            updated.productId = "";
+            updated.unit = "";
+            updated.price = 0;
+            updated.outOfStock = false;
           }
         }
 
@@ -165,33 +161,113 @@ export default function BillingWorkspace() {
   }, [rows]);
 
   const itemCount = rows.filter((r) => r.product !== "").length;
+
+  const customerCredit = selectedCustomerObj?.current_balance < 0
+    ? Math.abs(selectedCustomerObj.current_balance)
+    : 0;
+
+  const creditApplied = applyCredit ? Math.min(customerCredit, subtotal) : 0;
   const parsedReceived = parseFloat(receivedAmount) || 0;
+  const totalCovered = creditApplied + parsedReceived;
 
-  const [productQuery, setProductQuery] = useState("");
-  const filteredProducts = useMemo(() => {
-    const q = String(productQuery || "").trim().toLowerCase();
-    if (!q) return products.slice(0, 30);
-    return products.filter(p => p.name.toLowerCase().includes(q)).slice(0, 30);
-  }, [productQuery, products]);
-
-  const remainingAmount = Math.max(0, subtotal - parsedReceived);
-
-  const changeAmount = Math.max(0, parsedReceived - subtotal);
+  const remainingAmount = Math.max(0, subtotal - totalCovered);
+  const changeAmount = Math.max(0, totalCovered - subtotal);
 
   const paymentStatus =
-    parsedReceived <= 0
+    totalCovered <= 0
       ? "Unpaid"
-      : parsedReceived < subtotal
+      : totalCovered < subtotal
         ? "Partial"
         : "Paid";
+
+  const proceedGenerateInvoice = async (activeRows, saleItems) => {
+    if (!selectedCustomerObj && parsedReceived < subtotal) {
+      setWarnData({
+        title: "Payment Required",
+        lines: [
+          { label: "Customer", value: "Walk-in Customer" },
+          { label: "Rule", value: "Must pay full invoice amount" }
+        ]
+      });
+      return;
+    }
+
+    const payload = {
+      invoiceNo: invoiceNo,
+      saleDate: billingDate,
+      customerId: selectedCustomerObj?.id || null,
+      customerName: customer?.trim() || "Walk-in Customer",
+      phone: selectedCustomerObj?.phone || null,
+      paymentMethod: paymentType,
+      totalAmount: subtotal,
+      amountPaid: Math.min(totalCovered, subtotal),
+      remainingAmount: remainingAmount,
+      paymentStatus: paymentStatus,
+      creditApplied: creditApplied,
+      notes: notes,
+      items: saleItems,
+    };
+
+    try {
+      const res = await saveSale(payload);
+      if (res?.sale) {
+        setSuccessData({
+          title: "Invoice Generated!",
+          lines: [
+            { label: "Invoice No", value: res.sale.invoiceNo },
+            { label: "Total Bill", value: `Rs ${res.sale.total?.toLocaleString()}`, mono: true },
+            { label: "Cash Paid", value: `Rs ${res.sale.amountPaid?.toLocaleString()}`, mono: true },
+            { label: "Remaining Due", value: `Rs ${res.sale.balanceDue?.toLocaleString()}`, mono: true },
+          ],
+          onPrint: () => printReceipt({
+            invoiceNo:      res.sale.invoiceNo,
+            cashier:        "Ahmad Cheema",
+            customerName:   payload.customerName,
+            phone:          payload.phone || "",
+            items:          activeRows.map(r => ({
+              productName:  r.product,
+              quantity:     parseFloat(r.qty) || 0,
+              unit:         r.unit,
+              price:        parseFloat(r.price) || 0,
+              discount:     parseFloat(r.discount) || 0,
+              lineTotal:    r.total,
+            })),
+            subtotal:       subtotal,
+            totalDiscount:  totalDiscount,
+            creditApplied:  creditApplied,
+            grandTotal:     subtotal - creditApplied,
+            paymentMethod:  paymentType,
+            amountPaid:     Math.min(totalCovered, subtotal),
+            remainingAmount: remainingAmount,
+            changeAmount:   changeAmount,
+            prevBalance:    selectedCustomerObj?.current_balance ?? 0,
+            notes:          notes,
+          })
+        });
+        setRows([createRow()]);
+        setCustomer(""); setSelectedCustomerObj(null);
+        setNotes(""); setReceivedAmount("");
+        const nextInv = await getNextInvoiceNo(billingDate);
+        if (nextInv?.invoiceNo) setInvoiceNo(nextInv.invoiceNo);
+      }
+    } catch (error) {
+      console.error("Failed to generate invoice", error);
+      setWarnData({
+        title: "Error Generating Invoice",
+        lines: [{ label: "Error", value: error.message || "Unknown error occurred" }]
+      });
+    }
+  };
 
   const handleGenerateInvoice = async () => {
     const activeRows = rows.filter((r) => r.product);
     if (!activeRows.length) {
-      alert("Please add at least one product item to the invoice.");
+      setWarnData({
+        title: "Empty Invoice",
+        lines: [{ label: "Alert", value: "Please add at least one product item to the invoice." }]
+      });
       return;
     }
-
     const saleItems = activeRows.map((r) => ({
       productId: r.productId,
       productName: r.product,
@@ -200,58 +276,24 @@ export default function BillingWorkspace() {
       price: parseFloat(r.price) || 0,
       discount: parseFloat(r.discount) || 0,
     }));
-
-    const parsedReceived = parseFloat(receivedAmount) || 0;
-
-    if (!selectedCustomerObj && parsedReceived < subtotal) {
-      alert("Walk-in customers must pay full invoice amount.");
+    const outOfStockItems = activeRows.filter((r) => r.outOfStock);
+    if (outOfStockItems.length > 0) {
+      setWarnData({
+        title: "Stock Warning",
+        lines: [
+          ...outOfStockItems.map((r) => ({
+            label: r.product,
+            value: "Out of Stock",
+          })),
+          { label: "Note", value: "Invoice will still be generated" },
+        ],
+        confirmLabel: "Generate Anyway",
+        cancelLabel: "Review Items",
+        onConfirm: () => proceedGenerateInvoice(activeRows, saleItems),
+      });
       return;
     }
-
-    const amountPaid = Math.min(parsedReceived, subtotal);
-
-    const remainingAmount = Math.max(0, subtotal - amountPaid);
-
-    const paymentStatus =
-      amountPaid <= 0
-        ? "Unpaid"
-        : amountPaid < subtotal
-          ? "Partial"
-          : "Paid";
-
-    const payload = {
-      invoiceNo: invoiceNo,
-      saleDate: billingDate,
-      customerId: selectedCustomerObj ? selectedCustomerObj.id : null,
-      customerName: customer ? customer.trim() : "Walk-in Customer",
-      phone: selectedCustomerObj ? selectedCustomerObj.phone : null,
-      paymentMethod: paymentType,
-      totalAmount: subtotal,
-      amountPaid: amountPaid,
-      remainingAmount: remainingAmount,
-      paymentStatus: paymentStatus,
-      notes: notes,
-      items: saleItems,
-    };
-
-    try {
-      const res = await saveSale(payload);
-      if (res && res.sale) {
-        alert(`Invoice ${res.sale.invoiceNo} generated successfully!`);
-        setRows([createRow()]);
-        setCustomer("");
-        setSelectedCustomerObj(null);
-        setNotes("");
-        setReceivedAmount("");
-        const nextInv = await getNextInvoiceNo(billingDate);
-        if (nextInv && nextInv.invoiceNo) {
-          setInvoiceNo(nextInv.invoiceNo);
-        }
-      }
-    } catch (error) {
-      console.error("Failed to generate invoice", error);
-      alert("Error generating invoice: " + error.message);
-    }
+    await proceedGenerateInvoice(activeRows, saleItems);
   };
 
   // Keyboard shortcuts: Ctrl/Cmd+S -> generate invoice, Ctrl/Cmd+P -> print
@@ -296,6 +338,7 @@ export default function BillingWorkspace() {
               onChange={(val, obj) => {
                 setSelectedCustomerObj(obj || null);
                 setCustomer(obj ? obj.name : val || "");
+                setApplyCredit(false);
               }}
             />
           </div>
@@ -332,7 +375,7 @@ export default function BillingWorkspace() {
               </button>
             </div>
 
-            <div style={st.productGrid}>
+            <div>
               <div style={st.tableWrap}>
                 <div style={st.tableHead}>
                   <span style={{ width: 36 }}>#</span>
@@ -346,12 +389,19 @@ export default function BillingWorkspace() {
                 </div>
 
                 {rows.map((row, index) => (
-                  <div key={row.id} style={st.tableRow}>
+                  <div key={row.id} style={{
+                    ...st.tableRow,
+                    ...(row.outOfStock ? {
+                      background: "#fff5f5",
+                      borderBottom: "1px solid #ffd4d4",
+                      borderRadius: 8,
+                    } : {})
+                  }}>
                     <div style={{ ...st.rowIndex, width: 36 }}>
                       {index + 1}
                     </div>
 
-                    <div style={{ flex: 3 }}>
+                    <div style={{ flex: 3, display: 'flex', flexDirection: 'column' }}>
                       <DropdownSelect
                         value={row.productId || ""}
                         options={products}
@@ -363,6 +413,14 @@ export default function BillingWorkspace() {
                           if (option) updateRow(row.id, "product", option.name);
                         }}
                       />
+                      {row.outOfStock && (
+                        <div style={{
+                          fontSize: 10, color: "#c62828", fontWeight: 700,
+                          marginTop: 2, paddingLeft: 2,
+                        }}>
+                          ⚠ Out of stock
+                        </div>
+                      )}
                     </div>
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 0.9 }}>
@@ -404,35 +462,6 @@ export default function BillingWorkspace() {
                   </div>
                 ))}
               </div>
-
-              <div style={st.productList}>
-                <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                  <input
-                    placeholder="Search products..."
-                    value={productQuery}
-                    onChange={(e) => setProductQuery(e.target.value)}
-                    style={st.productSearchInput}
-                  />
-                  <button style={st.addRowBtn} onClick={() => setProductQuery('')}>Clear</button>
-                </div>
-
-                <div style={{ maxHeight: 220, overflow: 'auto' }}>
-                  {filteredProducts.map((p) => (
-                    <div key={p.id} style={st.productItem}>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 700 }}>{p.name}</div>
-                        <div style={{ fontSize: 12, color: '#6f8571' }}>{p.sku || ''} — Rs { (p.basePrice || p.price || 0).toFixed(0) }</div>
-                      </div>
-                      <button
-                        style={st.addProductBtn}
-                        onClick={() => setRows((prev) => [...prev, createRowWithProduct(p)])}
-                      >
-                        Add
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
             </div>
 
             <div style={st.notesArea}>
@@ -467,6 +496,16 @@ export default function BillingWorkspace() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
                 <SummaryRow label="Items" value={`${itemCount}`} />
                 <SummaryRow label="Discount" value={`Rs ${totalDiscount.toFixed(0)}`} />
+                {creditApplied > 0 && (
+                  <div style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '8px 12px', borderRadius: 10,
+                    background: '#e8f5e9', border: '1px solid #c8e6c9', fontSize: 14,
+                  }}>
+                    <span style={{ color: '#2e7d32', fontWeight: 700 }}>✓ Advance Credit Applied</span>
+                    <strong style={{ color: '#2e7d32' }}>− Rs {creditApplied.toLocaleString()}</strong>
+                  </div>
+                )}
               </div>
 
               <div style={{ ...st.grandTotalBox, padding: 12, marginBottom: 10 }}>
@@ -476,7 +515,11 @@ export default function BillingWorkspace() {
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <div style={st.paymentBox}>
-                  <span style={st.paymentLabel}>Amount Received</span>
+                  <span style={st.paymentLabel}>
+                    {creditApplied > 0
+                      ? `Cash Received (Credit Rs ${creditApplied.toLocaleString()} auto-applied)`
+                      : "Amount Received"}
+                  </span>
                   <input
                     type="number"
                     value={receivedAmount}
@@ -522,6 +565,44 @@ export default function BillingWorkspace() {
                           ? `(Dr) Rs ${Math.abs(selectedCustomerObj.current_balance).toLocaleString()}`
                           : `(Cr) Rs ${Math.abs(selectedCustomerObj.current_balance).toLocaleString()}`}
                     </div>
+                    {customerCredit > 0 && (
+                      <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 8, background: applyCredit ? '#e8f5e9' : '#f8fbf8', border: `1px solid ${applyCredit ? '#a5d6a7' : '#dde8dd'}` }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: '#2e7d32' }}>
+                            Apply Advance Credit
+                          </span>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                            <span style={{ fontSize: 11, color: applyCredit ? '#2e7d32' : '#999', fontWeight: 600 }}>
+                              {applyCredit ? 'ON' : 'OFF'}
+                            </span>
+                            <div
+                              onClick={() => setApplyCredit(p => !p)}
+                              style={{
+                                width: 40, height: 22, borderRadius: 999, cursor: 'pointer',
+                                background: applyCredit ? '#2e7d32' : '#ccc',
+                                position: 'relative', transition: 'background 0.2s',
+                              }}
+                            >
+                              <div style={{
+                                position: 'absolute', top: 3, left: applyCredit ? 21 : 3,
+                                width: 16, height: 16, borderRadius: '50%', background: '#fff',
+                                transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                              }} />
+                            </div>
+                          </label>
+                        </div>
+                        {applyCredit && subtotal > 0 && (
+                          <div style={{ fontSize: 11, color: '#2e7d32', marginTop: 5, fontWeight: 600 }}>
+                            Rs {Math.min(customerCredit, subtotal).toLocaleString()} will be deducted from advance
+                          </div>
+                        )}
+                        {!applyCredit && (
+                          <div style={{ fontSize: 11, color: '#999', marginTop: 5 }}>
+                            Customer will pay full amount in cash
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div style={{ ...st.contextItem, marginBottom: 0 }}>
                     Last Purchase: {selectedCustomerObj.last_purchase || "None"}
@@ -562,6 +643,24 @@ export default function BillingWorkspace() {
             </button>
           </div>
         </div>
+
+        <SuccessNotification
+          visible={!!successData}
+          title={successData?.title}
+          lines={successData?.lines}
+          onPrint={successData?.onPrint}
+          onClose={() => setSuccessData(null)}
+        />
+
+        <WarningNotification
+          visible={!!warnData}
+          title={warnData?.title}
+          lines={warnData?.lines}
+          onConfirm={warnData?.onConfirm}
+          confirmLabel={warnData?.confirmLabel}
+          cancelLabel={warnData?.cancelLabel}
+          onClose={() => setWarnData(null)}
+        />
       </div>
     </div>
   );
@@ -735,48 +834,6 @@ const st = {
     padding: 12,
     borderLeft: "5px solid #2e7d32",
   },
-  productGrid: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 320px',
-    gap: 12,
-    alignItems: 'start'
-  },
-  productList: {
-    background: '#fbfdfb',
-    border: '1px solid #e7efe7',
-    padding: 10,
-    borderRadius: 10,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
-  },
-  productItem: {
-    display: 'flex',
-    gap: 10,
-    alignItems: 'center',
-    padding: '10px 8px',
-    borderRadius: 8,
-    border: '1px solid #eef6ee',
-    marginBottom: 8,
-    background: '#ffffff'
-  },
-  addProductBtn: {
-    padding: '8px 12px',
-    borderRadius: 8,
-    background: '#397d3d',
-    color: '#fff',
-    border: 'none',
-    cursor: 'pointer'
-  },
-  productSearchInput: {
-    flex: 1,
-    height: 40,
-    padding: '0 12px',
-    borderRadius: 8,
-    border: '1px solid #d4e1d4',
-    outline: 'none',
-    background: '#fff'
-  },
 
   sectionTop: {
     display: "flex",
@@ -826,20 +883,25 @@ const st = {
     display: "flex",
     alignItems: "center",
     gap: 10,
-    padding: "0 4px 10px",
-    borderBottom: "2px solid #edf3ed",
-    fontSize: 11,
-    fontWeight: 700,
+    padding: "10px 6px",
+    borderBottom: "2px solid #deeede",
+    fontSize: 10,
+    fontWeight: 800,
     textTransform: "uppercase",
-    color: "#738675",
+    color: "#5a7a5c",
+    letterSpacing: "0.06em",
+    background: "#f7faf7",
+    borderRadius: "8px 8px 0 0",
   },
 
   tableRow: {
     display: "flex",
     alignItems: "center",
     gap: 10,
-    padding: "7px 0",
+    padding: "8px 6px",
     borderBottom: "1px solid #f1f5f1",
+    borderRadius: 8,
+    transition: "background 0.15s",
   },
 
   rowIndex: {
@@ -873,15 +935,17 @@ const st = {
   },
 
   totalCell: {
-    height: 44,
-    borderRadius: 10,
+    height: 40,
+    borderRadius: 8,
     background: "#eef7ee",
-    border: "1px solid #d4e5d4",
+    border: "1px solid #c8e0c8",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontWeight: 700,
-    color: "#2d7032",
+    fontWeight: 800,
+    color: "#1b5e20",
+    fontSize: 13,
+    letterSpacing: "0.02em",
   },
 
   deleteBtn: {

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, PlusCircle, ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
-import { listSuppliers, saveSupplier, getSupplierHistory, getPurchaseItems } from "../lib/posApi";
+import { listSuppliers, saveSupplier, getSupplierHistory, getPurchaseItems, deleteSupplier } from "../lib/posApi";
+import WarningNotification from "../components/Warningnotification";
 
 export default function SuppliersPage() {
   const [isAddPanelOpen, setIsAddPanelOpen] = useState(false);
@@ -36,6 +37,15 @@ export default function SuppliersPage() {
     loadSuppliers();
   };
 
+  const handleDeleteSupplier = async (id) => {
+    try {
+      await deleteSupplier(id);
+      loadSuppliers();
+    } catch (e) {
+      console.error("Failed to delete supplier", e);
+    }
+  };
+
   return (
     <div style={st.page}>
       <div style={st.pageHeader}>
@@ -64,7 +74,7 @@ export default function SuppliersPage() {
         {selectedSupplier ? (
           <SupplierHistoryView supplier={selectedSupplier} />
         ) : (
-          <SupplierListView suppliers={suppliers} loading={loading} onSelectHistory={setSelectedSupplier} />
+          <SupplierListView suppliers={suppliers} loading={loading} onSelectHistory={setSelectedSupplier} onDelete={handleDeleteSupplier} />
         )}
       </div>
 
@@ -190,9 +200,10 @@ function AddSupplierPanel({ isOpen, onClose, onSaved }) {
   );
 }
 
-function SupplierListView({ suppliers, loading, onSelectHistory }) {
+function SupplierListView({ suppliers, loading, onSelectHistory, onDelete }) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
+  const [warnData, setWarnData] = useState(null);
 
   const q = search.toLowerCase();
   const filtered = suppliers.filter(s => {
@@ -324,7 +335,61 @@ function SupplierListView({ suppliers, loading, onSelectHistory }) {
                                       {bal === 0 ? 'Rs 0' : bal > 0 ? `Due Rs ${Math.abs(bal).toLocaleString()}` : `Advance Rs ${Math.abs(bal).toLocaleString()}`}
                                   </td>
                                   <td style={{ textAlign: 'center' }}>
-                                    <button style={st.actionBtn} onClick={() => onSelectHistory(s)}>Statement</button>
+                                    <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
+                                      <button style={st.actionBtn} onClick={() => onSelectHistory(s)}>Statement</button>
+                                      <button
+                                         style={{ ...st.actionBtn, background: '#ffebee', color: '#c62828', border: '1px solid #ffcdd2' }}
+                                         onClick={(e) => {
+                                           e.stopPropagation();
+                                           const bal = s.current_balance || 0;
+                                           if (bal !== 0) {
+                                             const formattedType = bal > 0 ? "Credit (We owe them)" : "Debit (They owe us)";
+                                             const formattedAmount = Math.abs(bal).toLocaleString();
+                                             setWarnData({
+                                               title: `Delete Supplier: ${s.name}?`,
+                                               lines: [
+                                                 { label: "Supplier Name", value: s.name },
+                                                 { label: "Action", value: "This will remove the supplier from dropdown select and active lists." }
+                                               ],
+                                               confirmLabel: "Proceed",
+                                               cancelLabel: "Cancel",
+                                               onConfirm: () => {
+                                                 setTimeout(() => {
+                                                   setWarnData({
+                                                     title: `WARNING: Outstanding Balance!`,
+                                                     lines: [
+                                                       { label: "Supplier Name", value: s.name },
+                                                       { label: "Pending Balance", value: `${formattedType} of Rs ${formattedAmount}`, mono: true },
+                                                       { label: "Warning", value: "Deleting active suppliers with outstanding balances is discouraged. Are you absolutely sure you want to proceed?" }
+                                                     ],
+                                                     confirmLabel: "Yes, Delete Supplier",
+                                                     cancelLabel: "Cancel",
+                                                     onConfirm: () => {
+                                                       onDelete(s.id);
+                                                     }
+                                                   });
+                                                 }, 350);
+                                               }
+                                             });
+                                           } else {
+                                             setWarnData({
+                                               title: `Delete Supplier: ${s.name}?`,
+                                               lines: [
+                                                 { label: "Supplier Name", value: s.name },
+                                                 { label: "Action", value: "This will remove the supplier from dropdown select and active lists." }
+                                               ],
+                                               confirmLabel: "Delete Supplier",
+                                               cancelLabel: "Cancel",
+                                               onConfirm: () => {
+                                                 onDelete(s.id);
+                                               }
+                                             });
+                                           }
+                                         }}
+                                       >
+                                         Delete
+                                       </button>
+                                    </div>
                                   </td>
                               </tr>
                           );
@@ -333,6 +398,15 @@ function SupplierListView({ suppliers, loading, onSelectHistory }) {
               </table>
           </div>
       </div>
+      <WarningNotification
+        visible={!!warnData}
+        title={warnData?.title}
+        lines={warnData?.lines}
+        onConfirm={warnData?.onConfirm}
+        confirmLabel={warnData?.confirmLabel}
+        cancelLabel={warnData?.cancelLabel}
+        onClose={() => setWarnData(null)}
+      />
     </>
   );
 }

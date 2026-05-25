@@ -28,6 +28,18 @@ router.get("/dashboard", async (_req, res) => {
   }
 });
 
+router.get("/cashbook", async (req, res) => {
+  try {
+    const cashbook = await store.getCashBook({
+      fromDate: req.query.from,
+      toDate: req.query.to,
+    });
+    return res.json(cashbook);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
 router.get("/products", async (req, res) => {
   try {
     const products = await store.listProducts({ search: req.query.search || "", limit: Number(req.query.limit || 200) });
@@ -111,6 +123,15 @@ router.post("/customer-payments", async (req, res) => {
   }
 });
 
+router.delete("/customers/:id", async (req, res) => {
+  try {
+    await store.softDeleteCustomer(req.params.id);
+    return res.json({ message: "Customer deleted successfully" });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
 // --- SALES ---
 
 router.get("/sales/next-invoice-no", async (_req, res) => {
@@ -130,6 +151,7 @@ router.get("/sales", async (req, res) => {
       paymentMethod: req.query.paymentMethod || "",
       from: req.query.from || "",
       to: req.query.to || "",
+      includeVoided: req.query.includeVoided === "true",
     });
     return res.json({ sales });
   } catch (error) {
@@ -168,6 +190,15 @@ router.post("/sales", async (req, res) => {
 router.post("/sales/:id/void", async (req, res) => {
   try {
     const sale = await store.voidSale(Number(req.params.id));
+    return res.json({ sale });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+router.post("/sales/:id/return", async (req, res) => {
+  try {
+    const sale = await store.returnSaleItems(Number(req.params.id), req.body.items);
     return res.json({ sale });
   } catch (error) {
     return res.status(400).json({ message: error.message });
