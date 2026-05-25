@@ -12,7 +12,10 @@ import {
   ChevronRight,
   X,
   Calendar,
-  Filter,
+  Pencil,
+  RotateCcw,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 
 const invoicesSeed = [
@@ -25,8 +28,8 @@ const invoicesSeed = [
     tax: 240,
     status: "Paid",
     items: [
-      { name: "Freight Services", qty: 2, price: 2200 },
-      { name: "Handling Charges", qty: 1, price: 400 },
+      { name: "Freight Services", qty: 2, price: 2200, discount: 0 },
+      { name: "Handling Charges", qty: 1, price: 400, discount: 0 },
     ],
     paymentHistory: [
       { date: "2026-05-15", amount: 5040, method: "Bank Transfer" },
@@ -39,8 +42,8 @@ const invoicesSeed = [
     dueDate: "2026-04-25",
     amount: 1200,
     tax: 60,
-    status: "Overdue",
-    items: [{ name: "Brand Identity", qty: 1, price: 1200 }],
+    status: "Pending",
+    items: [{ name: "Brand Identity", qty: 1, price: 1200, discount: 0 }],
     paymentHistory: [],
   },
   {
@@ -52,8 +55,8 @@ const invoicesSeed = [
     tax: 432.5,
     status: "Pending",
     items: [
-      { name: "POS System", qty: 1, price: 7200 },
-      { name: "Support", qty: 1, price: 1450 },
+      { name: "POS System", qty: 1, price: 7200, discount: 0 },
+      { name: "Support", qty: 1, price: 1450, discount: 0 },
     ],
     paymentHistory: [],
   },
@@ -65,7 +68,7 @@ const invoicesSeed = [
     amount: 2400,
     tax: 120,
     status: "Paid",
-    items: [{ name: "Video Editing", qty: 12, price: 200 }],
+    items: [{ name: "Video Editing", qty: 12, price: 200, discount: 0 }],
     paymentHistory: [
       { date: "2026-01-31", amount: 2520, method: "Stripe" },
     ],
@@ -77,8 +80,8 @@ const invoicesSeed = [
     dueDate: "2026-03-22",
     amount: 3200,
     tax: 160,
-    status: "Sent",
-    items: [{ name: "Inventory Audit", qty: 4, price: 800 }],
+    status: "Pending",
+    items: [{ name: "Inventory Audit", qty: 4, price: 800, discount: 0 }],
     paymentHistory: [],
   },
   {
@@ -88,8 +91,8 @@ const invoicesSeed = [
     dueDate: "2026-02-28",
     amount: 960,
     tax: 48,
-    status: "Draft",
-    items: [{ name: "Landing Page", qty: 1, price: 960 }],
+    status: "Pending",
+    items: [{ name: "Landing Page", qty: 1, price: 960, discount: 0 }],
     paymentHistory: [],
   },
 ];
@@ -98,9 +101,6 @@ while (invoicesSeed.length < 24) {
   const statuses = [
     "Paid",
     "Pending",
-    "Overdue",
-    "Draft",
-    "Sent",
   ];
 
   const clients = [
@@ -140,17 +140,18 @@ while (invoicesSeed.length < 24) {
         name: "Consulting Services",
         qty: Math.floor(Math.random() * 5) + 1,
         price: randomAmount / 2,
+        discount: 0,
       },
     ],
     paymentHistory:
       randomStatus === "Paid"
         ? [
-            {
-              date: "2026-04-12",
-              amount: randomAmount * 1.05,
-              method: "Card",
-            },
-          ]
+          {
+            date: "2026-04-12",
+            amount: randomAmount * 1.05,
+            method: "Card",
+          },
+        ]
         : [],
   });
 }
@@ -158,15 +159,13 @@ while (invoicesSeed.length < 24) {
 const statusStyles = {
   Paid: "bg-[#EAF3DE] text-[#3B6D11]",
   Pending: "bg-[#FAEEDA] text-[#854F0B]",
-  Overdue: "bg-[#FCEBEB] text-[#A32D2D]",
-  Draft: "bg-[#F1EFE8] text-[#5F5E5A]",
-  Sent: "bg-[#E7F0FB] text-[#185FA5]",
+  Returned: "bg-[#F1EFE8] text-[#7a5c00]",
 };
 
-const statusFilters = ["All", "Paid", "Pending"];
+const statusFilters = ["All", "Paid", "Pending", "Returned"];
 
 const formatMoney = (num) =>
-  `$${num.toLocaleString(undefined, {
+  `₨ ${num.toLocaleString("en-PK", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
@@ -187,7 +186,11 @@ export default function InvoiceHistoryModule() {
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [page, setPage] = useState(1);
   const [selectedRows, setSelectedRows] = useState([]);
-  const [datePreset, setDatePreset] = useState("Last 30 days");
+  const [editingInvoice, setEditingInvoice] = useState(null);
+  const [returnInvoice, setReturnInvoice] = useState(null);
+  const [expandedRows, setExpandedRows] = useState({});
+  const [expandedRowY, setExpandedRowY] = useState(0);
+  const [returnSelections, setReturnSelections] = useState({});
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
 
@@ -209,45 +212,19 @@ export default function InvoiceHistoryModule() {
 
   useEffect(() => {
     setPage(1);
-  }, [selectedStatus, search, sort, datePreset, fromDate, toDate]);
+  }, [selectedStatus, search, sort, fromDate, toDate]);
 
   const filteredInvoices = useMemo(() => {
     let data = [...invoices];
     let startDate = null;
     let endDate = null;
 
-    const now = new Date();
-    const todayEnd = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-      23,
-      59,
-      59,
-      999
-    );
+    if (fromDate) {
+      startDate = new Date(`${fromDate}T00:00:00`);
+    }
 
-    if (datePreset === "Last 30 days") {
-      startDate = new Date(todayEnd);
-      startDate.setDate(startDate.getDate() - 29);
-      startDate.setHours(0, 0, 0, 0);
-      endDate = todayEnd;
-    } else if (datePreset === "Last 90 days") {
-      startDate = new Date(todayEnd);
-      startDate.setDate(startDate.getDate() - 89);
-      startDate.setHours(0, 0, 0, 0);
-      endDate = todayEnd;
-    } else if (datePreset === "This Year") {
-      startDate = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
-      endDate = todayEnd;
-    } else if (datePreset === "Custom") {
-      if (fromDate) {
-        startDate = new Date(`${fromDate}T00:00:00`);
-      }
-
-      if (toDate) {
-        endDate = new Date(`${toDate}T23:59:59`);
-      }
+    if (toDate) {
+      endDate = new Date(`${toDate}T23:59:59`);
     }
 
     if (startDate && endDate && startDate > endDate) {
@@ -304,7 +281,6 @@ export default function InvoiceHistoryModule() {
     selectedStatus,
     search,
     sort,
-    datePreset,
     fromDate,
     toDate,
   ]);
@@ -316,12 +292,8 @@ export default function InvoiceHistoryModule() {
     .reduce((acc, curr) => acc + curr.amount + curr.tax, 0);
 
   const outstanding = invoices
-    .filter((i) => i.status === "Pending" || i.status === "Overdue")
+    .filter((i) => i.status === "Pending")
     .reduce((acc, curr) => acc + curr.amount + curr.tax, 0);
-
-  const overdueCount = invoices.filter(
-    (i) => i.status === "Overdue"
-  ).length;
 
   const totalPages = Math.ceil(filteredInvoices.length / rowsPerPage);
 
@@ -350,8 +322,27 @@ export default function InvoiceHistoryModule() {
     setSelectedRows([]);
   };
 
+  const saveEdit = (updated) => {
+    setInvoices((prev) =>
+      prev.map((i) => (i.id === updated.id ? updated : i))
+    );
+    setEditingInvoice(null);
+    setDrawerInvoice(updated);
+  };
+
+  const markOnePaid = (id) => {
+    setInvoices(prev => prev.map(i => i.id === id ? { ...i, status: "Paid" } : i));
+    if (drawerInvoice?.id === id) setDrawerInvoice(prev => ({ ...prev, status: "Paid" }));
+  };
+
+  const deleteInvoice = (id) => {
+    if (!window.confirm("Delete this invoice? This cannot be undone.")) return;
+    setInvoices(prev => prev.filter(i => i.id !== id));
+    if (drawerInvoice?.id === id) setDrawerInvoice(null);
+  };
+
   return (
-    <div className="min-h-screen bg-[#F7F6F3] p-6 text-[#1A1A1A]">
+    <div className="min-h-screen bg-[#f0f6f0] p-6 text-[#1A1A1A]">
       <div className="mx-auto max-w-7xl space-y-6">
         {/* TOP METRICS */}
         <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
@@ -374,11 +365,7 @@ export default function InvoiceHistoryModule() {
             </h2>
           </div>
 
-          <div
-            className={`rounded-3xl bg-white p-6 shadow-sm border border-[#FCEBEB] ${
-              overdueCount > 0 ? "animate-pulse" : ""
-            }`}
-          >
+          <div className="rounded-3xl bg-white p-6 shadow-sm border border-[#FCEBEB]">
             <p className="text-sm text-[#A32D2D]">Outstanding</p>
             <h2 className="mt-3 text-4xl font-bold text-[#A32D2D]">
               {formatMoney(outstanding)}
@@ -390,34 +377,12 @@ export default function InvoiceHistoryModule() {
         <div className="rounded-3xl bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex flex-wrap gap-3">
-              <div className="flex items-center gap-2 rounded-xl border px-4 py-2">
-                <Calendar size={16} />
-                <select
-                  value={datePreset}
-                  onChange={(e) => {
-                    const nextPreset = e.target.value;
-                    setDatePreset(nextPreset);
-
-                    if (nextPreset !== "Custom") {
-                      setFromDate("");
-                      setToDate("");
-                    }
-                  }}
-                  className="bg-transparent outline-none"
-                >
-                  <option value="Last 30 days">Last 30 days</option>
-                  <option value="Last 90 days">Last 90 days</option>
-                  <option value="This Year">This Year</option>
-                  <option value="Custom">Custom</option>
-                </select>
-              </div>
-
               <div className="flex items-center gap-2 rounded-xl border px-3 py-2">
+                <Calendar size={16} className="text-neutral-500" />
                 <input
                   type="date"
                   value={fromDate}
                   onChange={(e) => {
-                    setDatePreset("Custom");
                     setFromDate(e.target.value);
                   }}
                   className="bg-transparent text-sm outline-none"
@@ -430,7 +395,6 @@ export default function InvoiceHistoryModule() {
                   type="date"
                   value={toDate}
                   onChange={(e) => {
-                    setDatePreset("Custom");
                     setToDate(e.target.value);
                   }}
                   className="bg-transparent text-sm outline-none"
@@ -438,7 +402,7 @@ export default function InvoiceHistoryModule() {
                 />
               </div>
 
-              <div className="flex overflow-hidden rounded-xl bg-[#F1F3F5]">
+              <div className="flex overflow-hidden rounded-xl bg-[#e4ede4]">
                 {statusFilters.map((status) => (
                   <button
                     key={status}
@@ -446,11 +410,10 @@ export default function InvoiceHistoryModule() {
                       setSelectedStatus(status);
                       setPage(1);
                     }}
-                    className={`px-4 py-2 text-sm font-medium transition ${
-                      selectedStatus === status
-                        ? "bg-[#185FA5] text-white"
-                        : "text-neutral-600 hover:bg-neutral-200"
-                    }`}
+                    className={`px-4 py-2 text-sm font-medium transition ${selectedStatus === status
+                      ? "bg-[#2e7d32] text-white"
+                      : "text-neutral-600 hover:bg-[#d0dfd0]"
+                      }`}
                   >
                     {status}
                   </button>
@@ -467,36 +430,28 @@ export default function InvoiceHistoryModule() {
                   onChange={(e) => setSearch(e.target.value)}
                 />
               </div>
-
-              <div className="flex items-center gap-2 rounded-xl border px-4 py-2">
-                <Filter size={16} />
-                <select
-                  className="bg-transparent outline-none"
-                  value={sort}
-                  onChange={(e) => setSort(e.target.value)}
-                >
-                  <option value="newest">
-                    Date (newest)
-                  </option>
-                  <option value="oldest">
-                    Date (oldest)
-                  </option>
-                  <option value="high">
-                    Amount (high–low)
-                  </option>
-                  <option value="low">
-                    Amount (low–high)
-                  </option>
-                </select>
-              </div>
             </div>
 
             <div className="flex gap-2">
-              <button className="rounded-xl border px-4 py-2 font-medium hover:bg-neutral-50">
+              <button
+                onClick={() => {
+                  const headers = ["Invoice", "Client", "Issue Date", "Due Date", "Amount", "Tax", "Total", "Status"];
+                  const rows = filteredInvoices.map(i => [
+                    i.id, i.client, i.issueDate, i.dueDate,
+                    i.amount, i.tax, (i.amount + i.tax).toFixed(2), i.status
+                  ]);
+                  const csv = [headers, ...rows].map(r => r.join(",")).join("\n");
+                  const blob = new Blob([csv], { type: "text/csv" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a"); a.href = url; a.download = "invoices.csv"; a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="rounded-xl border px-4 py-2 font-medium hover:bg-neutral-50"
+              >
                 Export CSV
               </button>
 
-              <button className="rounded-xl bg-[#185FA5] px-4 py-2 font-medium text-white hover:opacity-90">
+              <button className="rounded-xl bg-[#2e7d32] px-4 py-2 font-medium text-white hover:opacity-90">
                 Export PDF
               </button>
             </div>
@@ -505,7 +460,7 @@ export default function InvoiceHistoryModule() {
 
         {/* BULK ACTION BAR */}
         {selectedRows.length > 0 && (
-          <div className="flex items-center justify-between rounded-2xl bg-[#185FA5] px-5 py-4 text-white">
+          <div className="flex items-center justify-between rounded-2xl bg-[#2e7d32] px-5 py-4 text-white">
             <p>{selectedRows.length} invoices selected</p>
 
             <div className="flex gap-2">
@@ -527,7 +482,7 @@ export default function InvoiceHistoryModule() {
         <div className="overflow-hidden rounded-3xl bg-white shadow-sm">
           <div className="overflow-x-auto">
             <table className="min-w-full">
-              <thead className="border-b bg-[#FAFAFA] text-left text-sm text-neutral-500">
+              <thead className="border-b bg-[#fafdfa] text-left text-sm text-neutral-500">
                 <tr>
                   <th className="px-5 py-4">
                     <input
@@ -563,118 +518,105 @@ export default function InvoiceHistoryModule() {
                     invoice.status === "Overdue";
 
                   return (
-                    <tr
-                      key={invoice.id}
-                      className="cursor-pointer border-b transition hover:bg-[#FAFAFA]"
-                      onClick={() =>
-                        setDrawerInvoice(invoice)
-                      }
-                    >
-                      <td
-                        className="px-5 py-4"
-                        onClick={(e) => e.stopPropagation()}
+                    <React.Fragment key={invoice.id}>
+                      <tr
+                        className="cursor-pointer border-b transition hover:bg-[#fafdfa]"
+                        onClick={(e) => {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          setExpandedRowY(rect.top);
+                          setExpandedRows(prev => ({ ...prev, [invoice.id]: !prev[invoice.id] }));
+                        }}
                       >
-                        <input
-                          type="checkbox"
-                          checked={selectedRows.includes(
-                            invoice.id
-                          )}
-                          onChange={() =>
-                            toggleSelect(invoice.id)
-                          }
-                        />
-                      </td>
+                        <td
+                          className="px-5 py-4"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedRows.includes(
+                              invoice.id
+                            )}
+                            onChange={() =>
+                              toggleSelect(invoice.id)
+                            }
+                          />
+                        </td>
 
-                      <td className="px-5 py-4">
-                        <div>
-                          <p className="font-semibold">
-                            {invoice.id}
-                          </p>
-                          <p className="text-sm text-neutral-500">
-                            {invoice.client}
-                          </p>
-                        </div>
-                      </td>
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-2">
+                            {expandedRows[invoice.id] ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                            <div>
+                              <p className="font-semibold">{invoice.id}</p>
+                              <p className="text-sm text-neutral-500">{invoice.client}</p>
+                            </div>
+                          </div>
+                        </td>
 
-                      <td className="px-5 py-4">
-                        {formatDate(invoice.issueDate)}
-                      </td>
+                        <td className="px-5 py-4">
+                          {formatDate(invoice.issueDate)}
+                        </td>
 
-                      <td
-                        className={`px-5 py-4 ${
-                          overdue
+                        <td
+                          className={`px-5 py-4 ${overdue
                             ? "font-medium text-[#A32D2D]"
                             : ""
-                        }`}
-                      >
-                        {formatDate(invoice.dueDate)}
-                      </td>
-
-                      <td
-                        className="px-5 py-4 text-right font-medium"
-                        title={`Tax: ${formatMoney(
-                          invoice.tax
-                        )}`}
-                      >
-                        {formatMoney(invoice.amount)}
-                      </td>
-
-                      <td className="px-5 py-4">
-                        <span
-                          className={`rounded-full px-3 py-1 text-xs font-semibold ${statusStyles[invoice.status]}`}
+                            }`}
                         >
-                          {invoice.status}
-                        </span>
-                      </td>
+                          {formatDate(invoice.dueDate)}
+                        </td>
 
-                      <td
-                        className="px-5 py-4"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <div className="group relative inline-block">
-                          <button className="rounded-lg p-2 hover:bg-neutral-100">
-                            <MoreVertical size={18} />
-                          </button>
+                        <td
+                          className="px-5 py-4 text-right font-medium"
+                          title={`Tax: ${formatMoney(
+                            invoice.tax
+                          )}`}
+                        >
+                          {formatMoney(invoice.amount)}
+                        </td>
 
-                          <div className="invisible absolute right-0 z-20 mt-2 w-52 rounded-2xl border bg-white p-2 opacity-0 shadow-xl transition-all group-hover:visible group-hover:opacity-100">
-                            {[
-                              {
-                                label: "View",
-                                icon: FileText,
-                              },
-                              {
-                                label: "Download PDF",
-                                icon: Download,
-                              },
-                              {
-                                label: "Duplicate",
-                                icon: Copy,
-                              },
-                              {
-                                label: "Mark as paid",
-                                icon: CheckCircle2,
-                              },
-                              {
-                                label: "Send reminder",
-                                icon: Send,
-                              },
-                              {
-                                label: "Delete",
-                                icon: Trash2,
-                              },
-                            ].map((item) => (
-                              <button
-                                key={item.label}
-                                className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm hover:bg-neutral-100"
-                              >
-                                <item.icon size={16} />
-                                {item.label}
-                              </button>
-                            ))}
+                        <td className="px-5 py-4">
+                          <span
+                            className={`rounded-full px-3 py-1 text-xs font-semibold ${statusStyles[invoice.status]}`}
+                          >
+                            {invoice.status}
+                          </span>
+                        </td>
+
+                        <td
+                          className="px-5 py-4"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="group relative inline-block">
+                            <button className="rounded-lg p-2 hover:bg-neutral-100">
+                              <MoreVertical size={18} />
+                            </button>
+
+                            <div className="invisible absolute right-0 z-20 mt-2 w-52 rounded-2xl border bg-white p-2 opacity-0 shadow-xl transition-all group-hover:visible group-hover:opacity-100">
+                              {[
+                                { label: "View", icon: FileText, action: (inv) => setDrawerInvoice(inv) },
+                                { label: "Download PDF", icon: Download, action: () => { } },
+                                { label: "Mark as paid", icon: CheckCircle2, action: (inv) => markOnePaid(inv.id) },
+                                { label: "Edit", icon: Pencil, action: (inv) => setEditingInvoice({ ...inv }) },
+                                { label: "Return Items", icon: RotateCcw, action: (inv) => setReturnInvoice(inv) },
+                                { label: "Delete", icon: Trash2, action: (inv) => deleteInvoice(inv.id) },
+                              ].map((item) => (
+                                <button
+                                  key={item.label}
+                                  onClick={() => item.action(invoice)}
+                                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm hover:bg-neutral-100"
+                                >
+                                  <item.icon size={16} />
+                                  {item.label}
+                                </button>
+                              ))}
+                            </div>
                           </div>
-                        </div>
-                      </td>
-                    </tr>
+                        </td>
+                      </tr>
+                      {expandedRows[invoice.id] && (
+                        <tr style={{ display: "none" }} />
+                      )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>
@@ -732,6 +674,49 @@ export default function InvoiceHistoryModule() {
               </button>
             </div>
           </div>
+          {Object.entries(expandedRows).map(([id, open]) => {
+            if (!open) return null;
+            const inv = paginated.find(i => i.id === id);
+            if (!inv) return null;
+            return (
+              <div
+                key={id}
+                style={{ top: Math.min(expandedRowY - 10, window.innerHeight - 320) }}
+                className="fixed right-6 z-50 w-[520px] rounded-3xl bg-white shadow-2xl border border-[#e8f0e8] p-5"
+              >
+                <div className="flex justify-between items-center mb-3">
+                  <p className="font-bold">{inv.id} — {inv.client}</p>
+                  <button onClick={() => setExpandedRows(prev => ({ ...prev, [id]: false }))}>
+                    <X size={16} />
+                  </button>
+                </div>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-neutral-500 border-b">
+                      <th className="text-left pb-2">Product</th>
+                      <th className="text-right pb-2">Qty</th>
+                      <th className="text-right pb-2">Unit Price</th>
+                      <th className="text-right pb-2">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {inv.items.map((item, i) => (
+                      <tr key={i} className="border-b last:border-0">
+                        <td className="py-2">{item.name}</td>
+                        <td className="text-right">{item.qty}</td>
+                        <td className="text-right">{formatMoney(item.price)}</td>
+                        <td className="text-right font-semibold">{formatMoney(item.qty * item.price)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="mt-3 flex gap-3 justify-end">
+                  <button onClick={() => setReturnInvoice(inv)} className="text-sm px-3 py-1.5 rounded-lg border hover:bg-neutral-50">↩ Return Items</button>
+                  <button onClick={() => setDrawerInvoice(inv)} className="text-sm px-3 py-1.5 rounded-lg bg-[#2e7d32] text-white hover:opacity-90">Full Details</button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -766,7 +751,7 @@ export default function InvoiceHistoryModule() {
               <div className="rounded-2xl border p-5">
                 <div className="mb-5 flex items-center justify-between">
                   <div>
-                    <h3 className="font-bold text-[#185FA5]">
+                    <h3 className="font-bold text-[#2e7d32]">
                       Your Business
                     </h3>
                     <p className="text-sm text-neutral-500">
@@ -818,7 +803,7 @@ export default function InvoiceHistoryModule() {
                     <span>
                       {formatMoney(
                         drawerInvoice.amount +
-                          drawerInvoice.tax
+                        drawerInvoice.tax
                       )}
                     </span>
                   </div>
@@ -831,7 +816,7 @@ export default function InvoiceHistoryModule() {
                 </h4>
 
                 {drawerInvoice.paymentHistory.length >
-                0 ? (
+                  0 ? (
                   <div className="space-y-3">
                     {drawerInvoice.paymentHistory.map(
                       (payment, idx) => (
@@ -866,22 +851,187 @@ export default function InvoiceHistoryModule() {
               </div>
 
               <div className="flex flex-col gap-3">
-                <button className="rounded-2xl bg-[#185FA5] px-5 py-3 font-medium text-white">
+                <button className="rounded-2xl bg-[#2e7d32] px-5 py-3 font-medium text-white">
                   Download PDF
                 </button>
 
-                <button className="rounded-2xl border px-5 py-3 font-medium">
-                  Send Reminder
+                <button
+                  onClick={() => { deleteInvoice(drawerInvoice.id); }}
+                  className="rounded-2xl border border-red-200 px-5 py-3 font-medium text-red-600 hover:bg-red-50"
+                >
+                  Delete Invoice
                 </button>
 
-                <button className="rounded-2xl border px-5 py-3 font-medium">
+                <button
+                  onClick={() => markOnePaid(drawerInvoice.id)}
+                  className="rounded-2xl border px-5 py-3 font-medium hover:bg-neutral-50"
+                >
                   Mark as Paid
                 </button>
 
-                <button className="rounded-2xl border px-5 py-3 font-medium">
+                <button
+                  onClick={() => setEditingInvoice({ ...drawerInvoice })}
+                  className="rounded-2xl border px-5 py-3 font-medium"
+                >
                   Edit Invoice
                 </button>
               </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {editingInvoice && (
+        <>
+          <div
+            className="fixed inset-0 z-60 bg-black/40"
+            onClick={() => setEditingInvoice(null)}
+          />
+          <div className="fixed left-1/2 top-1/2 z-70 w-[480px] -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white p-8 shadow-2xl">
+            <h2 className="mb-6 text-xl font-bold">Edit Invoice</h2>
+
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1 block text-sm text-neutral-500">Client</label>
+                <input
+                  className="w-full rounded-xl border px-4 py-2"
+                  value={editingInvoice.client}
+                  onChange={(e) =>
+                    setEditingInvoice((prev) => ({ ...prev, client: e.target.value }))
+                  }
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="mb-1 block text-sm text-neutral-500">Issue Date</label>
+                  <input
+                    type="date"
+                    className="w-full rounded-xl border px-4 py-2"
+                    value={editingInvoice.issueDate}
+                    onChange={(e) =>
+                      setEditingInvoice((prev) => ({ ...prev, issueDate: e.target.value }))
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm text-neutral-500">Due Date</label>
+                  <input
+                    type="date"
+                    className="w-full rounded-xl border px-4 py-2"
+                    value={editingInvoice.dueDate}
+                    onChange={(e) =>
+                      setEditingInvoice((prev) => ({ ...prev, dueDate: e.target.value }))
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="mb-1 block text-sm text-neutral-500">Amount (₨)</label>
+                  <input
+                    type="number"
+                    className="w-full rounded-xl border px-4 py-2"
+                    value={editingInvoice.amount}
+                    onChange={(e) =>
+                      setEditingInvoice((prev) => ({
+                        ...prev,
+                        amount: Number(e.target.value),
+                        tax: Number(e.target.value) * 0.05,
+                      }))
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm text-neutral-500">Status</label>
+                  <select
+                    className="w-full rounded-xl border px-4 py-2"
+                    value={editingInvoice.status}
+                    onChange={(e) =>
+                      setEditingInvoice((prev) => ({ ...prev, status: e.target.value }))
+                    }
+                  >
+                    {["Paid", "Pending", "Returned"].map((s) => (
+                      <option key={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-8 flex gap-3">
+              <button
+                onClick={() => saveEdit(editingInvoice)}
+                className="flex-1 rounded-2xl bg-[#2e7d32] py-3 font-medium text-white hover:opacity-90"
+              >
+                Save Changes
+              </button>
+              <button
+                onClick={() => setEditingInvoice(null)}
+                className="flex-1 rounded-2xl border py-3 font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {returnInvoice && (
+        <>
+          <div className="fixed inset-0 z-60 bg-black/40" onClick={() => setReturnInvoice(null)} />
+          <div className="fixed left-1/2 top-1/2 z-70 w-[520px] -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white p-8 shadow-2xl text-left">
+            <h2 className="mb-2 text-xl font-bold">Return Items</h2>
+            <p className="text-sm text-neutral-500 mb-6">{returnInvoice.id} · {returnInvoice.client}</p>
+
+            <div className="space-y-3 mb-6">
+              {returnInvoice.items.map((item, idx) => {
+                const key = `${returnInvoice.id}-${idx}`;
+                const sel = returnSelections[key] || { checked: false, qty: item.qty };
+                return (
+                  <div key={idx} className="flex items-center gap-4 rounded-xl border p-3">
+                    <input type="checkbox" checked={sel.checked}
+                      onChange={e => setReturnSelections(prev => ({ ...prev, [key]: { ...sel, checked: e.target.checked } }))} />
+                    <div className="flex-1">
+                      <p className="font-medium text-sm">{item.name}</p>
+                      <p className="text-xs text-neutral-500">Max: {item.qty}</p>
+                    </div>
+                    <input type="number" min={1} max={item.qty} value={sel.qty}
+                      disabled={!sel.checked}
+                      onChange={e => setReturnSelections(prev => ({ ...prev, [key]: { ...sel, qty: Math.min(item.qty, Number(e.target.value)) } }))}
+                      className="w-20 rounded-lg border px-2 py-1 text-sm disabled:opacity-40" />
+                    <span className="text-sm font-medium w-24 text-right">
+                      {formatMoney(item.price * (sel.checked ? sel.qty : 0))}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  const hasSelection = Object.values(returnSelections).some(s => s.checked);
+                  if (!hasSelection) { alert("Select at least one item to return."); return; }
+                  setInvoices(prev => prev.map(i => i.id === returnInvoice.id
+                    ? { ...i, status: "Returned" }
+                    : i
+                  ));
+                  if (drawerInvoice && drawerInvoice.id === returnInvoice.id) {
+                    setDrawerInvoice(prev => ({ ...prev, status: "Returned" }));
+                  }
+                  setReturnInvoice(null);
+                  setReturnSelections({});
+                }}
+                className="flex-1 rounded-2xl bg-[#2e7d32] py-3 font-medium text-white hover:opacity-90"
+              >
+                Confirm Return
+              </button>
+              <button onClick={() => { setReturnInvoice(null); setReturnSelections({}); }}
+                className="flex-1 rounded-2xl border py-3 font-medium hover:bg-neutral-50">
+                Cancel
+              </button>
             </div>
           </div>
         </>
