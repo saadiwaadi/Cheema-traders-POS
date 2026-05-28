@@ -1101,6 +1101,63 @@ class PosStore {
     });
   }
 
+  async updateBatch(id, payload) {
+    return this.transaction(async (db) => {
+      const old = await get(db, `SELECT product_id, quantity_remaining, cost_price, sale_price, expiry_date FROM batches WHERE id = ?`, [id]);
+      if (!old) throw new Error("Batch not found");
+
+      const qtyRemaining = Number(payload.quantityRemaining);
+      const costPrice = Number(payload.costPrice);
+      const salePrice = Number(payload.salePrice);
+      const expiryDate = payload.expiryDate || null;
+
+      await run(
+        db,
+        `UPDATE batches
+         SET quantity_remaining = ?, cost_price = ?, sale_price = ?, expiry_date = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [qtyRemaining, costPrice, salePrice, expiryDate, id]
+      );
+
+      const diff = qtyRemaining - old.quantity_remaining;
+      if (diff !== 0) {
+        await run(
+          db,
+          `UPDATE products SET current_stock = MAX(COALESCE(current_stock, 0) + ?, 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+          [diff, old.product_id]
+        );
+      }
+
+      await this.audit("batch", id, "update", old, payload);
+      return { id, ...payload };
+    });
+  }
+
+  async deleteBatch(id) {
+    return this.transaction(async (db) => {
+      const old = await get(db, `SELECT product_id, quantity_remaining, deleted_at FROM batches WHERE id = ?`, [id]);
+      if (!old) throw new Error("Batch not found");
+      if (old.deleted_at) throw new Error("Batch already deleted");
+
+      await run(
+        db,
+        `UPDATE batches SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [id]
+      );
+
+      if (old.quantity_remaining > 0) {
+        await run(
+          db,
+          `UPDATE products SET current_stock = MAX(COALESCE(current_stock, 0) - ?, 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+          [old.quantity_remaining, old.product_id]
+        );
+      }
+
+      await this.audit("batch", id, "delete", old, null);
+      return { id };
+    });
+  }
+
   async createPurchase(input) {
     const purchaseDate = input.purchaseDate || new Date().toISOString().slice(0, 10);
     const items = Array.isArray(input.items) ? input.items : [];
@@ -1241,6 +1298,114 @@ class PosStore {
         paymentMethod,
         items: savedBatches
       };
+    });
+  }
+
+  async listPurchases({ limit = 200 } = {}) {
+    const db = await this._db();
+    const purchases = await all(
+      db,
+      `
+        SELECT 
+          p.id,
+          p.invoice_no AS invoiceNo,
+          p.purchase_date AS purchaseDate,
+          p.subtotal AS totalCost,
+          p.amount_paid AS amountPaid,
+          p.balance_due AS balanceDue,
+          p.payment_method AS paymentMethod,
+          p.notes,
+          p.created_at AS createdAt,
+          p.supplier_id AS supplierId,
+          s.name AS supplierName
+        FROM purchases p
+        LEFT JOIN suppliers s ON s.id = p.supplier_id
+        ORDER BY p.purchase_date DESC, p.id DESC
+        LIMIT ?
+      `,
+      [limit]
+    );
+
+    for (const p of purchases) {
+      p.items = await all(
+        db,
+        `
+          SELECT 
+            pi.product_name AS productName,
+            pi.quantity AS qty,
+            pr.unit AS unit
+          FROM purchase_items pi
+          LEFT JOIN products pr ON pr.id = pi.product_id
+          WHERE pi.purchase_id = ?
+        `,
+        [p.id]
+      );
+    }
+
+    return purchases;
+  }
+
+  async updatePurchase(id, payload) {
+    return this.transaction(async (db) => {
+      const old = await get(db, `SELECT subtotal, purchase_date, payment_method, amount_paid, notes FROM purchases WHERE id = ?`, [id]);
+      if (!old) throw new Error("Purchase not found");
+
+      const purchaseDate = payload.purchaseDate;
+      const paymentMethod = payload.paymentMethod || "Cash";
+      const amountPaid = Number(payload.amountPaid || 0);
+      const balanceDue = Math.max(0, old.subtotal - amountPaid);
+      const notes = payload.notes || null;
+
+      await run(
+        db,
+        `UPDATE purchases
+         SET purchase_date = ?, payment_method = ?, amount_paid = ?, balance_due = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [purchaseDate, paymentMethod, amountPaid, balanceDue, notes, id]
+      );
+
+      await this.audit("purchase", id, "update", old, payload);
+      return { id, purchaseDate, paymentMethod, amountPaid, balanceDue, notes };
+    });
+  }
+
+  async deletePurchase(id) {
+    return this.transaction(async (db) => {
+      const purchase = await get(db, `SELECT invoice_no FROM purchases WHERE id = ?`, [id]);
+      if (!purchase) throw new Error("Purchase not found");
+
+      const items = await all(db, `SELECT product_id, batch_id, quantity FROM purchase_items WHERE purchase_id = ?`, [id]);
+
+      for (const item of items) {
+        if (item.quantity > 0) {
+          await run(
+            db,
+            `UPDATE products 
+             SET current_stock = MAX(COALESCE(current_stock, 0) - ?, 0), 
+                 updated_at = CURRENT_TIMESTAMP 
+             WHERE id = ?`,
+            [item.quantity, item.product_id]
+          );
+        }
+        
+        if (item.batch_id) {
+          await run(
+            db,
+            `UPDATE batches 
+             SET deleted_at = CURRENT_TIMESTAMP, 
+                 updated_at = CURRENT_TIMESTAMP 
+             WHERE id = ?`,
+            [item.batch_id]
+          );
+        }
+      }
+
+      await run(db, `DELETE FROM inventory_movements WHERE reference_type = 'purchase' AND reference_id = ?`, [id]);
+      await run(db, `DELETE FROM purchase_items WHERE purchase_id = ?`, [id]);
+      await run(db, `DELETE FROM purchases WHERE id = ?`, [id]);
+
+      await this.audit("purchase", id, "delete", purchase, null);
+      return { id };
     });
   }
 

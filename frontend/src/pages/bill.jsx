@@ -24,6 +24,9 @@ function createRow() {
     price: "",
     discount: "",
     total: 0,
+    availableStock: null,
+    outOfStock: false,
+    overStock: false,
   };
 }
 
@@ -119,12 +122,17 @@ export default function BillingWorkspace() {
             updated.productId = selected.id;
             updated.unit = selected.unit;
             updated.price = selected.basePrice || selected.price || 0;
-            updated.outOfStock = (selected.currentStock ?? selected.quantity ?? 1) <= 0;
+
+            const stock = selected.currentStock ?? selected.quantity ?? null;
+            updated.availableStock = stock;
+            updated.outOfStock = stock !== null && stock <= 0;
           } else {
             updated.productId = "";
             updated.unit = "";
             updated.price = 0;
+            updated.availableStock = null;
             updated.outOfStock = false;
+            updated.overStock = false;
           }
         }
 
@@ -133,6 +141,9 @@ export default function BillingWorkspace() {
         const discount = parseFloat(updated.discount) || 0;
 
         updated.total = Math.max(0, qty * price - discount);
+
+        updated.outOfStock = updated.availableStock !== null && updated.availableStock <= 0;
+        updated.overStock  = updated.availableStock !== null && updated.availableStock > 0 && qty > updated.availableStock;
 
         return updated;
       })
@@ -146,7 +157,13 @@ export default function BillingWorkspace() {
         const nextQty = Math.max(0, (parseFloat(row.qty) || 0) + delta);
         const price = parseFloat(row.price) || 0;
         const discount = parseFloat(row.discount) || 0;
-        return { ...row, qty: nextQty, total: Math.max(0, nextQty * price - discount) };
+        return {
+          ...row,
+          qty: nextQty,
+          total: Math.max(0, nextQty * price - discount),
+          outOfStock: row.availableStock !== null && row.availableStock <= 0,
+          overStock:  row.availableStock !== null && row.availableStock > 0 && nextQty > row.availableStock,
+        };
       })
     );
   };
@@ -277,13 +294,16 @@ export default function BillingWorkspace() {
       discount: parseFloat(r.discount) || 0,
     }));
     const outOfStockItems = activeRows.filter((r) => r.outOfStock);
-    if (outOfStockItems.length > 0) {
+    const overStockItems  = activeRows.filter((r) => r.overStock);
+
+    if (outOfStockItems.length > 0 || overStockItems.length > 0) {
       setWarnData({
         title: "Stock Warning",
         lines: [
-          ...outOfStockItems.map((r) => ({
+          ...outOfStockItems.map((r) => ({ label: r.product, value: "Out of Stock" })),
+          ...overStockItems.map((r) => ({
             label: r.product,
-            value: "Out of Stock",
+            value: `Qty ${r.qty} exceeds stock (${r.availableStock} available)`,
           })),
           { label: "Note", value: "Invoice will still be generated" },
         ],
@@ -391,11 +411,8 @@ export default function BillingWorkspace() {
                 {rows.map((row, index) => (
                   <div key={row.id} style={{
                     ...st.tableRow,
-                    ...(row.outOfStock ? {
-                      background: "#fff5f5",
-                      borderBottom: "1px solid #ffd4d4",
-                      borderRadius: 8,
-                    } : {})
+                    ...(row.outOfStock ? { background: "#fff5f5", borderBottom: "1px solid #ffd4d4", borderRadius: 8 } : {}),
+                    ...(row.overStock  ? { background: "#fff8f0", borderBottom: "1px solid #ffe0b2", borderRadius: 8 } : {}),
                   }}>
                     <div style={{ ...st.rowIndex, width: 36 }}>
                       {index + 1}
@@ -414,11 +431,13 @@ export default function BillingWorkspace() {
                         }}
                       />
                       {row.outOfStock && (
-                        <div style={{
-                          fontSize: 10, color: "#c62828", fontWeight: 700,
-                          marginTop: 2, paddingLeft: 2,
-                        }}>
+                        <div style={{ fontSize: 10, color: "#c62828", fontWeight: 700, marginTop: 2, paddingLeft: 2 }}>
                           ⚠ Out of stock
+                        </div>
+                      )}
+                      {row.overStock && (
+                        <div style={{ fontSize: 10, color: "#e65100", fontWeight: 700, marginTop: 2, paddingLeft: 2 }}>
+                          ⚠ Only {row.availableStock} in stock
                         </div>
                       )}
                     </div>

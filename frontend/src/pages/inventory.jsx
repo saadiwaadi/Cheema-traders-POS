@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import * as api from "../lib/posApi";
 
 export default function InventoryManagementPage() {
-  const [activeTab, setActiveTab] = useState("view"); // "view" | "entry"
+  const [activeTab, setActiveTab] = useState("view"); // "view" | "entry" | "history"
+  const [refreshKey, setRefreshKey] = useState(0);
 
   return (
     <div style={st.page}>
@@ -27,17 +28,25 @@ export default function InventoryManagementPage() {
             >
               Stock Entry
             </button>
+            <button
+              style={{ ...st.navBtn, ...(activeTab === "history" ? st.navBtnActive : {}) }}
+              onClick={() => setActiveTab("history")}
+            >
+              Purchase History
+            </button>
           </div>
         </div>
 
-        {activeTab === "view" ? <StockViewTab /> : <StockEntryTab onSaved={() => setActiveTab("view")} />}
+        {activeTab === "view"    && <StockViewTab refreshKey={refreshKey} />}
+        {activeTab === "entry"   && <StockEntryTab onSaved={() => { setRefreshKey(k => k + 1); setActiveTab("view"); }} />}
+        {activeTab === "history" && <StockHistoryTab onChanged={() => setRefreshKey(k => k + 1)} />}
       </div>
     </div>
   );
 }
 
 /* ─── STOCK VIEW TAB ─── */
-function StockViewTab() {
+function StockViewTab({ refreshKey }) {
   const [batches, setBatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -57,7 +66,7 @@ function StockViewTab() {
 
   useEffect(() => {
     loadData();
-  }, [search]);
+  }, [search, refreshKey]);
 
   const totalValue = batches.reduce((sum, b) => sum + (b.quantityRemaining * (b.costPrice || 0)), 0);
 
@@ -206,7 +215,7 @@ function StockEntryTab({ onSaved }) {
     setSaving(true);
     setError("");
     setSuccess("");
-    
+
     // Filter out rows without a product name
     const validRows = inventory.filter(i => i.productName.trim() !== "");
     if (validRows.length === 0) {
@@ -381,15 +390,15 @@ function StockEntryTab({ onSaved }) {
                 ))}
               </select>
             </div>
-            <Field 
-              label="Entry Date" 
-              type="date" 
+            <Field
+              label="Entry Date"
+              type="date"
               value={purchaseDate}
               onChange={(e) => setPurchaseDate(e.target.value)}
             />
-            <Field 
-              label="Warehouse Shelf" 
-              placeholder="A-2" 
+            <Field
+              label="Warehouse Shelf"
+              placeholder="A-2"
               value={warehouseShelf}
               onChange={(e) => setWarehouseShelf(e.target.value)}
             />
@@ -399,15 +408,15 @@ function StockEntryTab({ onSaved }) {
         <div style={st.infoCard}>
           <h3 style={st.sectionTitleSm}>Payment Tracking</h3>
           <div style={st.grid3}>
-            <FieldSelect 
-              label="Payment Type" 
-              options={["Cash", "Credit", "Partial"]} 
+            <FieldSelect
+              label="Payment Type"
+              options={["Cash", "Credit", "Partial"]}
               value={paymentType}
               onChange={(e) => setPaymentType(e.target.value)}
             />
-            <Field 
-              label="Amount Paid" 
-              placeholder="0" 
+            <Field
+              label="Amount Paid"
+              placeholder="0"
               type="number"
               value={amountPaid}
               onChange={(e) => setAmountPaid(e.target.value)}
@@ -478,13 +487,256 @@ function SumRow({ label, value }) {
   );
 }
 
+function StockHistoryTab({ onChanged }) {
+  const [purchases, setPurchases] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [editValues, setEditValues] = useState({});
+
+  const loadData = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await api.listPurchases();
+      setPurchases(res.purchases || []);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadData(); }, []);
+
+  const filtered = purchases.filter(p =>
+    !search ||
+    (p.supplierName || "").toLowerCase().includes(search.toLowerCase()) ||
+    (p.purchaseDate || "").includes(search)
+  );
+
+  const startEdit = (p) => {
+    setEditingId(p.id);
+    setEditValues({
+      purchaseDate: p.purchaseDate || "",
+      paymentMethod: p.paymentMethod || "Cash",
+      amountPaid: p.amountPaid || 0,
+      notes: p.notes || "",
+    });
+  };
+
+  const saveEdit = async (id) => {
+    try {
+      await api.updatePurchase(id, editValues);
+      setEditingId(null);
+      await loadData();
+      onChanged();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this purchase record? Stock quantities will be reversed on the backend.")) return;
+    try {
+      await api.deletePurchase(id);
+      await loadData();
+      onChanged();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const totalSpend = filtered.reduce((sum, p) => sum + (parseFloat(p.totalCost) || 0), 0);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {error && <div style={st.alertError}>{error}</div>}
+
+      {/* Metrics */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+        <div style={st.metricCard}>
+          <div style={st.metricLabel}>Total Purchases</div>
+          <div style={st.metricValue}>{filtered.length}</div>
+        </div>
+        <div style={st.metricCard}>
+          <div style={st.metricLabel}>Total Spend (filtered)</div>
+          <div style={st.metricValue}>Rs {totalSpend.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+        </div>
+        <div style={st.metricCard}>
+          <div style={st.metricLabel}>Unique Suppliers</div>
+          <div style={st.metricValue}>
+            {new Set(filtered.map(p => p.supplierName).filter(Boolean)).size}
+          </div>
+        </div>
+      </div>
+
+      <div style={st.productCard}>
+        <div style={st.productTop}>
+          <div>
+            <h2 style={st.sectionTitle}>Purchase History</h2>
+            <p style={st.subText}>Every stock purchase logged via Stock Entry. Edit header info or delete a record entirely.</p>
+          </div>
+          <input
+            style={st.searchInp}
+            placeholder="Search supplier or date..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+        </div>
+
+        <div style={st.tableWrap}>
+          {/* Header */}
+          <div style={st.tableHead}>
+            <span style={{ flex: 1.2 }}>Date</span>
+            <span style={{ flex: 1.5 }}>Supplier</span>
+            <span style={{ flex: 0.8, textAlign: "center" }}>Batches</span>
+            <span style={{ flex: 1, textAlign: "right" }}>Total Cost</span>
+            <span style={{ flex: 1, textAlign: "right" }}>Amount Paid</span>
+            <span style={{ flex: 1, textAlign: "right" }}>Remaining</span>
+            <span style={{ flex: 1 }}>Payment</span>
+            <span style={{ flex: 1.4 }}>Notes</span>
+            <span style={{ width: 90, textAlign: "center" }}>Actions</span>
+          </div>
+
+          {loading ? (
+            <div style={{ padding: 20, textAlign: "center", color: "#666" }}>Loading purchase history...</div>
+          ) : filtered.length === 0 ? (
+            <div style={{ padding: 20, textAlign: "center", color: "#666" }}>No purchase records found.</div>
+          ) : (
+            filtered.map(p => {
+              const isEditing = editingId === p.id;
+              const remaining = (parseFloat(p.totalCost) || 0) - (parseFloat(p.amountPaid) || 0);
+
+              return (
+                <div key={p.id} style={{
+                  ...st.tableRowView,
+                  background: isEditing ? "#f5fdf5" : "transparent",
+                  outline: isEditing ? "1.5px solid #c8e6c9" : "none",
+                  borderRadius: isEditing ? 10 : 0,
+                  padding: "12px 8px",
+                  alignItems: "flex-start",
+                }}>
+                  {/* Date */}
+                  {isEditing ? (
+                    <input type="date" style={{ ...st.inp, flex: 1.2 }}
+                      value={editValues.purchaseDate}
+                      onChange={e => setEditValues(v => ({ ...v, purchaseDate: e.target.value }))} />
+                  ) : (
+                    <span style={{ flex: 1.2, color: "#333", fontWeight: 600 }}>{p.purchaseDate}</span>
+                  )}
+
+                  {/* Supplier */}
+                  <span style={{ flex: 1.5, color: "#555" }}>{p.supplierName || "—"}</span>
+
+                  {/* Batch count — expand on click */}
+                  <div style={{ flex: 0.8, textAlign: "center" }}>
+                    <span style={{
+                      display: "inline-block", background: "#e8f5e9", color: "#2e7d32",
+                      borderRadius: 20, padding: "2px 10px", fontSize: 13, fontWeight: 700
+                    }}>
+                      {(p.items || []).length}
+                    </span>
+                    {(p.items || []).length > 0 && (
+                      <div style={{ marginTop: 4, fontSize: 11, color: "#777", lineHeight: 1.5 }}>
+                        {(p.items || []).map((item, i) => (
+                          <div key={i}>{item.productName} × {item.qty} {item.unit}</div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Total cost */}
+                  <span style={{ flex: 1, textAlign: "right", fontWeight: 600 }}>
+                    Rs {(parseFloat(p.totalCost) || 0).toLocaleString()}
+                  </span>
+
+                  {/* Amount paid */}
+                  {isEditing ? (
+                    <input type="number" style={{ ...st.inp, flex: 1, textAlign: "right" }}
+                      value={editValues.amountPaid}
+                      onChange={e => setEditValues(v => ({ ...v, amountPaid: e.target.value }))} />
+                  ) : (
+                    <span style={{ flex: 1, textAlign: "right", color: "#2e7d32" }}>
+                      Rs {(parseFloat(p.amountPaid) || 0).toLocaleString()}
+                    </span>
+                  )}
+
+                  {/* Remaining */}
+                  <span style={{
+                    flex: 1, textAlign: "right",
+                    color: remaining > 0 ? "#c62828" : "#2e7d32", fontWeight: 600
+                  }}>
+                    Rs {Math.max(0, remaining).toLocaleString()}
+                  </span>
+
+                  {/* Payment method */}
+                  {isEditing ? (
+                    <select style={{ ...st.inp, flex: 1 }}
+                      value={editValues.paymentMethod}
+                      onChange={e => setEditValues(v => ({ ...v, paymentMethod: e.target.value }))}>
+                      {["Cash", "Credit", "Partial", "HBL Bank", "UBL Bank", "JazzCash"].map(m => (
+                        <option key={m}>{m}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span style={{ flex: 1, color: "#555" }}>{p.paymentMethod || "—"}</span>
+                  )}
+
+                  {/* Notes */}
+                  {isEditing ? (
+                    <input style={{ ...st.inp, flex: 1.4 }}
+                      value={editValues.notes}
+                      placeholder="Notes..."
+                      onChange={e => setEditValues(v => ({ ...v, notes: e.target.value }))} />
+                  ) : (
+                    <span style={{ flex: 1.4, color: "#888", fontSize: 12 }}>{p.notes || "—"}</span>
+                  )}
+
+                  {/* Actions */}
+                  <div style={{ width: 90, display: "flex", gap: 6, justifyContent: "center" }}>
+                    {isEditing ? (
+                      <>
+                        <button
+                          title="Save"
+                          style={{ ...st.delBtn, background: "#e8f5e9", color: "#2e7d32", fontWeight: 700 }}
+                          onClick={() => saveEdit(p.id)}>✓</button>
+                        <button
+                          title="Cancel"
+                          style={st.delBtn}
+                          onClick={() => setEditingId(null)}>✕</button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          title="Edit"
+                          style={{ ...st.delBtn, background: "#e8f0ff", color: "#5c35cc", fontWeight: 700 }}
+                          onClick={() => startEdit(p)}>✎</button>
+                        <button
+                          title="Delete"
+                          style={st.delBtn}
+                          onClick={() => handleDelete(p.id)}>🗑</button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const st = {
   page: { display: "flex", flexDirection: "column", minHeight: "100%", background: "#f0f6f0", fontFamily: "system-ui, sans-serif" },
   main: { flex: 1, padding: 20, overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 },
   toolbar: { display: "flex", justifyContent: "space-between", alignItems: "center" },
   toolbarLeft: { display: "flex", alignItems: "center", gap: 12 },
   pageTitle: { margin: 0, fontSize: 24, fontWeight: "bold", color: "#1b3a1d" },
-  
+
   navStrip: { display: "flex", gap: 4, background: "#e4ede4", borderRadius: 12, padding: 4 },
   navBtn: { padding: "10px 18px", border: "none", borderRadius: 9, background: "transparent", fontSize: 14, fontWeight: 600, color: "#5a755c", cursor: "pointer", transition: "background 0.2s" },
   navBtnActive: { background: "#fff", color: "#1d351f", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" },
@@ -494,14 +746,14 @@ const st = {
   metricValue: { fontSize: 24, fontWeight: 700, color: "#1b3a1d" },
 
   summaryToggle: { padding: "10px 18px", border: "none", background: "#2e7d32", color: "#fff", borderRadius: 8, cursor: "pointer", fontWeight: 600 },
-  
+
   productCard: { background: "#fff", borderRadius: 14, padding: 20, border: "1px solid #d5e8d5" },
   productTop: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 },
   sectionTitle: { margin: 0, fontSize: 18, fontWeight: "bold", color: "#1b3a1d" },
   subText: { margin: "4px 0 0 0", fontSize: 13, color: "#666" },
   addBtn: { padding: "8px 16px", background: "#43a047", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600 },
   searchInp: { padding: "8px 14px", border: "1.5px solid #cde0cd", borderRadius: 8, outline: "none", width: 280 },
-  
+
   tableWrap: { display: "flex", flexDirection: "column", gap: 8 },
   tableHead: { display: "flex", padding: "0 4px 8px", borderBottom: "2px solid #e8f0e8", fontSize: 12, fontWeight: 700, color: "#6a8f6c", textTransform: "uppercase" },
   tableRow: { display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: "1px solid #f2f7f2" },
@@ -514,7 +766,7 @@ const st = {
   infoCard: { background: "#fff", borderRadius: 14, padding: 20, border: "1px solid #d5e8d5" },
   sectionTitleSm: { margin: "0 0 16px 0", fontSize: 16, fontWeight: 600, color: "#1b3a1d" },
   grid3: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 },
-  
+
   fieldWrap: { display: "flex", flexDirection: "column", gap: 6 },
   fieldLabel: { fontSize: 11, fontWeight: 700, color: "#6a8f6c", textTransform: "uppercase" },
   fieldInput: { padding: "10px", border: "1.5px solid #cde0cd", borderRadius: 8, background: "#fafff9", outline: "none" },
@@ -525,12 +777,12 @@ const st = {
   summaryTitle: { margin: 0, fontSize: 18, fontWeight: "bold", color: "#1b3a1d" },
   closeBtn: { background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "#666" },
   summaryBody: { padding: 20, flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 },
-  
+
   sumRow: { display: "flex", justifyContent: "space-between", fontSize: 15, color: "#444" },
   grandRow: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0", borderTop: "2px solid #e8f0e8", borderBottom: "2px solid #e8f0e8", fontWeight: "bold", fontSize: 16 },
   grandValue: { fontSize: 20, color: "#2e7d32" },
   generateBtn: { marginTop: "auto", padding: 16, background: "#2e7d32", color: "#fff", border: "none", borderRadius: 12, fontSize: 16, fontWeight: "bold", cursor: "pointer" },
-  
+
   overlay: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.3)", zIndex: 90 },
 
   alertError: { padding: "12px", borderRadius: 8, background: "#fff0f0", border: "1px solid #f5c6c6", color: "#c62828", fontSize: 14, fontWeight: 500 },

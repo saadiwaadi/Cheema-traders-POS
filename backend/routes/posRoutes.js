@@ -76,10 +76,56 @@ router.post("/batches", async (req, res) => {
   }
 });
 
+router.patch("/batches/:id", async (req, res) => {
+  try {
+    const batch = await store.updateBatch(Number(req.params.id), req.body);
+    return res.json({ batch });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+router.delete("/batches/:id", async (req, res) => {
+  try {
+    await store.deleteBatch(Number(req.params.id));
+    return res.json({ message: "Batch deleted successfully" });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
 router.post("/purchases", async (req, res) => {
   try {
     const purchase = await store.createPurchase(req.body);
     return res.status(201).json({ purchase });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+router.get("/purchases", async (req, res) => {
+  try {
+    const limit = req.query.limit ? Number(req.query.limit) : 200;
+    const purchases = await store.listPurchases({ limit });
+    return res.json({ purchases });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.patch("/purchases/:id", async (req, res) => {
+  try {
+    const purchase = await store.updatePurchase(Number(req.params.id), req.body);
+    return res.json({ purchase });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+router.delete("/purchases/:id", async (req, res) => {
+  try {
+    await store.deletePurchase(Number(req.params.id));
+    return res.json({ message: "Purchase deleted successfully" });
   } catch (error) {
     return res.status(400).json({ message: error.message });
   }

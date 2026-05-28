@@ -60,11 +60,47 @@ export async function saveBatch(payload) {
   });
 }
 
+export async function updateBatch(id, payload) {
+  if (usingIpc()) return window.pos.updateBatch(id, payload);
+  return httpJson(`/batches/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteBatch(id) {
+  if (usingIpc()) return window.pos.deleteBatch(id);
+  return httpJson(`/batches/${id}`, {
+    method: "DELETE",
+  });
+}
+
 export async function createPurchase(payload) {
   if (usingIpc()) return window.pos.createPurchase(payload);
   return httpJson("/purchases", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function listPurchases(args = {}) {
+  if (usingIpc()) return window.pos.listPurchases(args);
+  const q = new URLSearchParams(args).toString();
+  return httpJson(`/purchases?${q}`);
+}
+
+export async function updatePurchase(id, payload) {
+  if (usingIpc()) return window.pos.updatePurchase(id, payload);
+  return httpJson(`/purchases/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deletePurchase(id) {
+  if (usingIpc()) return window.pos.deletePurchase(id);
+  return httpJson(`/purchases/${id}`, {
+    method: "DELETE",
   });
 }
 

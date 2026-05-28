@@ -223,13 +223,13 @@ export default function InvoiceHistoryModule() {
     toDate,
   ]);
 
-  const totalInvoices = invoices.length;
+  const totalInvoices = filteredInvoices.length;
 
-  const totalCollected = invoices
+  const totalCollected = filteredInvoices
     .filter((i) => i.status === "Paid")
     .reduce((acc, curr) => acc + curr.total, 0);
 
-  const outstanding = invoices
+  const outstanding = filteredInvoices
     .filter((i) => i.status === "Pending")
     .reduce((acc, curr) => acc + curr.balanceDue, 0);
 
@@ -326,7 +326,11 @@ export default function InvoiceHistoryModule() {
             onClick={() => setSelectedStatus("All")}
             className="rounded-3xl bg-white p-6 shadow-sm transition hover:shadow-md text-left"
           >
-            <p className="text-sm text-neutral-500">Total Invoices</p>
+            <p className="text-sm text-neutral-500">
+              {(fromDate || toDate || selectedStatus !== "All" || search)
+                ? "Filtered Invoices"
+                : "Total Invoices"}
+            </p>
             <h2 className="mt-3 text-4xl font-bold">
               {totalInvoices}
             </h2>

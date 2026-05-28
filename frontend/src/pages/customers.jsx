@@ -67,7 +67,7 @@ export default function CustomersPage() {
           ) : (
             <>
               <h1 style={st.title}>Customers</h1>
-              <p style={st.subtitle}>Client and Debtor Management</p>
+              <p style={st.subtitle}>Customer Record</p>
             </>
           )}
         </div>
@@ -148,7 +148,7 @@ function AddCustomerPanel({ isOpen, onClose, onSaved }) {
             <div style={st.panelBody}>
               <div style={st.fieldWrap}>
                 <label style={st.fieldLabel}>Customer Name *</label>
-                <input style={st.input} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Ali Traders" />
+                <input style={st.input} value={name} onChange={e => setName(e.target.value)} placeholder="Customer Name" />
               </div>
               <div style={st.fieldWrap}>
                 <label style={st.fieldLabel}>Phone Number</label>
@@ -227,28 +227,8 @@ function CustomerListView({ customers, loading, onSelectHistory, onDelete }) {
   if (sortCol === 'balance') filtered.sort((a, b) => sortDir * (a.current_balance - b.current_balance));
   if (sortCol === 'purchase') filtered.sort((a, b) => sortDir * ((a.last_purchase || '').localeCompare(b.last_purchase || '')));
 
-  const totalReceivables = customers.reduce((sum, c) => c.current_balance > 0 ? sum + c.current_balance : sum, 0);
-  const totalPayables = customers.reduce((sum, c) => c.current_balance < 0 ? sum + Math.abs(c.current_balance) : sum, 0);
-
   return (
     <>
-      <div style={{ ...st.cardsGrid, gridTemplateColumns: '1fr 1fr' }}>
-        <div style={{ ...st.card, borderLeft: `3px solid #c62828` }}>
-          <div style={st.cardLabel}>Total Market Receivables</div>
-          <div style={{ ...st.cardAmount, color: '#c62828' }}>
-            Rs. {totalReceivables.toLocaleString()}
-          </div>
-          <div style={st.cardHint}>Money customers owe the business (Debits)</div>
-        </div>
-        <div style={{ ...st.card, borderLeft: `3px solid #2e7d32` }}>
-          <div style={st.cardLabel}>Total Market Credits</div>
-          <div style={{ ...st.cardAmount, color: '#2e7d32' }}>
-            Rs. {totalPayables.toLocaleString()}
-          </div>
-          <div style={st.cardHint}>Advance payments received (Credits)</div>
-        </div>
-      </div>
-
       <div style={st.tableWrap}>
         <div style={st.tableSearch}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
