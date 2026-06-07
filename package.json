@@ -8,18 +8,59 @@
     "electron": "wait-on http://localhost:5173 && electron .",
     "dev": "concurrently \"npm run backend\" \"npm run frontend\" \"npm run electron\"",
     "desktop": "concurrently \"npm run frontend\" \"npm run electron\"",
-    "build": "cd frontend && npm run build"
+    "build": "cd frontend && npm run build",
+    "rebuild": "electron-rebuild -f -w sqlite3 -w better-sqlite3",
+    "dist": "npm run build && npm run rebuild && electron-builder --win",
+    "package": "npm run build && electron-packager . CheemaTradersPOS --platform=win32 --arch=x64 --out=dist-package --overwrite --ignore=\"(frontend/src|frontend/node_modules|frontend/public|dist-package|\\\\.git|\\\\.gitignore|requirements|diff\\\\.txt)\""
   },
   "dependencies": {
-    "electron": "^30.0.0",
+    "better-sqlite3": "^12.10.0",
+    "body-parser": "^2.2.2",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
     "framer-motion": "^12.38.0",
-    "lucide-react": "^1.16.0"
+    "lucide-react": "^1.16.0",
+    "sqlite3": "^6.0.1"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
     "autoprefixer": "^10.5.0",
     "concurrently": "^8.2.0",
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3",
+    "electron-packager": "^17.1.2",
+    "electron-winstaller": "^5.4.0",
     "postcss": "^8.5.15",
     "tailwindcss": "^4.3.0",
     "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.cheematraders.pos",
+    "productName": "CheemaTradersPOS",
+    "directories": {
+      "output": "release"
+    },
+    "npmRebuild": false,
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "files": [
+      "electron/**/*",
+      "backend/**/*",
+      "frontend/dist/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/*.node"
+    ]
   }
 }

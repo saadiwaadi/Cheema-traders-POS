@@ -8,10 +8,18 @@ export default function SuccessNotification({
   onPrint,
 }) {
   const [show, setShow] = useState(false);
+  const [localTitle, setLocalTitle] = useState(title);
+  const [localLines, setLocalLines] = useState(lines);
 
   useEffect(() => {
-    if (visible) setShow(true);
-  }, [visible]);
+    if (visible) {
+      setShow(true);
+      setLocalTitle(title);
+      setLocalLines(lines);
+    } else {
+      setShow(false);
+    }
+  }, [visible, title, lines]);
 
   if (!visible && !show) return null;
 
@@ -91,7 +99,7 @@ export default function SuccessNotification({
             textAlign: "center",
           }}
         >
-          {title}
+          {localTitle}
         </div>
 
         <div
@@ -105,7 +113,7 @@ export default function SuccessNotification({
             marginBottom: 20,
           }}
         >
-          {lines.map((line, i) => (
+          {localLines.map((line, i) => (
             <div
               key={i}
               style={{
@@ -113,7 +121,7 @@ export default function SuccessNotification({
                 justifyContent: "space-between",
                 alignItems: "center",
                 padding: "10px 0",
-                borderBottom: i < lines.length - 1 ? "1px solid #f2f7f2" : "none",
+                borderBottom: i < localLines.length - 1 ? "1px solid #f2f7f2" : "none",
                 fontSize: 13,
               }}
             >

@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useCallback } from "react";
 import DropdownSelect from "../components/DropdownSelect";
 import { listCustomers, saveCustomer, listProducts, saveSale, getNextInvoiceNo } from "../lib/posApi";
 import SuccessNotification from "../components/SuccessNotification";
@@ -197,7 +197,7 @@ export default function BillingWorkspace() {
         ? "Partial"
         : "Paid";
 
-  const proceedGenerateInvoice = async (activeRows, saleItems) => {
+  const proceedGenerateInvoice = useCallback(async (activeRows, saleItems) => {
     if (!selectedCustomerObj && parsedReceived < subtotal) {
       setWarnData({
         title: "Payment Required",
@@ -264,6 +264,7 @@ export default function BillingWorkspace() {
         setRows([createRow()]);
         setCustomer(""); setSelectedCustomerObj(null);
         setNotes(""); setReceivedAmount("");
+        setApplyCredit(false);
         const nextInv = await getNextInvoiceNo(billingDate);
         if (nextInv?.invoiceNo) setInvoiceNo(nextInv.invoiceNo);
       }
@@ -274,9 +275,24 @@ export default function BillingWorkspace() {
         lines: [{ label: "Error", value: error.message || "Unknown error occurred" }]
       });
     }
-  };
+  }, [
+    selectedCustomerObj,
+    parsedReceived,
+    subtotal,
+    invoiceNo,
+    billingDate,
+    customer,
+    paymentType,
+    totalCovered,
+    remainingAmount,
+    paymentStatus,
+    creditApplied,
+    notes,
+    totalDiscount,
+    changeAmount
+  ]);
 
-  const handleGenerateInvoice = async () => {
+  const handleGenerateInvoice = useCallback(async () => {
     const activeRows = rows.filter((r) => r.product);
     if (!activeRows.length) {
       setWarnData({
@@ -314,7 +330,7 @@ export default function BillingWorkspace() {
       return;
     }
     await proceedGenerateInvoice(activeRows, saleItems);
-  };
+  }, [rows, proceedGenerateInvoice]);
 
   // Keyboard shortcuts: Ctrl/Cmd+S -> generate invoice, Ctrl/Cmd+P -> print
   useEffect(() => {
@@ -815,397 +831,321 @@ const st = {
     color: "white",
     fontWeight: "bold",
     fontSize: 13,
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    transition: "background 0.2s",
+    color: "#6a8f6c",
+    letterSpacing: "0.05em",
   },
-
-  stripRight: {
-    display: "flex",
-    justifyContent: "flex-end",
-  },
-
+  metaValue: { fontSize: 15, fontWeight: 700, color: "#1b3a1d" },
+  stripCenter: { width: "100%" },
+  stripRight: { display: "flex", justifyContent: "flex-end" },
   paymentSelect: {
-    height: 46,
+    height: 42,
     minWidth: 180,
-    borderRadius: 10,
-    border: "1px solid #d3e0d3",
-    background: "#fbfdfb",
+    borderRadius: 4,
+    border: "1px solid #cde0cd",
+    background: "#fafff9",
     padding: "0 12px",
     fontSize: 14,
     outline: "none",
+    color: "#1b3a1d",
   },
-
   mainGrid: {
     display: "grid",
-    gridTemplateColumns: "2fr 360px",
+    gridTemplateColumns: "2fr 340px",
     gap: 12,
     alignItems: "start",
   },
-
   productWorkspace: {
-    background: "#ffffff",
-    border: "1px solid #dbe7db",
-    borderRadius: 14,
-    padding: 12,
-    borderLeft: "5px solid #2e7d32",
+    background: "#fff",
+    border: "1px solid #c8d8c8",
+    borderRadius: 4,
+    borderLeft: "4px solid #2e7d32",
+    padding: 16,
   },
-
   sectionTop: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 8,
+    marginBottom: 12,
   },
-
   sectionTitle: {
     margin: 0,
-    fontSize: 16,
-    fontWeight: 800,
-  },
-
-  sectionSubtext: {
-    marginTop: 5,
-    fontSize: 12,
-    color: "#758977",
-  },
-
-  addRowBtn: {
-    height: 40,
-    padding: "0 16px",
-    borderRadius: 10,
-    border: "1px solid #d6e4d6",
-    background: "#f8fbf8",
-    color: "#456548",
+    fontSize: 15,
     fontWeight: 700,
+    color: "#1b3a1d",
+    textTransform: "uppercase",
+    letterSpacing: "0.03em",
+  },
+  sectionSubtext: { marginTop: 4, fontSize: 12, color: "#6a8f6c" },
+  addRowBtn: {
+    height: 36,
+    padding: "0 14px",
+    borderRadius: 4,
+    border: "1px solid #cde0cd",
+    background: "#e8f5e9",
+    color: "#1b3a1d",
+    fontWeight: 700,
+    fontSize: 13,
     cursor: "pointer",
   },
   qtyBtn: {
     width: 28,
     height: 28,
-    borderRadius: 8,
-    border: '1px solid #d4e1d4',
-    background: '#fff',
-    cursor: 'pointer',
+    borderRadius: 4,
+    border: "1px solid #c8d8c8",
+    background: "#fff",
+    cursor: "pointer",
     fontWeight: 700,
+    color: "#1b3a1d",
   },
-
-  tableWrap: {
-    display: "flex",
-    flexDirection: "column",
-  },
-
+  tableWrap: { display: "flex", flexDirection: "column" },
   tableHead: {
     display: "flex",
     alignItems: "center",
     gap: 10,
-    padding: "10px 6px",
-    borderBottom: "2px solid #deeede",
-    fontSize: 10,
-    fontWeight: 800,
+    padding: "10px 8px",
+    borderBottom: "2px solid #c8d8c8",
+    fontSize: 11,
+    fontWeight: 700,
     textTransform: "uppercase",
-    color: "#5a7a5c",
-    letterSpacing: "0.06em",
-    background: "#f7faf7",
-    borderRadius: "8px 8px 0 0",
+    color: "#6a8f6c",
+    letterSpacing: "0.05em",
+    background: "#fafdfa",
   },
-
   tableRow: {
     display: "flex",
     alignItems: "center",
     gap: 10,
     padding: "8px 6px",
-    borderBottom: "1px solid #f1f5f1",
-    borderRadius: 8,
+    borderBottom: "1px solid #f2f7f2",
     transition: "background 0.15s",
   },
-
   rowIndex: {
     fontSize: 13,
-    color: "#91a392",
+    color: "#6a8f6c",
     textAlign: "center",
     fontWeight: 700,
   },
-
   input: {
     height: 36,
-    borderRadius: 8,
-    border: "1px solid #d4e1d4",
-    background: "#fbfdfb",
+    borderRadius: 4,
+    border: "1px solid #cde0cd",
+    background: "#fafff9",
     padding: "0 10px",
     fontSize: 13,
     outline: "none",
+    color: "#1b3a1d",
     minWidth: 0,
   },
-
   unitCell: {
-    height: 44,
-    borderRadius: 10,
-    border: "1px solid #e3ece3",
-    background: "#f7faf7",
+    height: 36,
+    borderRadius: 4,
+    border: "1px solid #c8d8c8",
+    background: "#fafdfa",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     fontWeight: 600,
-    color: "#4d664f",
+    color: "#6a8f6c",
+    fontSize: 13,
   },
-
   totalCell: {
-    height: 40,
-    borderRadius: 8,
-    background: "#eef7ee",
-    border: "1px solid #c8e0c8",
+    height: 36,
+    borderRadius: 4,
+    background: "#e8f5e9",
+    border: "1px solid #c8d8c8",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontWeight: 800,
+    fontWeight: 700,
     color: "#1b5e20",
     fontSize: 13,
-    letterSpacing: "0.02em",
+    fontFamily: "monospace",
   },
-
   deleteBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    border: "none",
-    background: "#fff1f1",
-    color: "#c03a3a",
+    width: 34,
+    height: 34,
+    borderRadius: 4,
+    border: "1px solid #ffcdd2",
+    background: "#ffebee",
+    color: "#c62828",
     fontWeight: 700,
     cursor: "pointer",
+    fontSize: 13,
   },
-
-  notesArea: {
-    marginTop: 18,
-  },
-
+  notesArea: { marginTop: 14 },
   notesInput: {
     width: "100%",
-    borderRadius: 10,
-    border: "1px solid #d6e3d6",
-    background: "#fbfdfb",
+    borderRadius: 4,
+    border: "1px solid #cde0cd",
+    background: "#fafff9",
     padding: 10,
     fontSize: 13,
     resize: "none",
     outline: "none",
     boxSizing: "border-box",
+    color: "#1b3a1d",
+    fontFamily: "system-ui, sans-serif",
   },
-
-  sidePanel: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 12,
-  },
-
+  sidePanel: { display: "flex", flexDirection: "column", gap: 12 },
   sideCard: {
-    background: "#ffffff",
-    border: "1px solid #dbe7db",
-    borderRadius: 14,
-    padding: 14,
+    background: "#fff",
+    border: "1px solid #c8d8c8",
+    borderRadius: 4,
+    padding: 16,
   },
-
-  sideCardTop: {
-    marginBottom: 8,
-  },
-
   sideTitle: {
-    margin: 0,
-    fontSize: 17,
-    fontWeight: 800,
+    margin: "0 0 12px 0",
+    fontSize: 13,
+    fontWeight: 700,
+    color: "#1b3a1d",
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
   },
-
-  summaryStack: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 10,
-  },
-
   summaryRow: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: "10px 12px",
-    borderRadius: 10,
-    background: "#f8fbf8",
-    border: "1px solid #e5eee5",
-    fontSize: 14,
+    padding: "8px 12px",
+    background: "#fafdfa",
+    border: "1px solid #c8d8c8",
+    fontSize: 13,
+    color: "#1b3a1d",
+    marginBottom: 6,
   },
-
   grandTotalBox: {
-    marginTop: 12,
-    borderRadius: 12,
-    background: "#edf7ed",
-    border: "1px solid #cfe2cf",
+    background: "#e8f5e9",
+    border: "1px solid #c8d8c8",
+    borderLeft: "4px solid #2e7d32",
     padding: 12,
     display: "flex",
     flexDirection: "column",
-    gap: 6,
+    gap: 4,
+    marginBottom: 10,
   },
-
   grandLabel: {
-    fontSize: 12,
-    color: "#6f8571",
+    fontSize: 11,
+    color: "#6a8f6c",
     fontWeight: 700,
     textTransform: "uppercase",
+    letterSpacing: "0.05em",
   },
-
-  grandValue: {
-    fontSize: 28,
-    color: "#215926",
-  },
-
+  grandValue: { fontSize: 24, fontWeight: 700, color: "#1b3a1d", fontFamily: "monospace" },
   contextItem: {
-    padding: "13px 14px",
-    borderRadius: 10,
-    background: "#f8fbf8",
-    border: "1px solid #e5eee5",
+    padding: "12px 14px",
+    background: "#fafdfa",
+    border: "1px solid #c8d8c8",
     fontSize: 13,
     marginBottom: 10,
-    color: "#4d654f",
+    color: "#1b3a1d",
   },
-  
-
-  paymentSettlement: {
-    marginTop: 18,
-    border: "1px solid #dbe7db",
-    borderRadius: 14,
-    background: "#ffffff",
-    padding: 18,
-    borderLeft: "5px solid #4a9e4e",
-  },
-
-  paymentSettlementTop: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 18,
-  },
-
-  paymentSettlementTitle: {
-    margin: 0,
-    fontSize: 16,
-    fontWeight: 700,
-  },
-
-  paymentSettlementSub: {
-    marginTop: 4,
-    fontSize: 12,
-    color: "#758977",
-  },
-
-  paymentStatusBadge: {
-    padding: "8px 12px",
-    borderRadius: 999,
-    fontSize: 12,
-    fontWeight: 700,
-  },
-
-  paymentGrid: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 10,
-  },
-
   paymentBox: {
     display: "flex",
     flexDirection: "column",
-    gap: 8,
-    padding: 14,
-    borderRadius: 12,
-    background: "#fff",
-    border: "1px solid #e2ebe2",
+    gap: 6,
+    padding: 12,
+    background: "#fafdfa",
+    border: "1px solid #c8d8c8",
+    marginBottom: 8,
   },
-
   paymentLabel: {
     fontSize: 11,
     fontWeight: 700,
     textTransform: "uppercase",
-    color: "#738675",
+    color: "#6a8f6c",
+    letterSpacing: "0.05em",
   },
-
-  paymentValue: {
-    fontSize: 22,
-    fontWeight: 700,
-    color: "#1f5824",
-  },
-
+  paymentValue: { fontSize: 20, fontWeight: 700, color: "#1b3a1d", fontFamily: "monospace" },
   paymentInput: {
-    height: 42,
-    borderRadius: 10,
-    border: "1px solid #d4e1d4",
-    background: "#fbfdfb",
+    height: 40,
+    borderRadius: 4,
+    border: "1px solid #cde0cd",
+    background: "#fafff9",
     padding: "0 12px",
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: 700,
     outline: "none",
+    color: "#1b3a1d",
   },
-
   walkInWarning: {
-    marginTop: 0,
-    padding: "12px 14px",
-    borderRadius: 10,
-    background: "#fff4f4",
-    border: "1px solid #ffd4d4",
+    padding: "10px 14px",
+    background: "#ffebee",
+    border: "1px solid #ffcdd2",
+    borderLeft: "4px solid #c62828",
     color: "#c62828",
     fontWeight: 600,
-    fontSize: 13,
+    fontSize: 12,
+    marginTop: 8,
   },
   bottomBar: {
-    background: "#ffffff",
-    border: "1px solid #dbe7db",
-    borderRadius: 14,
-    padding: "10px 16px",
+    background: "#fff",
+    border: "1px solid #c8d8c8",
+    borderRadius: 4,
+    borderLeft: "4px solid #1b5e20",
+    padding: "12px 20px",
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    borderLeft: "5px solid #1b5e20",
   },
-
-  bottomLeft: {
-    display: "flex",
-    gap: 30,
-    alignItems: "center",
-  },
-
-  bottomMetric: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 4,
-  },
-
+  bottomLeft: { display: "flex", gap: 30, alignItems: "center" },
+  bottomMetric: { display: "flex", flexDirection: "column", gap: 4 },
   bottomLabel: {
     fontSize: 11,
     textTransform: "uppercase",
-    color: "#7c907e",
+    color: "#6a8f6c",
     fontWeight: 700,
+    letterSpacing: "0.05em",
   },
-
-  bottomRight: {
-    display: "flex",
-    alignItems: "center",
-    gap: 16,
-  },
-
+  bottomRight: { display: "flex", alignItems: "center", gap: 16 },
   bottomTotal: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: 700,
-    color: "#1f5824",
+    color: "#1b3a1d",
+    fontFamily: "monospace",
   },
-
   generateBtn: {
-    height: 56,
-    padding: "0 30px",
-    borderRadius: 12,
+    height: 48,
+    padding: "0 28px",
+    borderRadius: 4,
     border: "none",
     background: "#1b5e20",
-    color: "white",
+    color: "#fff",
     fontWeight: 800,
-    fontSize: 17,
+    fontSize: 15,
     cursor: "pointer",
-    boxShadow: '0 4px 16px rgba(27,94,32,0.25)',
     letterSpacing: 0.5,
+  },
+  secondaryBtn: {
+    padding: "10px 18px",
+    background: "#fff",
+    color: "#555",
+    border: "1px solid #cde0cd",
+    borderRadius: 4,
+    fontSize: 14,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  primaryBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "10px 18px",
+    background: "#2e7d32",
+    color: "#fff",
+    border: "none",
+    borderRadius: 4,
+    fontSize: 14,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  addCustomerInlineBtn: {
+    height: 42,
+    padding: "0 14px",
+    borderRadius: 4,
+    border: "none",
+    background: "#2e7d32",
+    color: "#fff",
+    fontWeight: 700,
+    fontSize: 13,
+    cursor: "pointer",
   },
 };

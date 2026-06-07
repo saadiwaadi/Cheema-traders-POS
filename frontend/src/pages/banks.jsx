@@ -1,581 +1,552 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Search, PlusCircle, ArrowLeft, ArrowRightLeft } from "lucide-react";
-import { listBanks, saveBank, getBankHistory, saveBankTransfer } from "../lib/posApi";
+import React, { useState, useEffect, useCallback } from 'react'
+import { Landmark, RefreshCw, Printer, Plus, X, Building2, FileDown } from 'lucide-react'
+import { listBanks, saveBank, saveBankTransfer, getCashBook } from '../lib/posApi'
+import * as XLSX from "xlsx"
+
+function exportExcelFile({ fileName, sheetName, title, subtitle, meta, headers, rows, numericColumns }) {
+    const ws = XLSX.utils.aoa_to_sheet([
+        [title],
+        [subtitle],
+        ...meta.map(m => [m]),
+        [],
+        headers,
+        ...rows
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    XLSX.writeFile(wb, `${fileName}.xlsx`);
+}
 
 export default function BanksPage() {
-  const [isAddPanelOpen, setIsAddPanelOpen] = useState(false);
-  const [isTransferPanelOpen, setIsTransferPanelOpen] = useState(false);
-  const [selectedBank, setSelectedBank] = useState(null);
-  const [banks, setBanks] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const now = new Date()
+  const [activeTab, setActiveTab] = useState('ctb')
+  const [cashBalance, setCashBalance] = useState(0)
+  const [bankBalance, setBankBalance] = useState(0)
   
-  const loadBanks = useCallback(async () => {
+  const [banks, setBanks] = useState([])
+  const [loadingBanks, setLoadingBanks] = useState(true)
+  
+  const [showAddBank, setShowAddBank] = useState(false)
+  const [newBankName, setNewBankName] = useState('')
+  const [newAccountNumber, setNewAccountNumber] = useState('')
+  const [newBranchName, setNewBranchName] = useState('')
+  const [newIban, setNewIban] = useState('')
+  const [addingBank, setAddingBank] = useState(false)
+  const [addBankMsg, setAddBankMsg] = useState(null)
+  
+  const [ctbDate, setCtbDate] = useState(now.toISOString().split('T')[0])
+  const [ctbAmount, setCtbAmount] = useState('')
+  const [ctbBankId, setCtbBankId] = useState(null)
+  const [ctbNotes, setCtbNotes] = useState('')
+  const [ctbSaving, setCtbSaving] = useState(false)
+  const [ctbMsg, setCtbMsg] = useState(null)
+
+  const [btcDate, setBtcDate] = useState(now.toISOString().split('T')[0])
+  const [btcAmount, setBtcAmount] = useState('')
+  const [btcBankId, setBtcBankId] = useState(null)
+  const [btcMode, setBtcMode] = useState('cheque')
+  const [btcChequeNo, setBtcChequeNo] = useState('')
+  const [btcPurpose, setBtcPurpose] = useState('')
+  const [btcNotes, setBtcNotes] = useState('')
+  const [btcSaving, setBtcSaving] = useState(false)
+  const [btcMsg, setBtcMsg] = useState(null)
+
+  const [historyFrom, setHistoryFrom] = useState(new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0])
+  const [historyTo, setHistoryTo] = useState(now.toISOString().split('T')[0])
+  const [historyRows, setHistoryRows] = useState([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState(null)
+  const [historyMsg, setHistoryMsg] = useState(null)
+
+  const loadBanks = useCallback(async (preferredBankId) => {
+    setLoadingBanks(true)
     try {
-      setLoading(true);
-      const res = await listBanks();
-      if (res && res.banks) {
-        setBanks(res.banks);
+      const data = await listBanks()
+      const bankList = data.banks || []
+      setBanks(bankList)
+
+      if (preferredBankId && bankList.some(b => b.id === preferredBankId)) {
+        setCtbBankId(preferredBankId)
+        setBtcBankId(preferredBankId)
+        return
+      }
+      
+      if (bankList.length > 0) {
+        if (!ctbBankId) setCtbBankId(bankList[0].id)
+        if (!btcBankId) setBtcBankId(bankList[0].id)
       }
     } catch (e) {
-      console.error("Failed to load banks", e);
+      console.error('Failed to load banks:', e)
     } finally {
-      setLoading(false);
+      setLoadingBanks(false)
     }
-  }, []);
+  }, [ctbBankId, btcBankId])
 
-  useEffect(() => {
-    loadBanks();
-  }, [loadBanks]);
+  const loadBalances = useCallback(async () => {
+    try {
+      const res = await getCashBook({})
+      const entries = res.entries || []
+      const totalCashIn = entries.reduce((s, e) => s + (e.cash_in || 0), 0);
+      const totalCashOut = entries.reduce((s, e) => s + (e.cash_out || 0), 0);
+      setCashBalance(totalCashIn - totalCashOut)
 
-  const handleSaved = () => {
-    setIsAddPanelOpen(false);
-    setIsTransferPanelOpen(false);
-    loadBanks();
-  };
+      const totalBankIn = entries.reduce((s, e) => s + (e.bank_in || 0), 0);
+      const totalBankOut = entries.reduce((s, e) => s + (e.bank_out || 0), 0);
+      setBankBalance(totalBankIn - totalBankOut)
+    } catch (e) {
+      console.error('Failed to load balances:', e)
+    }
+  }, [])
+
+  const loadTransferHistory = useCallback(async () => {
+    if (historyFrom && historyTo && historyFrom > historyTo) {
+      setHistoryRows([])
+      setHistoryError('From date cannot be after To date')
+      return
+    }
+    setHistoryLoading(true)
+    setHistoryError(null)
+    try {
+      const cashbookRes = await getCashBook({
+        startDate: historyFrom,
+        endDate: historyTo,
+      })
+
+      const mapped = (cashbookRes.entries || [])
+        .filter(r => (
+          (Number(r.cash_out) > 0 && Number(r.bank_in) > 0)
+          || (Number(r.cash_in) > 0 && Number(r.bank_out) > 0)
+        ))
+        .map(r => {
+          const type = Number(r.cash_out) > 0 && Number(r.bank_in) > 0 ? 'cash_to_bank' : 'bank_to_cash';
+          let bName = '';
+          if (r.description) {
+            const match = r.description.match(/Bank Accounts? - (.+)/)
+            if (match) bName = match[1]
+          }
+          return {
+            id: Number(r.id),
+            entry_date: r.entry_date || '',
+            description: r.description || '',
+            transfer_type: type,
+            amount: type === 'cash_to_bank' ? Number(r.bank_in || 0) : Number(r.cash_in || 0),
+            bank_name: bName,
+          }
+        })
+
+      setHistoryRows(mapped)
+    } catch (e) {
+      setHistoryError(e?.message || 'Failed to load transfer history')
+    } finally {
+      setHistoryLoading(false)
+    }
+  }, [historyFrom, historyTo])
+
+  useEffect(() => { 
+    loadBalances()
+    loadBanks()
+    loadTransferHistory()
+  }, [loadBalances, loadBanks, loadTransferHistory])
+
+  const handleAddBank = async () => {
+    if (!newBankName.trim()) {
+      setAddBankMsg({ text: 'Bank name is required', ok: false })
+      return
+    }
+    setAddingBank(true)
+    setAddBankMsg(null)
+    try {
+      await saveBank({
+        name: newBankName.trim(),
+        openingBalance: 0
+      })
+      setAddBankMsg({ text: 'Bank added successfully!', ok: true })
+      setNewBankName('')
+      setNewAccountNumber('')
+      setNewBranchName('')
+      setNewIban('')
+      await loadBanks()
+      setTimeout(() => setShowAddBank(false), 1000)
+    } catch (e) {
+      setAddBankMsg({ text: e.message, ok: false })
+    } finally {
+      setAddingBank(false)
+    }
+  }
+
+  const handleCashToBank = async () => {
+    const amount = parseFloat(ctbAmount)
+    if (!amount || amount <= 0) { setCtbMsg({ text: 'Enter a valid amount', ok: false }); return }
+    if (!ctbBankId) { setCtbMsg({ text: 'Please select a bank', ok: false }); return }
+    setCtbSaving(true); setCtbMsg(null)
+    try {
+      await saveBankTransfer({ 
+        date: ctbDate, 
+        amount, 
+        reference: ctbNotes || undefined,
+        fromAccount: 'cih',
+        toAccount: ctbBankId
+      })
+      const bankName = banks.find(b => b.id === ctbBankId)?.name || 'bank'
+      setCtbMsg({ text: `Rs. ${amount.toLocaleString()} transferred to ${bankName}`, ok: true })
+      setCtbAmount(''); setCtbNotes('')
+      loadBalances()
+      loadBanks()
+      loadTransferHistory()
+    } catch (e) { setCtbMsg({ text: e.message, ok: false }) }
+    finally { setCtbSaving(false) }
+  }
+
+  const handleBankToCash = async () => {
+    const amount = parseFloat(btcAmount)
+    if (!amount || amount <= 0) { setBtcMsg({ text: 'Enter a valid amount', ok: false }); return }
+    if (!btcBankId) { setBtcMsg({ text: 'Please select a bank', ok: false }); return }
+    if (!btcPurpose.trim()) { setBtcMsg({ text: 'Purpose is required', ok: false }); return }
+    if (btcMode === 'cheque' && !btcChequeNo.trim()) {
+      setBtcMsg({ text: 'Cheque number is required for cheque cashing', ok: false }); return
+    }
+
+    setBtcSaving(true); setBtcMsg(null)
+    try {
+      const fullReference = `${btcPurpose} ${btcMode === 'cheque' ? '(Chq: ' + btcChequeNo + ')' : '(Online)'} ${btcNotes ? '- ' + btcNotes : ''}`.trim()
+      await saveBankTransfer({
+        date: btcDate,
+        amount,
+        reference: fullReference,
+        fromAccount: btcBankId,
+        toAccount: 'cih'
+      })
+      const bankName = banks.find(b => b.id === btcBankId)?.name || 'bank'
+      setBtcMsg({ text: `Rs. ${amount.toLocaleString()} transferred from ${bankName} to cash`, ok: true })
+      setBtcAmount('')
+      setBtcChequeNo('')
+      setBtcPurpose('')
+      setBtcNotes('')
+      loadBalances()
+      loadBanks()
+      loadTransferHistory()
+    } catch (e) { setBtcMsg({ text: e.message, ok: false }) }
+    finally { setBtcSaving(false) }
+  }
+
+  const exportTransferHistoryExcel = async () => {
+    if (!historyRows.length) return
+
+    const totalCashToBank = historyRows
+      .filter(r => r.transfer_type === 'cash_to_bank')
+      .reduce((s, r) => s + Number(r.amount || 0), 0)
+    const totalBankToCash = historyRows
+      .filter(r => r.transfer_type === 'bank_to_cash')
+      .reduce((s, r) => s + Number(r.amount || 0), 0)
+    const grandTotal = historyRows.reduce((s, r) => s + Number(r.amount || 0), 0)
+
+    const rows = historyRows.map((row, index) => ([
+      index + 1,
+      row.entry_date || '',
+      row.transfer_type === 'cash_to_bank' ? 'Cash to Bank' : 'Bank to Cash',
+      row.bank_name || '',
+      row.description || '',
+      Number(row.amount) || 0,
+    ]))
+
+    rows.push([])
+    rows.push(['', '', '', '', 'Total Cash to Bank', totalCashToBank])
+    rows.push(['', '', '', '', 'Total Bank to Cash', totalBankToCash])
+    rows.push(['', '', '', '', 'Grand Total', grandTotal])
+
+    await exportExcelFile({
+      fileName: `cash-bank-transfer-history-${historyFrom}-to-${historyTo}`,
+      sheetName: 'Cash-Bank Transfers',
+      title: 'Company Transfer History',
+      subtitle: `Cash/Bank Transfer History - ${historyFrom} to ${historyTo}`,
+      meta: [`Generated: ${new Date().toLocaleDateString('en-PK')} | Entries: ${historyRows.length}`],
+      headers: ['Sr', 'Date', 'Type', 'Bank', 'Description', 'Amount (Rs.)'],
+      rows,
+      numericColumns: [1, 6],
+    })
+  }
 
   return (
-    <div style={st.page}>
-      <div style={st.pageHeader}>
-        <div>
-          {selectedBank ? (
-            <button style={st.backBtn} onClick={() => setSelectedBank(null)}>
-              <ArrowLeft size={16} /> Back to Banks
-            </button>
-          ) : (
+    <div style={{ padding: '32px 28px', overflowY: 'auto', fontSize: 14, lineHeight: 1.6, background: '#f5f8f5', height: '100%' }}>
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontSize: 20, fontWeight: 700, color: '#1b3a1d', letterSpacing: '-0.01em' }}>
+          Cash to Bank Transfer
+        </div>
+        <div style={{ fontSize: 13, color: '#6a8f6c', marginTop: 4 }}>
+          Transfer cash in hand to bank account and print transfer slips.
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 900 }}>
+        <div style={{ display: 'inline-flex', gap: 6, marginBottom: 12, padding: 4, background: '#e8f0e8', borderRadius: 999 }}>
+          <button
+            style={activeTab === 'ctb' ? btnPrimaryPill : btnGhostPill}
+            onClick={() => setActiveTab('ctb')}
+          >
+            Cash to Bank
+          </button>
+          <button
+            style={activeTab === 'btc' ? btnPrimaryPill : btnGhostPill}
+            onClick={() => setActiveTab('btc')}
+          >
+            Bank to Cash
+          </button>
+        </div>
+
+        <div style={{ background: '#fff', border: '1px solid #c8d8c8', borderRadius: 8, overflow: 'hidden', marginBottom: 20 }}>
+          <div style={{ padding: '20px', borderBottom: '1px solid #c8d8c8', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 6, background: '#e8f5e9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Landmark size={17} style={{ color: '#2e7d32' }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: '#1b3a1d' }}>
+                {activeTab === 'ctb' ? 'Cash to Bank Transfer' : 'Bank to Cash Transfer'}
+              </div>
+              <div style={{ fontSize: 11.5, color: '#6a8f6c' }}>
+                {activeTab === 'ctb'
+                  ? 'Transfer cash in hand to bank account'
+                  : 'Transfer bank amount to cash with cheque/online details'}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
+            <div style={{ background: '#fff', padding: '20px', borderRight: '1px solid #c8d8c8' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#6a8f6c', letterSpacing: '0.06em', fontFamily: 'monospace', marginBottom: 4 }}>CASH IN HAND</div>
+              <div style={{ fontSize: 23, fontWeight: 700, fontFamily: 'monospace', color: '#b45309' }}>Rs. {cashBalance.toLocaleString()}</div>
+            </div>
+            <div style={{ background: '#fff', padding: '20px' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#6a8f6c', letterSpacing: '0.06em', fontFamily: 'monospace', marginBottom: 4 }}>BANK BALANCE</div>
+              <div style={{ fontSize: 23, fontWeight: 700, fontFamily: 'monospace', color: '#2e7d32' }}>Rs. {bankBalance.toLocaleString()}</div>
+            </div>
+          </div>
+
+          {activeTab === 'ctb' && (
             <>
-              <h1 style={st.title}>Bank Accounts</h1>
-              <p style={st.subtitle}>Manage institutional funds and transfers</p>
+              <div style={{ padding: '20px', marginBottom: 16, display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap', borderTop: '1px solid #c8d8c8' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#6a8f6c' }}>Date</label>
+                  <input type="date" value={ctbDate} onChange={e => setCtbDate(e.target.value)} style={{ height: 34, fontSize: 13, border: '1px solid #c8d8c8', borderRadius: 6, padding: '0 8px', width: 145 }} />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#6a8f6c' }}>Amount (Rs.)</label>
+                  <input type="number" value={ctbAmount} onChange={e => setCtbAmount(e.target.value)} placeholder="0" min="0" style={{ height: 34, fontSize: 13, fontFamily: 'monospace', fontWeight: 600, border: '1px solid #c8d8c8', borderRadius: 6, padding: '0 8px', width: 140 }} />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#6a8f6c' }}>Bank</label>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <select value={ctbBankId || ''} onChange={e => setCtbBankId(Number(e.target.value))} disabled={loadingBanks} style={{ height: 34, fontSize: 13, border: '1px solid #c8d8c8', borderRadius: 6, padding: '0 8px', width: 200, outline: 'none' }}>
+                      {loadingBanks ? <option>Loading...</option> : banks.length === 0 ? <option value="">No banks - Add one</option> : banks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                    </select>
+                    <button style={btnGhostSquare} onClick={() => setShowAddBank(true)} title="Add new bank"><Plus size={16} /></button>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minWidth: 150 }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#6a8f6c' }}>Notes <span style={{ fontWeight: 400 }}>(optional)</span></label>
+                  <input type="text" value={ctbNotes} onChange={e => setCtbNotes(e.target.value)} placeholder="e.g. deposit" style={{ height: 34, fontSize: 13, border: '1px solid #c8d8c8', borderRadius: 6, padding: '0 8px' }} />
+                </div>
+                <button style={{ ...btnPrimary, marginLeft: 'auto' }} onClick={handleCashToBank} disabled={ctbSaving}>
+                  {ctbSaving ? 'Saving...' : 'Transfer'}
+                </button>
+              </div>
+              {ctbMsg && (
+                <div style={{ padding: '8px 20px', fontSize: 12.5, background: ctbMsg.ok ? '#f0fdf4' : '#fef2f2', color: ctbMsg.ok ? '#15803d' : '#b91c1c', borderTop: '1px solid #c8d8c8' }}>
+                  {ctbMsg.text}
+                </div>
+              )}
+            </>
+          )}
+
+          {activeTab === 'btc' && (
+            <>
+              <div style={{ padding: '20px', marginBottom: 16, display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap', borderTop: '1px solid #c8d8c8' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#6a8f6c' }}>Date</label>
+                  <input type="date" value={btcDate} onChange={e => setBtcDate(e.target.value)} style={{ height: 34, fontSize: 13, border: '1px solid #c8d8c8', borderRadius: 6, padding: '0 8px', width: 145 }} />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#6a8f6c' }}>Amount (Rs.)</label>
+                  <input type="number" value={btcAmount} onChange={e => setBtcAmount(e.target.value)} placeholder="0" min="0" style={{ height: 34, fontSize: 13, fontFamily: 'monospace', fontWeight: 600, border: '1px solid #c8d8c8', borderRadius: 6, padding: '0 8px', width: 140 }} />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#6a8f6c' }}>Bank</label>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <select value={btcBankId || ''} onChange={e => setBtcBankId(Number(e.target.value))} disabled={loadingBanks} style={{ height: 34, fontSize: 13, border: '1px solid #c8d8c8', borderRadius: 6, padding: '0 8px', width: 200, outline: 'none' }}>
+                      {loadingBanks ? <option>Loading...</option> : banks.length === 0 ? <option value="">No banks - Add one</option> : banks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                    </select>
+                    <button style={btnGhostSquare} onClick={() => setShowAddBank(true)} title="Add new bank"><Plus size={16} /></button>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#6a8f6c' }}>Mode</label>
+                  <select value={btcMode} onChange={e => setBtcMode(e.target.value)} style={{ height: 34, fontSize: 13, border: '1px solid #c8d8c8', borderRadius: 6, padding: '0 8px', width: 150 }}>
+                    <option value="cheque">Cheque</option>
+                    <option value="online">Online</option>
+                  </select>
+                </div>
+                {btcMode === 'cheque' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <label style={{ fontSize: 12, fontWeight: 500, color: '#6a8f6c' }}>Cheque No.</label>
+                    <input type="text" value={btcChequeNo} onChange={e => setBtcChequeNo(e.target.value)} placeholder="Enter cheque" style={{ height: 34, fontSize: 13, border: '1px solid #c8d8c8', borderRadius: 6, padding: '0 8px', width: 160 }} />
+                  </div>
+                )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minWidth: 170 }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#6a8f6c' }}>Purpose</label>
+                  <input type="text" value={btcPurpose} onChange={e => setBtcPurpose(e.target.value)} placeholder="e.g. office expenses" style={{ height: 34, fontSize: 13, border: '1px solid #c8d8c8', borderRadius: 6, padding: '0 8px' }} />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minWidth: 150 }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#6a8f6c' }}>Notes <span style={{ fontWeight: 400 }}>(opt)</span></label>
+                  <input type="text" value={btcNotes} onChange={e => setBtcNotes(e.target.value)} placeholder="Detail" style={{ height: 34, fontSize: 13, border: '1px solid #c8d8c8', borderRadius: 6, padding: '0 8px' }} />
+                </div>
+                <button style={{ ...btnPrimary, marginLeft: 'auto' }} onClick={handleBankToCash} disabled={btcSaving}>
+                  {btcSaving ? 'Saving...' : 'Transfer'}
+                </button>
+              </div>
+              {btcMsg && (
+                <div style={{ padding: '8px 20px', fontSize: 12.5, background: btcMsg.ok ? '#f0fdf4' : '#fef2f2', color: btcMsg.ok ? '#15803d' : '#b91c1c', borderTop: '1px solid #c8d8c8' }}>
+                  {btcMsg.text}
+                </div>
+              )}
             </>
           )}
         </div>
-        {!selectedBank && (
-          <div style={st.headerActions}>
-            <button style={st.secondaryBtn} onClick={() => setIsTransferPanelOpen(true)}>
-              <ArrowRightLeft size={16} /> Transfer Funds
-            </button>
-            <button style={st.primaryBtn} onClick={() => setIsAddPanelOpen(true)}>
-              <PlusCircle size={16} /> Add Bank
-            </button>
+
+        <div style={{ background: '#fff', border: '1px solid #c8d8c8', borderRadius: 8, overflow: 'hidden' }}>
+          <div style={{ padding: '20px', borderBottom: '1px solid #c8d8c8', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: '#1b3a1d' }}>Transfer History</div>
+              <div style={{ fontSize: 11.5, color: '#6a8f6c' }}>Cash to bank and bank to cash transactions</div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <label style={{ fontSize: 12, fontWeight: 500, color: '#6a8f6c' }}>From</label>
+                <input type="date" value={historyFrom} onChange={e => setHistoryFrom(e.target.value)} style={{ height: 32, fontSize: 12, border: '1px solid #c8d8c8', borderRadius: 6, padding: '0 8px' }} />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <label style={{ fontSize: 12, fontWeight: 500, color: '#6a8f6c' }}>To</label>
+                <input type="date" value={historyTo} onChange={e => setHistoryTo(e.target.value)} style={{ height: 32, fontSize: 12, border: '1px solid #c8d8c8', borderRadius: 6, padding: '0 8px' }} />
+              </div>
+              <button style={btnGhost} onClick={loadTransferHistory}>
+                <RefreshCw size={13} /> Refresh
+              </button>
+              <button style={btnGhost} onClick={exportTransferHistoryExcel} disabled={historyLoading || historyRows.length === 0}>
+                <FileDown size={13} /> Export Excel
+              </button>
+            </div>
           </div>
-        )}
+
+          {historyMsg && (
+            <div style={{ padding: '8px 20px', fontSize: 12.5, background: historyMsg.ok ? '#f0fdf4' : '#fef2f2', color: historyMsg.ok ? '#15803d' : '#b91c1c', borderBottom: '1px solid #c8d8c8' }}>
+              {historyMsg.text}
+            </div>
+          )}
+
+          <div style={{ overflowX: 'auto', borderTop: '1px solid #c8d8c8' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: '#f8fafc' }}>
+                  <th style={thStyle}>Date</th>
+                  <th style={thStyle}>Type</th>
+                  <th style={thStyle}>Bank</th>
+                  <th style={thStyle}>Description</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>Amount (Rs.)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historyLoading && <tr><td colSpan={5} style={{ padding: '12px 20px', color: '#6a8f6c' }}>Loading...</td></tr>}
+                {!historyLoading && historyError && <tr><td colSpan={5} style={{ padding: '12px 20px', color: '#b91c1c' }}>{historyError}</td></tr>}
+                {!historyLoading && !historyError && historyRows.length === 0 && <tr><td colSpan={5} style={{ padding: '12px 20px', color: '#6a8f6c' }}>No transactions found.</td></tr>}
+                {!historyLoading && !historyError && historyRows.map((row, index) => (
+                  <tr key={index} style={{ borderBottom: '1px solid #e8f0e8' }}>
+                    <td style={{ ...tdStyle, fontFamily: 'monospace' }}>{row.entry_date}</td>
+                    <td style={tdStyle}>
+                      <span style={{
+                        display: 'inline-flex', alignItems: 'center', padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 600,
+                        color: row.transfer_type === 'cash_to_bank' ? '#1d4ed8' : '#b45309',
+                        background: row.transfer_type === 'cash_to_bank' ? '#eff6ff' : '#fffbeb',
+                        border: `1px solid ${row.transfer_type === 'cash_to_bank' ? '#bfdbfe' : '#fde68a'}`,
+                      }}>
+                        {row.transfer_type === 'cash_to_bank' ? 'Cash to Bank' : 'Bank to Cash'}
+                      </span>
+                    </td>
+                    <td style={tdStyle}>{row.bank_name || '-'}</td>
+                    <td style={{ ...tdStyle, maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.description || '-'}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600, color: '#2e7d32' }}>
+                      {Number(row.amount || 0).toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", paddingBottom: 24 }}>
-        {selectedBank ? (
-          <BankHistoryView bank={selectedBank} />
-        ) : (
-          <BankListView banks={banks} loading={loading} onSelectHistory={setSelectedBank} />
-        )}
-      </div>
-
-      <AddBankPanel isOpen={isAddPanelOpen} onClose={() => setIsAddPanelOpen(false)} onSaved={handleSaved} />
-      <TransferPanel isOpen={isTransferPanelOpen} onClose={() => setIsTransferPanelOpen(false)} onSaved={handleSaved} banks={banks} />
-    </div>
-  );
-}
-
-function AddBankPanel({ isOpen, onClose, onSaved }) {
-  const [name, setName] = useState("");
-  const [openingBalance, setOpeningBalance] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
-
-  useEffect(() => {
-    if (isOpen) {
-      setName(""); setOpeningBalance(""); setErrorMsg("");
-    }
-  }, [isOpen]);
-
-  const handleSave = async () => {
-    setErrorMsg("");
-    if (!name) return setErrorMsg("Bank name is required");
-    setSaving(true);
-    try {
-      await saveBank({ name, openingBalance: Number(openingBalance || 0) });
-      onSaved();
-    } catch (e) {
-      setErrorMsg("Error: " + e.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <AnimatePresence>
-      {isOpen && (
-        <>
-          <motion.div style={st.backdrop} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
-          <motion.div style={st.sidePanel} initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 200 }}>
-            <div style={st.panelHeader}>
-              <h2 style={st.panelTitle}>Add Bank Account</h2>
-              <button style={st.closeBtn} onClick={onClose}>✕</button>
-            </div>
-            <div style={st.panelBody}>
-              <div style={st.fieldWrap}>
-                <label style={st.fieldLabel}>Bank / Institution Name *</label>
-                <input style={st.input} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Meezan Bank" />
-              </div>
-              <div style={st.fieldWrap}>
-                <label style={st.fieldLabel}>Opening Balance (Rs)</label>
-                <input style={st.input} type="number" placeholder="0" value={openingBalance} onChange={e => setOpeningBalance(e.target.value)} />
-                <span style={st.fieldHint}>Initial funds already present in this account.</span>
-              </div>
-            </div>
-            <div style={st.panelFooter}>
-              {errorMsg && <div style={{ color: '#c62828', fontSize: 13, marginRight: 'auto', fontWeight: 500 }}>{errorMsg}</div>}
-              <button style={st.secondaryBtn} onClick={onClose}>Cancel</button>
-              <button style={st.primaryBtn} onClick={handleSave} disabled={saving}>{saving ? 'Saving...' : 'Save Bank'}</button>
-            </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
-  );
-}
-
-function TransferPanel({ isOpen, onClose, onSaved, banks }) {
-  const [transferMode, setTransferMode] = useState("cih_to_bank"); // cih_to_bank, bank_to_cih, bank_to_bank
-  const [bankId1, setBankId1] = useState("");
-  const [bankId2, setBankId2] = useState("");
-  const [amount, setAmount] = useState("");
-  const [reference, setReference] = useState("");
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [saving, setSaving] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
-
-  useEffect(() => {
-    if (isOpen) {
-      setTransferMode("cih_to_bank");
-      setBankId1(banks.length > 0 ? banks[0].id.toString() : "");
-      setBankId2(banks.length > 1 ? banks[1].id.toString() : banks.length > 0 ? banks[0].id.toString() : "");
-      setAmount("");
-      setReference("");
-      setDate(new Date().toISOString().split('T')[0]);
-      setErrorMsg("");
-    }
-  }, [isOpen, banks]);
-
-  const handleSave = async () => {
-    setErrorMsg("");
-    if (!amount || Number(amount) <= 0) return setErrorMsg("Valid amount is required");
-    
-    let fromAccount, toAccount;
-    
-    if (transferMode === 'cih_to_bank') {
-        if (!bankId1) return setErrorMsg("Please select a target bank");
-        fromAccount = 'cih';
-        toAccount = bankId1;
-    } else if (transferMode === 'bank_to_cih') {
-        if (!bankId1) return setErrorMsg("Please select a source bank");
-        fromAccount = bankId1;
-        toAccount = 'cih';
-    } else {
-        if (!bankId1 || !bankId2) return setErrorMsg("Please select both banks");
-        if (bankId1 === bankId2) return setErrorMsg("Source and Target banks must be different");
-        fromAccount = bankId1;
-        toAccount = bankId2;
-    }
-
-    setSaving(true);
-    try {
-      await saveBankTransfer({ fromAccount, toAccount, amount, reference, date });
-      onSaved();
-    } catch (e) {
-      setErrorMsg("Error: " + e.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <AnimatePresence>
-      {isOpen && (
-        <>
-          <motion.div style={st.backdrop} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
-          <motion.div style={st.sidePanel} initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 200 }}>
-            <div style={st.panelHeader}>
-              <h2 style={st.panelTitle}>Transfer Funds</h2>
-              <button style={st.closeBtn} onClick={onClose}>✕</button>
-            </div>
-            <div style={st.panelBody}>
-              <div style={st.fieldWrap}>
-                <label style={st.fieldLabel}>Transfer Route</label>
-                <div style={{ display: 'flex', background: '#f2f7f2', borderRadius: 8, padding: 4 }}>
-                    <button style={{ ...st.routeBtn, ...(transferMode === 'cih_to_bank' ? st.routeBtnActive : {}) }} onClick={() => setTransferMode('cih_to_bank')}>Deposit (to Bank)</button>
-                    <button style={{ ...st.routeBtn, ...(transferMode === 'bank_to_cih' ? st.routeBtnActive : {}) }} onClick={() => setTransferMode('bank_to_cih')}>Withdraw (to CIH)</button>
-                    <button style={{ ...st.routeBtn, ...(transferMode === 'bank_to_bank' ? st.routeBtnActive : {}) }} onClick={() => setTransferMode('bank_to_bank')}>Bank to Bank</button>
+      {showAddBank && (
+        <div style={modalOverlay} onClick={e => { if (e.target === e.currentTarget) setShowAddBank(false) }}>
+          <div style={modalContent}>
+            <div style={modalHeader}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 6, background: '#e8f5e9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Building2 size={17} style={{ color: '#2e7d32' }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: '#1b3a1d' }}>Add New Bank</div>
+                  <div style={{ fontSize: 11, color: '#6a8f6c' }}>Create a new account in the ledger</div>
                 </div>
               </div>
+              <button style={btnGhostSquare} onClick={() => setShowAddBank(false)}><X size={16} /></button>
+            </div>
 
-              {transferMode === 'cih_to_bank' && (
-                  <div style={st.fieldWrap}>
-                      <label style={st.fieldLabel}>Target Bank Account</label>
-                      <select style={st.input} value={bankId1} onChange={e => setBankId1(e.target.value)}>
-                          {banks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                      </select>
-                  </div>
-              )}
-
-              {transferMode === 'bank_to_cih' && (
-                  <div style={st.fieldWrap}>
-                      <label style={st.fieldLabel}>Source Bank Account</label>
-                      <select style={st.input} value={bankId1} onChange={e => setBankId1(e.target.value)}>
-                          {banks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                      </select>
-                  </div>
-              )}
-
-              {transferMode === 'bank_to_bank' && (
-                  <>
-                      <div style={st.fieldWrap}>
-                          <label style={st.fieldLabel}>From (Source Bank)</label>
-                          <select style={st.input} value={bankId1} onChange={e => setBankId1(e.target.value)}>
-                              {banks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                          </select>
-                      </div>
-                      <div style={st.fieldWrap}>
-                          <label style={st.fieldLabel}>To (Target Bank)</label>
-                          <select style={st.input} value={bankId2} onChange={e => setBankId2(e.target.value)}>
-                              {banks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                          </select>
-                      </div>
-                  </>
-              )}
-
-              <div style={st.fieldWrap}>
-                <label style={st.fieldLabel}>Date</label>
-                <input style={st.input} type="date" value={date} onChange={e => setDate(e.target.value)} />
-              </div>
-
-              <div style={st.fieldWrap}>
-                <label style={st.fieldLabel}>Amount (Rs) *</label>
-                <input style={st.input} type="number" placeholder="0" value={amount} onChange={e => setAmount(e.target.value)} />
+            <div style={modalBody}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 11, fontWeight: 600, color: '#6a8f6c' }}>Bank Name *</label>
+                <input type="text" value={newBankName} onChange={e => setNewBankName(e.target.value)} placeholder="e.g. Habib Bank Ltd" style={inputStyle} autoFocus />
               </div>
               
-              <div style={st.fieldWrap}>
-                <label style={st.fieldLabel}>Reference / Notes</label>
-                <input style={st.input} value={reference} onChange={e => setReference(e.target.value)} placeholder="e.g. Check #1024 or ATM" />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 11, fontWeight: 600, color: '#6a8f6c' }}>Account Number</label>
+                <input type="text" value={newAccountNumber} onChange={e => setNewAccountNumber(e.target.value)} placeholder="e.g. 1234567890" style={inputStyle} />
               </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 11, fontWeight: 600, color: '#6a8f6c' }}>Branch Name</label>
+                <input type="text" value={newBranchName} onChange={e => setNewBranchName(e.target.value)} placeholder="e.g. Main Branch" style={inputStyle} />
+              </div>
+
+              {addBankMsg && (
+                <div style={{ padding: '8px 12px', fontSize: 12, borderRadius: 6, background: addBankMsg.ok ? '#f0fdf4' : '#fef2f2', color: addBankMsg.ok ? '#15803d' : '#b91c1c' }}>
+                  {addBankMsg.text}
+                </div>
+              )}
             </div>
-            <div style={st.panelFooter}>
-              {errorMsg && <div style={{ color: '#c62828', fontSize: 13, marginRight: 'auto', fontWeight: 500 }}>{errorMsg}</div>}
-              <button style={st.secondaryBtn} onClick={onClose}>Cancel</button>
-              <button style={st.primaryBtn} onClick={handleSave} disabled={saving}>{saving ? 'Saving...' : 'Transfer'}</button>
+
+            <div style={modalFooter}>
+              <button style={btnGhost} onClick={() => setShowAddBank(false)}>Cancel</button>
+              <button style={btnPrimary} onClick={handleAddBank} disabled={addingBank || !newBankName.trim()}>
+                {addingBank ? 'Adding...' : 'Add Bank'}
+              </button>
             </div>
-          </motion.div>
-        </>
+          </div>
+        </div>
       )}
-    </AnimatePresence>
-  );
+    </div>
+  )
 }
 
-function BankListView({ banks, loading, onSelectHistory }) {
-  const [search, setSearch] = useState("");
+// Inline styles replacing CSS classes for green theme
+const btnPrimary = { background: '#2e7d32', color: '#fff', border: 'none', borderRadius: 6, padding: '0 16px', height: 34, fontSize: 13, fontWeight: 500, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 };
+const btnGhost = { background: '#fff', color: '#1b3a1d', border: '1px solid #c8d8c8', borderRadius: 6, padding: '0 12px', height: 34, fontSize: 13, fontWeight: 500, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 };
+const btnGhostSquare = { background: 'transparent', border: 'none', color: '#6a8f6c', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 6 };
+const btnPrimaryPill = { ...btnPrimary, borderRadius: 999, height: 32, boxShadow: '0 1px 2px rgba(0,0,0,0.12)' };
+const btnGhostPill = { ...btnGhost, borderRadius: 999, height: 32, border: 'none', background: 'transparent' };
 
-  const q = search.toLowerCase();
-  const filtered = banks.filter(b => b.name.toLowerCase().includes(q));
+const thStyle = { textAlign: 'left', padding: '10px 20px', borderBottom: '1px solid #c8d8c8', borderRight: '1px solid #c8d8c8', fontSize: 11, color: '#6a8f6c', letterSpacing: '0.04em', textTransform: 'uppercase' };
+const tdStyle = { padding: '10px 20px', borderRight: '1px solid #c8d8c8' };
 
-  const totalBankBalance = banks.reduce((sum, b) => sum + b.current_balance, 0);
-
-  return (
-    <>
-      <div style={st.cardsGrid}>
-          <div style={{ ...st.card, borderLeft: `3px solid #1976d2` }}>
-              <div style={st.cardLabel}>Total Bank Balance</div>
-              <div style={{ ...st.cardAmount, color: '#1976d2' }}>
-                  Rs. {totalBankBalance.toLocaleString()}
-              </div>
-              <div style={st.cardHint}>Consolidated funds across all institutional accounts</div>
-          </div>
-      </div>
-
-      <div style={st.tableWrap}>
-          <div style={st.tableSearch}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
-                <Search size={14} style={{ color: '#708571' }} />
-                <input
-                    value={search}
-                    onChange={e => setSearch(e.target.value)}
-                    placeholder="Search bank accounts..."
-                    style={st.searchInput}
-                />
-              </div>
-          </div>
-
-          <div style={st.tableContainer}>
-              <style>
-                  {`
-                  .bank-table th { padding: 12px 20px; font-size: 12px; font-weight: 600; color: #6a8f6c; text-transform: uppercase; border-bottom: 2px solid #e8f0e8; }
-                  .bank-table td { padding: 14px 20px; border-bottom: 1px solid #f2f7f2; }
-                  .bank-table tbody tr { transition: background 0.15s; }
-                  .bank-table tbody tr:hover { background: #f9fcf9; }
-                  
-                  @keyframes pulse {
-                    0% { opacity: 0.6; }
-                    50% { opacity: 0.3; }
-                    100% { opacity: 0.6; }
-                  }
-                  .skeleton {
-                    background: #e8f0e8;
-                    height: 16px;
-                    border-radius: 4px;
-                    animation: pulse 1.5s infinite ease-in-out;
-                  }
-                  `}
-              </style>
-              <table style={st.table} className="bank-table">
-                  <thead>
-                      <tr>
-                          <th style={{ flex: 1 }}>Bank Name</th>
-                          <th style={{ width: 200, textAlign: 'right' }}>Current Balance</th>
-                          <th style={{ width: 120, textAlign: 'center' }}>Action</th>
-                      </tr>
-                  </thead>
-                  <tbody>
-                      {loading ? (
-                          [...Array(3)].map((_, i) => (
-                              <tr key={i}>
-                                  <td><div className="skeleton" style={{ width: '50%' }}></div></td>
-                                  <td><div className="skeleton" style={{ width: '80%', marginLeft: 'auto' }}></div></td>
-                                  <td><div className="skeleton" style={{ width: '80%', margin: '0 auto' }}></div></td>
-                              </tr>
-                          ))
-                      ) : filtered.length === 0 ? (
-                          <tr>
-                              <td colSpan={3} style={{ textAlign: 'center', padding: 48, color: '#708571' }}>
-                                  <div style={{ fontSize: 32, marginBottom: 12 }}>🏦</div>
-                                  <div style={{ fontSize: 15, fontWeight: 500, color: '#5a755c' }}>No bank accounts found</div>
-                                  <div style={{ fontSize: 13, marginTop: 4 }}>Add a bank account to start tracking transfers.</div>
-                              </td>
-                          </tr>
-                      ) : filtered.map((b) => (
-                          <tr key={b.id}>
-                              <td style={{ fontSize: 14, fontWeight: 600, color: '#1b3a1d' }}>{b.name}</td>
-                              <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 15, fontWeight: 700, color: '#1976d2' }}>
-                                  Rs {b.current_balance.toLocaleString()}
-                              </td>
-                              <td style={{ textAlign: 'center' }}>
-                                <button style={st.actionBtn} onClick={() => onSelectHistory(b)}>Statement</button>
-                              </td>
-                          </tr>
-                      ))}
-                  </tbody>
-              </table>
-          </div>
-      </div>
-    </>
-  );
-}
-
-function BankHistoryView({ bank }) {
-  const [history, setHistory] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    async function load() {
-      try {
-        const res = await getBankHistory(bank.id);
-        if (res && res.history) {
-            setHistory(res.history);
-        }
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
-  }, [bank.id]);
-
-  let runningBal = bank.opening_balance || 0;
-  const statementRows = history.map(h => {
-      runningBal += (h.balance_change || 0);
-      return { ...h, running_balance: runningBal };
-  });
-
-  return (
-    <>
-      <div style={st.cardsGrid}>
-          <div style={{ ...st.card, borderLeft: `3px solid #1976d2` }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <div style={st.cardLabel}>{bank.name} - Statement</div>
-                  <button style={st.secondaryBtn} onClick={() => window.print()}>Print Statement</button>
-              </div>
-              <div style={{ ...st.cardAmount, color: '#1976d2', marginTop: 10 }}>
-                  Rs. {bank.current_balance.toLocaleString()}
-              </div>
-              <div style={st.cardHint}>Official Ledger</div>
-          </div>
-      </div>
-
-      <div style={st.tableWrap}>
-          <div style={st.tableContainer}>
-              <style>
-                  {`
-                  .hist-table th { padding: 12px 20px; font-size: 12px; font-weight: 600; color: #6a8f6c; text-transform: uppercase; border-bottom: 2px solid #e8f0e8; }
-                  .hist-table td { padding: 14px 20px; border-bottom: 1px solid #f2f7f2; }
-                  .hist-table tbody tr:not(.separator):not(.summary-row):hover { background: #f9fcf9; transition: background 0.15s; }
-                  
-                  @keyframes pulse {
-                    0% { opacity: 0.6; }
-                    50% { opacity: 0.3; }
-                    100% { opacity: 0.6; }
-                  }
-                  .skeleton {
-                    background: #e8f0e8;
-                    height: 16px;
-                    border-radius: 4px;
-                    animation: pulse 1.5s infinite ease-in-out;
-                  }
-
-                  @media print {
-                      body * { visibility: hidden; }
-                      .bank-hist-table, .bank-hist-table * { visibility: visible; }
-                      .bank-hist-table { position: absolute; left: 0; top: 0; width: 100%; }
-                  }
-                  `}
-              </style>
-              <table style={st.table} className="hist-table bank-hist-table">
-                  <thead>
-                      <tr>
-                          <th style={{ width: 100 }}>Date</th>
-                          <th style={{ width: 120 }}>Type</th>
-                          <th style={{ flex: 1 }}>Reference</th>
-                          <th style={{ textAlign: 'right', width: 130 }}>Deposit</th>
-                          <th style={{ textAlign: 'right', width: 130 }}>Withdrawal</th>
-                          <th style={{ textAlign: 'right', width: 150 }}>Balance</th>
-                      </tr>
-                  </thead>
-                  <tbody>
-                      {loading ? (
-                          [...Array(4)].map((_, i) => (
-                              <tr key={i}>
-                                  <td><div className="skeleton" style={{ width: '70%' }}></div></td>
-                                  <td><div className="skeleton" style={{ width: '90%' }}></div></td>
-                                  <td><div className="skeleton" style={{ width: '40%' }}></div></td>
-                                  <td><div className="skeleton" style={{ width: '50%', marginLeft: 'auto' }}></div></td>
-                                  <td><div className="skeleton" style={{ width: '50%', marginLeft: 'auto' }}></div></td>
-                                  <td><div className="skeleton" style={{ width: '60%', marginLeft: 'auto' }}></div></td>
-                              </tr>
-                          ))
-                      ) : (
-                          <>
-                              <tr className="summary-row" style={{ background: '#fafdfa' }}>
-                                  <td colSpan={5} style={{ fontSize: 13, fontWeight: 700, color: '#555', textAlign: 'right' }}>Opening Balance</td>
-                                  <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 14, fontWeight: 700, color: '#1976d2' }}>
-                                      Rs {bank.opening_balance.toLocaleString()}
-                                  </td>
-                              </tr>
-                              {statementRows.length === 0 ? (
-                                  <tr>
-                                      <td colSpan={6} style={{ textAlign: 'center', padding: 48, color: '#708571' }}>
-                                          <div style={{ fontSize: 32, marginBottom: 12 }}>🧾</div>
-                                          <div style={{ fontSize: 15, fontWeight: 500, color: '#5a755c' }}>No transactions found</div>
-                                      </td>
-                                  </tr>
-                              ) : statementRows.map((h, idx) => {
-                                  const dateObj = new Date(h.date + 'T00:00:00');
-                                  const currentMonthYear = dateObj.toLocaleDateString('en-PK', { month: 'long', year: 'numeric' });
-                                  
-                                  let prevMonthYear = null;
-                                  if (idx > 0) {
-                                      const prevDateObj = new Date(statementRows[idx - 1].date + 'T00:00:00');
-                                      prevMonthYear = prevDateObj.toLocaleDateString('en-PK', { month: 'long', year: 'numeric' });
-                                  }
-                                  
-                                  const showMonthRow = currentMonthYear !== prevMonthYear;
-                                  const displayDate = dateObj.toLocaleDateString('en-PK', { day: '2-digit', month: 'short' });
-                                  
-                                  const isDeposit = h.type === 'Deposit';
-                                  
-                                  return (
-                                      <React.Fragment key={idx}>
-                                          {showMonthRow && (
-                                              <tr className="separator">
-                                                  <td colSpan={6} style={st.dateSeparator}>
-                                                      {currentMonthYear}
-                                                  </td>
-                                              </tr>
-                                          )}
-                                          <tr>
-                                              <td style={{ fontFamily: 'monospace', fontSize: 13, color: '#6a8f6c' }}>{displayDate}</td>
-                                              <td style={{ fontSize: 14, color: isDeposit ? '#388e3c' : '#d32f2f', fontWeight: 600 }}>
-                                                  {h.type}
-                                              </td>
-                                              <td style={{ fontSize: 13, color: '#555' }}>
-                                                  {h.reference || '-'}
-                                              </td>
-                                              <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, color: '#388e3c' }}>
-                                                  {isDeposit ? `Rs ${Math.abs(h.total_amount).toLocaleString()}` : '-'}
-                                              </td>
-                                              <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, color: '#d32f2f' }}>
-                                                  {!isDeposit ? `Rs ${Math.abs(h.total_amount).toLocaleString()}` : '-'}
-                                              </td>
-                                              <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 14, fontWeight: 700, color: '#1976d2' }}>
-                                                  Rs {Math.abs(h.running_balance).toLocaleString()}
-                                              </td>
-                                          </tr>
-                                      </React.Fragment>
-                                  )
-                              })}
-                              {statementRows.length > 0 && (
-                                  <tr className="summary-row" style={{ background: '#f0f6f0', borderTop: '2px solid #d5e8d5' }}>
-                                      <td colSpan={5} style={{ fontSize: 14, fontWeight: 800, color: '#1b3a1d', textAlign: 'right', textTransform: 'uppercase' }}>Closing Balance</td>
-                                      <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 16, fontWeight: 800, color: '#1976d2' }}>
-                                          Rs {bank.current_balance.toLocaleString()}
-                                      </td>
-                                  </tr>
-                              )}
-                          </>
-                      )}
-                  </tbody>
-              </table>
-          </div>
-      </div>
-    </>
-  );
-}
-
-const st = {
-    page: { display: 'flex', flexDirection: 'column', height: '100%', background: '#f0f6f0', padding: 24, overflowY: 'auto', fontFamily: 'system-ui, sans-serif', position: 'relative' },
-    pageHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
-    title: { margin: 0, fontSize: 24, fontWeight: 'bold', color: '#1b3a1d' },
-    subtitle: { margin: '4px 0 0 0', fontSize: 14, color: '#6a8f6c' },
-    
-    headerActions: { display: 'flex', gap: 12, alignItems: 'center' },
-    backBtn: { display: 'flex', alignItems: 'center', gap: 8, background: "none", border: "none", color: "#1976d2", fontSize: 16, fontWeight: 600, cursor: "pointer" },
-    primaryBtn: { display: 'flex', alignItems: 'center', gap: 6, padding: "10px 18px", background: "#1976d2", color: "#fff", border: "none", borderRadius: 8, fontSize: 14, fontWeight: "bold", cursor: "pointer", transition: "background 0.2s" },
-    secondaryBtn: { display: 'flex', alignItems: 'center', gap: 6, padding: "10px 18px", background: "#fff", color: "#1976d2", border: "1px solid #bbdefb", borderRadius: 8, fontSize: 14, fontWeight: "bold", cursor: "pointer" },
-    actionBtn: { padding: "6px 12px", border: "1px solid #bbdefb", background: "#e3f2fd", color: "#1976d2", fontSize: 12, fontWeight: 600, borderRadius: 6, cursor: "pointer" },
-
-    cardsGrid: { display: 'grid', gap: 16, marginBottom: 24 },
-    card: { background: '#fff', padding: '24px', borderRadius: 12, border: '1px solid #e8f0e8', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' },
-    cardLabel: { fontSize: 12, fontFamily: 'monospace', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#6a8f6c', marginBottom: 12 },
-    cardAmount: { fontSize: 32, fontFamily: 'monospace', fontWeight: 700, letterSpacing: '-0.03em', marginBottom: 10 },
-    cardHint: { fontSize: 11, color: '#999', marginTop: 12, fontStyle: 'italic' },
-    
-    tableWrap: { background: '#fff', borderRadius: 12, border: '1px solid #e8f0e8', boxShadow: '0 2px 8px rgba(0,0,0,0.02)', overflow: 'hidden', display: 'flex', flexDirection: 'column' },
-    tableSearch: { padding: '12px 20px', borderBottom: '1px solid #e8f0e8', display: 'flex', alignItems: 'center', gap: 16, background: '#fafdfa', justifyContent: 'space-between' },
-    searchInput: { border: 'none', outline: 'none', background: 'transparent', fontSize: 14, color: '#1b3a1d', width: '100%', padding: '4px 0' },
-    
-    tableContainer: { overflowX: 'auto' },
-    table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left' },
-    dateSeparator: { background: '#e3f2fd', padding: '16px 20px', fontSize: 12, fontFamily: 'system-ui, sans-serif', fontWeight: 700, color: '#1976d2', letterSpacing: '0.07em', borderBottom: '2px solid #bbdefb', borderTop: '2px solid #bbdefb', textTransform: 'uppercase' },
-
-    backdrop: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.3)", zIndex: 10 },
-    sidePanel: { position: "absolute", top: 0, right: 0, bottom: 0, width: 420, background: "#fff", zIndex: 20, boxShadow: "-4px 0 24px rgba(0,0,0,0.1)", display: "flex", flexDirection: "column" },
-    panelHeader: { padding: "20px 24px", borderBottom: "1px solid #e8f0e8", display: "flex", justifyContent: "space-between", alignItems: "center" },
-    panelTitle: { margin: 0, fontSize: 18, color: "#1b3a1d", fontWeight: "bold" },
-    closeBtn: { background: "none", border: "none", fontSize: 18, color: "#888", cursor: "pointer" },
-    panelBody: { flex: 1, padding: 24, overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 },
-    panelFooter: { padding: "20px 24px", borderTop: "1px solid #e8f0e8", display: "flex", justifyContent: "flex-end", gap: 12 },
-    
-    fieldWrap: { display: "flex", flexDirection: "column", gap: 6 },
-    fieldLabel: { fontSize: 11, fontWeight: 700, color: "#6a8f6c", textTransform: "uppercase" },
-    input: { padding: "12px", border: "1.5px solid #cde0cd", borderRadius: 8, background: "#fafff9", outline: "none", fontSize: 14, color: "#1b3a1d" },
-    fieldHint: { fontSize: 11, color: "#8aab8c" },
-
-    routeBtn: { flex: 1, padding: "8px", border: "none", background: "transparent", fontSize: 13, fontWeight: 600, color: "#5a755c", cursor: "pointer", borderRadius: 6 },
-    routeBtnActive: { background: "#fff", color: "#1976d2", boxShadow: "0 1px 4px rgba(0,0,0,0.1)" }
-};
+const modalOverlay = { position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center' };
+const modalContent = { background: '#fff', borderRadius: 12, width: 420, maxWidth: '90vw', boxShadow: '0 20px 50px rgba(0,0,0,0.15)' };
+const modalHeader = { padding: '16px 20px', borderBottom: '1px solid #c8d8c8', display: 'flex', alignItems: 'center', justifyContent: 'space-between' };
+const modalBody = { padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12 };
+const modalFooter = { padding: '12px 20px', borderTop: '1px solid #c8d8c8', display: 'flex', justifyContent: 'flex-end', gap: 8 };
+const inputStyle = { padding: '0 12px', height: 36, border: '1px solid #c8d8c8', borderRadius: 6, fontSize: 13, outline: 'none' };

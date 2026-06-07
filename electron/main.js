@@ -1,8 +1,22 @@
 const path = require("path");
 const { app, BrowserWindow, ipcMain } = require("electron");
-const store = require("../backend/store");
 
 const isDev = !app.isPackaged;
+
+// Must set DB_PATH before requiring any backend modules
+if (!isDev) {
+  process.env.DB_PATH = path.join(app.getPath("userData"), "pos.db");
+}
+
+const store = require("../backend/store");
+
+if (!isDev) {
+  try {
+    require("../backend/server");
+  } catch (err) {
+    console.error("Failed to start backend server:", err);
+  }
+}
 
 let mainWindow;
 
@@ -32,6 +46,7 @@ function registerIpc() {
     "pos:customers:delete": (_, id) => store.softDeleteCustomer(id),
     "pos:customers:history": (_, id) => store.getCustomerHistory(id),
     "pos:customers:payment": (_, payload) => store.saveCustomerPayment(payload),
+    "pos:customers:withdrawal": (_, payload) => store.saveWithdrawal(payload),
     "pos:purchases:create": (_, payload) => store.createPurchase(payload),
     "pos:purchases:items": (_, id) => store.getPurchaseItems(id),
     "pos:purchases:list": (_, args) => store.listPurchases(args || {}),
@@ -41,6 +56,28 @@ function registerIpc() {
     "pos:settings:save": (_, payload) => store.updateSetting(payload.key, payload.value),
     "pos:backup:export": (_, targetPath) => store.exportBackup(targetPath),
     "pos:backup:import": (_, sourcePath) => store.importBackup(sourcePath),
+    "coa:list": () => store.listCoaAccounts(),
+    "coa:create": (_, payload) => store.createCoaAccount(payload),
+    "coa:update": (_, payload) => store.updateCoaAccount(payload),
+    "coa:deactivate": (_, payload) => store.deactivateCoaAccount(payload),
+    "journal:create": (_, payload) => store.createJournalEntry(payload),
+    "journal:list": (_, args) => store.listJournalEntries(args),
+    "journal:get": (_, id) => store.getJournalEntry(id),
+    "journal:reverse": (_, payload) => store.reverseJournalEntry(payload),
+    "journal:next-no": (_, date) => store.nextJournalEntryNo(date),
+    "journal:ledger": (_, args) => store.getGeneralLedger(args),
+    "pos:expenses:list": (_, args) => store.listExpenses(args || {}),
+    "pos:expenses:save": (_, payload) => store.saveExpense(payload),
+    "db:print-html-report": async (_, html) => {
+      let printWindow = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: false, contextIsolation: true } });
+      printWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
+      printWindow.webContents.on("did-finish-load", () => {
+        printWindow.webContents.print({ silent: false, printBackground: true }, (success, failureReason) => {
+          printWindow.destroy();
+        });
+      });
+      return true;
+    },
   };
 
   Object.entries(handlers).forEach(([channel, handler]) => {

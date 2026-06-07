@@ -1,6 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Search, Printer, FileDown } from 'lucide-react';
 import { getCashBook } from '../lib/posApi';
+import * as XLSX from "xlsx";
+
+const BUSINESS_NAME = "Cheema Traders";
 
 function fmt(n) { return (n || 0).toLocaleString(); }
 
@@ -50,7 +53,7 @@ function printCashBook(entries, startDate, endDate) {
         @media print { body { padding: 0; } }
     </style>
     </head><body>
-    <h2>Store Name POS</h2>
+    <h2>${BUSINESS_NAME}</h2>
     <div class="sub">Cash Book — ${startDate} to ${endDate}</div>
     <div class="meta"><span>${entries.length} entries</span><span>Printed: ${new Date().toLocaleDateString()}</span></div>
     <table>
@@ -80,12 +83,11 @@ function printCashBook(entries, startDate, endDate) {
 
     const win = window.open('', '_blank');
     if (win) {
-      win.document.write(html);
-      win.document.close();
+        win.document.write(html);
+        win.document.close();
     }
 }
 
-// Running cash and bank totals from a list of entries
 function computeRunning(entries) {
     let cashBal = 0, bankBal = 0;
     return entries.map(e => {
@@ -137,6 +139,27 @@ export default function CashBookPage() {
     const closingCash = totalCashIn - totalCashOut;
     const closingBank = totalBankIn - totalBankOut;
 
+    const byMethod = entries.reduce((acc, e) => {
+        const m = e.payment_method || 'Cash';
+        acc[m] = (acc[m] || 0) + (e.cash_in || 0) + (e.bank_in || 0);
+        return acc;
+    }, {});
+
+    const handleExportExcel = () => {
+        const headers = [["Date", "Description", "Cash In", "Cash Out", "Bank In", "Bank Out", "Cash Balance", "Bank Balance"]];
+        const data = withBalance.map(e => [
+            e.entry_date, e.description,
+            e.cash_in || 0, e.cash_out || 0,
+            e.bank_in || 0, e.bank_out || 0,
+            e.cash_balance, e.bank_balance
+        ]);
+        const ws = XLSX.utils.aoa_to_sheet([...headers, ...data]);
+        ws["!cols"] = [{ wch: 12 }, { wch: 30 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 }];
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Cash Book");
+        XLSX.writeFile(wb, `CashBook_${startDate}_to_${endDate}.xlsx`);
+    };
+
     return (
         <div style={st.page}>
             <div style={st.pageHeader}>
@@ -149,12 +172,12 @@ export default function CashBookPage() {
                     <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} style={st.dateInput} />
                     {filtered.length > 0 && (
                         <>
-                        <button style={st.btnGhost} onClick={() => alert('Excel export will be wired up with backend!')}>
-                            <FileDown size={15} /> Export Excel
-                        </button>
-                        <button style={st.btnGhost} onClick={() => printCashBook(filtered, startDate, endDate)}>
-                            <Printer size={15} /> Print
-                        </button>
+                            <button style={st.btnGhost} onClick={handleExportExcel}>
+                                <FileDown size={15} /> Export Excel
+                            </button>
+                            <button style={st.btnGhost} onClick={() => printCashBook(filtered, startDate, endDate)}>
+                                <Printer size={15} /> Print
+                            </button>
                         </>
                     )}
                 </div>
@@ -186,9 +209,25 @@ export default function CashBookPage() {
                     </div>
                     <div style={st.cardHint}>Compare against bank statement</div>
                 </div>
+
+                {/* Net Movement */}
+                <div style={{ ...st.card, borderLeft: `3px solid #2e7d32` }}>
+                    <div style={st.cardLabel}>Net Movement</div>
+                    <div style={{ ...st.cardAmount, color: '#1b3a1d' }}>
+                        Rs. {fmt(closingCash + closingBank)}
+                    </div>
+                    <div style={st.cardHint}>Total net funds movement</div>
+                </div>
             </div>
 
             <div style={st.tableWrap}>
+                <div style={{ display: 'flex', gap: 8, padding: '12px 20px', borderBottom: '1px solid #c8d8c8', background: '#fafdfa', flexWrap: 'wrap' }}>
+                    {Object.entries(byMethod).map(([method, total]) => (
+                        <div key={method} style={{ padding: '4px 12px', background: '#e8f5e9', border: '1px solid #c8d8c8', borderRadius: 4, fontSize: 12, fontWeight: 700, color: '#1b3a1d' }}>
+                            {method}: Rs {total.toLocaleString()}
+                        </div>
+                    ))}
+                </div>
                 <div style={st.tableSearch}>
                     <Search size={14} style={{ color: '#708571' }} />
                     <input
@@ -202,8 +241,9 @@ export default function CashBookPage() {
                 <div style={st.tableContainer}>
                     <style>
                         {`
-                        .cashbook-table th { padding: 12px 20px; font-size: 12px; font-weight: 600; color: #6a8f6c; text-transform: uppercase; border-bottom: 2px solid #e8f0e8; }
+                        .cashbook-table th { padding: 12px 20px; font-size: 12px; font-weight: 600; color: #6a8f6c; text-transform: uppercase; border-bottom: 1px solid #c8d8c8; }
                         .cashbook-table td { padding: 14px 20px; }
+                        @keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 0.3; } 100% { opacity: 0.6; } }
                         `}
                     </style>
                     <table style={st.table} className="cashbook-table">
@@ -221,9 +261,13 @@ export default function CashBookPage() {
                         </thead>
                         <tbody>
                             {loading ? (
-                                <tr><td colSpan={8} style={{ textAlign: 'center', padding: 32, color: '#708571', fontSize: 13 }}>
-                                    Loading...
-                                </td></tr>
+                                [...Array(5)].map((_, i) => (
+                                    <tr key={i}>
+                                        {[...Array(8)].map((_, j) => (
+                                            <td key={j}><div className="skeleton" style={{ height: 14, borderRadius: 2, background: '#e8f0e8', animation: 'pulse 1.5s infinite' }} /></td>
+                                        ))}
+                                    </tr>
+                                ))
                             ) : withBalance.length === 0 ? (
                                 <tr><td colSpan={8} style={{ textAlign: 'center', padding: 36, color: '#708571', fontSize: 13 }}>
                                     No transactions in this period
@@ -278,7 +322,7 @@ export default function CashBookPage() {
                                 );
                             })}
                         </tbody>
-                        {withBalance.length > 0 && (
+                        {withBalance.length > 0 && !loading && (
                             <tfoot>
                                 <tr style={{ borderTop: '2px solid #cde0cd', background: '#f9fcf9' }}>
                                     <td colSpan={2} style={{ padding: '12px 16px', fontSize: 11, fontFamily: 'monospace', fontWeight: 700, textTransform: 'uppercase', color: '#6a8f6c' }}>
@@ -312,42 +356,39 @@ export default function CashBookPage() {
     );
 }
 
-import React from 'react';
-
 const st = {
-    page: { display: 'flex', flexDirection: 'column', height: '100%', background: '#f0f6f0', padding: 24, overflowY: 'auto' },
+    page: { display: 'flex', flexDirection: 'column', height: '100%', background: '#f0f6f0', padding: 24, overflowY: 'auto', fontFamily: 'system-ui, sans-serif' },
     pageHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
     title: { margin: 0, fontSize: 24, fontWeight: 'bold', color: '#1b3a1d' },
     subtitle: { margin: '4px 0 0 0', fontSize: 14, color: '#6a8f6c' },
     headerActions: { display: 'flex', gap: 12, alignItems: 'center' },
-    dateInput: { padding: '8px 12px', border: '1px solid #d3e5d3', borderRadius: 8, outline: 'none', color: '#1b3a1d', fontFamily: 'monospace' },
-    btnGhost: { display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: '#fff', border: '1px solid #d3e5d3', borderRadius: 8, color: '#1b3a1d', fontWeight: 500, cursor: 'pointer', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' },
-    
-    cardsGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 },
-    card: { background: '#fff', padding: '24px', borderRadius: 12, border: '1px solid #e8f0e8', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' },
-    cardLabel: { fontSize: 12, fontFamily: 'monospace', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#6a8f6c', marginBottom: 12 },
-    cardAmount: { fontSize: 32, fontFamily: 'monospace', fontWeight: 700, letterSpacing: '-0.03em', marginBottom: 10 },
+    dateInput: { padding: '8px 12px', border: '1px solid #cde0cd', borderRadius: 4, outline: 'none', color: '#1b3a1d', fontSize: 13, fontFamily: 'monospace' },
+    btnGhost: { display: 'flex', alignItems: 'center', gap: 6, padding: "8px 14px", background: "#fff", border: "1px solid #cde0cd", borderRadius: 4, color: "#1b3a1d", fontWeight: 600, fontSize: 13, cursor: "pointer" },
+
+    cardsGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 },
+    card: { background: '#fff', padding: '20px 24px', borderRadius: 4, border: '1px solid #c8d8c8' },
+    cardLabel: { fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#6a8f6c', marginBottom: 8 },
+    cardAmount: { fontSize: 28, fontFamily: 'monospace', fontWeight: 700, color: '#1b3a1d', marginBottom: 6 },
     cardMetrics: { display: 'flex', gap: 24, fontSize: 13, fontFamily: 'monospace', fontWeight: 500 },
-    cardHint: { fontSize: 11, color: '#999', marginTop: 12, fontStyle: 'italic' },
-    
-    tableWrap: { background: '#fff', borderRadius: 12, border: '1px solid #e8f0e8', boxShadow: '0 2px 8px rgba(0,0,0,0.02)', overflow: 'hidden', display: 'flex', flexDirection: 'column' },
-    tableSearch: { padding: '12px 20px', borderBottom: '1px solid #e8f0e8', display: 'flex', alignItems: 'center', gap: 10, background: '#fafdfa' },
+    cardHint: { fontSize: 11, color: '#999', fontStyle: 'italic' },
+
+    tableWrap: { background: '#fff', borderRadius: 4, border: '1px solid #c8d8c8', overflow: 'hidden', display: 'flex', flexDirection: 'column' },
+    tableSearch: { padding: '14px 20px', borderBottom: '1px solid #c8d8c8', display: 'flex', alignItems: 'center', gap: 10, background: '#fafdfa' },
     searchInput: { border: 'none', outline: 'none', background: 'transparent', fontSize: 14, color: '#1b3a1d', width: '100%', padding: '4px 0' },
-    
+
     tableContainer: { overflowX: 'auto' },
     table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left' },
-    dateSeparator: { 
-        background: '#e8f5e9', /* Color coding: subtle green highlight */
-        padding: '16px 20px',  /* Less congested */
-        fontSize: 12, 
-        fontFamily: 'system-ui, sans-serif', 
-        fontWeight: 700, 
-        color: '#1b3a1d',      /* Higher contrast */
-        letterSpacing: '0.07em', 
-        borderBottom: '2px solid #c8e6c9', 
-        borderTop: '2px solid #c8e6c9', 
-        textTransform: 'uppercase' /* Capitalization */
+    dateSeparator: {
+        background: '#e8f5e9',
+        padding: '16px 20px',
+        fontSize: 12,
+        fontFamily: 'system-ui, sans-serif',
+        fontWeight: 700,
+        color: '#1b3a1d',
+        letterSpacing: '0.07em',
+        borderBottom: '2px solid #c8d8c8',
+        borderTop: '2px solid #c8d8c8',
+        textTransform: 'uppercase'
     },
     dataRow: { borderBottom: '1px solid #f2f7f2' },
 };
-// Table headers/cells are styled inline above to mimic the requested specific table CSS.

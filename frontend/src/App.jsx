@@ -5,6 +5,7 @@ import BillingPage from "./pages/bill";
 import InvoiceHistory from "./pages/invoices";
 import SalesHistory from "./pages/SalesHistory";
 import AnalysisPage from "./pages/analysis/AnalysisShell";
+import ReportsPage from "./pages/reports";
 
 function App() {
   return (
@@ -16,6 +17,7 @@ function App() {
         <Route path="/invoices"  element={<InvoiceHistory />} />
         <Route path="/sales"     element={<SalesHistory />} />
         <Route path="/analysis"  element={<AnalysisPage />} />
+        <Route path="/reports/*" element={<ReportsPage />} />
       </Routes>
     </HashRouter>
   );

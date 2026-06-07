@@ -7,6 +7,25 @@ export default function InventoryManagementPage() {
 
   return (
     <div style={st.page}>
+      <style>{`
+        .ledger-row {
+          transition: background-color 0.1s ease;
+        }
+        .ledger-row:hover {
+          background-color: #f7fbf7 !important;
+        }
+        .save-record-btn {
+          transition: all 0.2s ease;
+        }
+        .save-record-btn:hover {
+          background-color: #1b5e20 !important;
+          transform: translateY(-1px);
+          box-shadow: 0 4px 8px rgba(46, 125, 50, 0.3) !important;
+        }
+        .save-record-btn:active {
+          transform: translateY(0);
+        }
+      `}</style>
       <div style={st.main}>
         {/* TOOLBAR & NAV BAR */}
         <div style={st.toolbar}>
@@ -52,6 +71,12 @@ function StockViewTab({ refreshKey }) {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
 
+  // Category and Expiry filter states
+  const [selectedCategory, setSelectedCategory] = useState("All");
+  const expiryDays = Number(localStorage.getItem("expiryThresholdDays")) || 60;
+
+  const categories = ["All", "Dairy", "Pesticide", "Seeds", "Fertilizer"];
+
   const loadData = async () => {
     setLoading(true);
     try {
@@ -68,7 +93,39 @@ function StockViewTab({ refreshKey }) {
     loadData();
   }, [search, refreshKey]);
 
-  const totalValue = batches.reduce((sum, b) => sum + (b.quantityRemaining * (b.costPrice || 0)), 0);
+  const computeExpiryStatus = (expiryDateStr, thresholdDays) => {
+    if (!expiryDateStr) return "healthy";
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const expiry = new Date(expiryDateStr + 'T00:00:00');
+    expiry.setHours(0, 0, 0, 0);
+    
+    if (Number.isNaN(expiry.getTime())) return "healthy";
+    
+    const diffTime = expiry.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays < 0) return "expired";
+    if (diffDays <= thresholdDays) return "expiring";
+    return "healthy";
+  };
+
+  // Re-map and filter client-side
+  const displayedBatches = batches
+    .map(b => {
+      const status = computeExpiryStatus(b.expiryDate, expiryDays);
+      return { ...b, expiryStatus: status };
+    })
+    .filter(b => {
+      // 1. Category filter
+      if (selectedCategory !== "All") {
+        const cat = (b.category || "").toLowerCase();
+        if (cat !== selectedCategory.toLowerCase()) return false;
+      }
+      return true;
+    });
+
+  const totalValue = displayedBatches.reduce((sum, b) => sum + (b.quantityRemaining * (b.costPrice || 0)), 0);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -76,7 +133,7 @@ function StockViewTab({ refreshKey }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <div style={st.metricCard}>
           <div style={st.metricLabel}>Total Active Batches</div>
-          <div style={st.metricValue}>{batches.length}</div>
+          <div style={st.metricValue}>{displayedBatches.length}</div>
         </div>
         <div style={st.metricCard}>
           <div style={st.metricLabel}>Total Inventory Value (Cost)</div>
@@ -98,6 +155,22 @@ function StockViewTab({ refreshKey }) {
           />
         </div>
 
+        {/* Category filter chips */}
+        <div style={st.filterStrip}>
+          {categories.map(cat => (
+            <button
+              key={cat}
+              style={{
+                ...st.filterChip,
+                ...(selectedCategory === cat ? st.filterChipActive : {})
+              }}
+              onClick={() => setSelectedCategory(cat)}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+
         {error && <div style={{ color: "red", fontSize: 13, padding: 8 }}>{error}</div>}
 
         <div style={st.tableWrap}>
@@ -114,18 +187,30 @@ function StockViewTab({ refreshKey }) {
 
           {loading ? (
             <div style={{ padding: 20, textAlign: "center", color: "#666" }}>Loading inventory...</div>
-          ) : batches.length === 0 ? (
+          ) : displayedBatches.length === 0 ? (
             <div style={{ padding: 20, textAlign: "center", color: "#666" }}>No batches found.</div>
           ) : (
-            batches.map((b) => (
-              <div key={b.id} style={st.tableRowView}>
+            displayedBatches.map((b) => (
+              <div key={b.id} className="ledger-row" style={st.tableRowView}>
                 <span style={{ flex: 2, fontWeight: 600, color: "#1b3a1d" }}>{b.productName}</span>
-                <span style={{ flex: 1.2, color: "#555" }}>{b.batchNo}</span>
+                <span style={{ flex: 1.2, color: "#555", fontFamily: "IBM Plex Mono, monospace" }}>{b.batchNo}</span>
                 <span style={{ flex: 1.5, color: "#555" }}>{b.supplierName || "—"}</span>
-                <span style={{ flex: 1, textAlign: "right", fontWeight: 600 }}>{b.quantityRemaining} {b.unit}</span>
-                <span style={{ flex: 1, textAlign: "right" }}>Rs {b.costPrice}</span>
-                <span style={{ flex: 1, textAlign: "right", color: "#388e3c" }}>Rs {b.salePrice}</span>
-                <span style={{ flex: 1.2, textAlign: "center", color: "#555" }}>{b.expiryDate || "—"}</span>
+                <span style={{ flex: 1, textAlign: "right", fontWeight: 600, fontFamily: "IBM Plex Mono, monospace" }}>
+                  {b.quantityRemaining} {b.unit}
+                  {b.quantityRemaining <= (b.lowStockLevel || 0) && (
+                    <span style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 3, fontSize: 10, color: "#c62828", fontWeight: 700, marginTop: 2 }}>
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                        <line x1="12" y1="9" x2="12" y2="13"></line>
+                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                      </svg>
+                      Low Stock ({b.lowStockLevel})
+                    </span>
+                  )}
+                </span>
+                <span style={{ flex: 1, textAlign: "right", fontFamily: "IBM Plex Mono, monospace" }}>Rs {b.costPrice}</span>
+                <span style={{ flex: 1, textAlign: "right", color: "#2e7d32", fontWeight: 600, fontFamily: "IBM Plex Mono, monospace" }}>Rs {b.salePrice}</span>
+                <span style={{ flex: 1.2, textAlign: "center", color: "#555", fontFamily: "IBM Plex Mono, monospace" }}>{b.expiryDate || "—"}</span>
                 <div style={{ width: 80, display: "flex", justifyContent: "center" }}>
                   <div style={{ ...st.statusBadge, ...(b.expiryStatus === "expired" ? st.badgeDanger : b.expiryStatus === "expiring" ? st.badgeWarning : st.badgeSuccess) }}>
                     {b.expiryStatus}
@@ -142,7 +227,6 @@ function StockViewTab({ refreshKey }) {
 
 /* ─── STOCK ENTRY TAB ─── */
 function StockEntryTab({ onSaved }) {
-  const [showSummary, setShowSummary] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -240,10 +324,10 @@ function StockEntryTab({ onSaved }) {
           salePrice: Number(row.salePrice || 0),
           expiryDate: row.expiryDate || null,
           notes: row.notes || null,
+          category: row.category,
         }))
       });
       setSuccess("Inventory saved successfully!");
-      setShowSummary(false);
       setTimeout(() => {
         onSaved(); // switch tab to view
       }, 1000);
@@ -257,19 +341,76 @@ function StockEntryTab({ onSaved }) {
   const totalInventoryValue = inventory.reduce((acc, item) => acc + ((parseFloat(item.qty) || 0) * (parseFloat(item.costPrice) || 0)), 0);
   const totalPending = inventory.reduce((acc, item) => acc + (parseFloat(item.remaining) || 0), 0);
   const totalProducts = inventory.filter((item) => item.productName.trim() !== "").length;
+  const validRows = inventory.filter(i => i.productName.trim() !== "");
+  const totalDue = Math.max(0, totalInventoryValue - (Number(amountPaid) || 0));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {error && <div style={st.alertError}>{error}</div>}
       {success && <div style={st.alertSuccess}>{success}</div>}
 
-      <div style={st.toolbar}>
-        <div />
-        <button style={st.summaryToggle} onClick={() => setShowSummary(!showSummary)}>
-          {showSummary ? "Close Summary" : `Review & Save · Rs ${totalInventoryValue.toFixed(0)}`}
-        </button>
+      {/* Spacer to replace toolbar */}
+      <div style={{ height: 4 }} />
+
+      {/* GLOBAL DETAILS & PAYMENT - MOVED TO TOP */}
+      <div style={st.infoRow}>
+        <div style={st.infoCard}>
+          <h3 style={st.sectionTitleSm}>Global Batch Details (Optional)</h3>
+          <div style={st.grid3}>
+            <div style={st.fieldWrap}>
+              <label style={st.fieldLabel}>Supplier</label>
+              <select
+                style={st.fieldInput}
+                value={supplierId}
+                onChange={(e) => setSupplierId(e.target.value)}
+              >
+                <option value="">-- Select Supplier --</option>
+                {suppliers.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <Field
+              label="Entry Date"
+              type="date"
+              style={{ ...st.fieldInput, fontFamily: "IBM Plex Mono, monospace" }}
+              value={purchaseDate}
+              onChange={(e) => setPurchaseDate(e.target.value)}
+            />
+            <Field
+              label="Warehouse Shelf"
+              placeholder="A-2"
+              value={warehouseShelf}
+              onChange={(e) => setWarehouseShelf(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div style={st.infoCard}>
+          <h3 style={st.sectionTitleSm}>Payment Tracking</h3>
+          <div style={st.grid3}>
+            <FieldSelect
+              label="Payment Type"
+              options={["Cash", "Credit", "Partial"]}
+              value={paymentType}
+              onChange={(e) => setPaymentType(e.target.value)}
+            />
+            <Field
+              label="Amount Paid"
+              placeholder="0"
+              type="number"
+              style={{ ...st.fieldInput, fontFamily: "IBM Plex Mono, monospace" }}
+              value={amountPaid}
+              onChange={(e) => setAmountPaid(e.target.value)}
+            />
+            <Field label="Due Date" type="date" style={{ ...st.fieldInput, fontFamily: "IBM Plex Mono, monospace" }} />
+          </div>
+        </div>
       </div>
 
+      {/* QUICK STOCK ENTRY TABLE */}
       <div style={st.productCard}>
         <div style={st.productTop}>
           <div>
@@ -305,27 +446,26 @@ function StockEntryTab({ onSaved }) {
               />
 
               <input
-                style={{ ...st.inp, flex: 1.2 }}
+                style={{ ...st.inp, flex: 1.2, fontFamily: "IBM Plex Mono, monospace" }}
                 placeholder="e.g. BT-1001"
                 value={item.batchNo}
                 onChange={(e) => updateItem(item.id, "batchNo", e.target.value)}
               />
 
+              {/* RESTRICTED CATEGORIES */}
               <select
                 style={{ ...st.inp, flex: 1.1 }}
                 value={item.category}
                 onChange={(e) => updateItem(item.id, "category", e.target.value)}
               >
+                <option>Dairy</option>
                 <option>Pesticide</option>
-                <option>Insecticide</option>
-                <option>Fungicide</option>
-                <option>Herbicide</option>
                 <option>Seeds</option>
                 <option>Fertilizer</option>
               </select>
 
               <input
-                style={{ ...st.inp, flex: 0.8 }}
+                style={{ ...st.inp, flex: 0.8, fontFamily: "IBM Plex Mono, monospace" }}
                 type="number"
                 value={item.qty}
                 onChange={(e) => updateItem(item.id, "qty", e.target.value)}
@@ -343,7 +483,7 @@ function StockEntryTab({ onSaved }) {
               </select>
 
               <input
-                style={{ ...st.inp, flex: 1 }}
+                style={{ ...st.inp, flex: 1, fontFamily: "IBM Plex Mono, monospace" }}
                 type="number"
                 placeholder="Cost"
                 value={item.costPrice}
@@ -351,7 +491,7 @@ function StockEntryTab({ onSaved }) {
               />
 
               <input
-                style={{ ...st.inp, flex: 1 }}
+                style={{ ...st.inp, flex: 1, fontFamily: "IBM Plex Mono, monospace" }}
                 type="number"
                 placeholder="Retail"
                 value={item.salePrice}
@@ -359,7 +499,7 @@ function StockEntryTab({ onSaved }) {
               />
 
               <input
-                style={{ ...st.inp, flex: 1.1 }}
+                style={{ ...st.inp, flex: 1.1, fontFamily: "IBM Plex Mono, monospace" }}
                 type="date"
                 value={item.expiryDate}
                 onChange={(e) => updateItem(item.id, "expiryDate", e.target.value)}
@@ -368,90 +508,59 @@ function StockEntryTab({ onSaved }) {
               <button style={st.delBtn} onClick={() => removeRow(item.id)}>✕</button>
             </div>
           ))}
-        </div>
-      </div>
 
-      <div style={st.infoRow}>
-        <div style={st.infoCard}>
-          <h3 style={st.sectionTitleSm}>Global Batch Details (Optional)</h3>
-          <div style={st.grid3}>
-            <div style={st.fieldWrap}>
-              <label style={st.fieldLabel}>Supplier</label>
-              <select
-                style={st.fieldInput}
-                value={supplierId}
-                onChange={(e) => setSupplierId(e.target.value)}
-              >
-                <option value="">-- Select Supplier --</option>
-                {suppliers.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
+          {/* PERSISTENT RUNNING TOTAL LEDGER FOOTER BAR */}
+          <div style={st.tableFooter}>
+            <span style={{ fontWeight: 600 }}>{validRows.length} rows entered</span>
+            <div style={{ display: "flex", gap: 24 }}>
+              <span>Total Cost: <strong style={{ fontFamily: "IBM Plex Mono, monospace" }}>Rs {totalInventoryValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></span>
+              <span>Paid: <strong style={{ color: "#2e7d32", fontFamily: "IBM Plex Mono, monospace" }}>Rs {(Number(amountPaid) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></span>
+              <span>Due: <strong style={{ color: totalDue > 0 ? "#c62828" : "#2e7d32", fontFamily: "IBM Plex Mono, monospace" }}>Rs {totalDue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></span>
             </div>
-            <Field
-              label="Entry Date"
-              type="date"
-              value={purchaseDate}
-              onChange={(e) => setPurchaseDate(e.target.value)}
-            />
-            <Field
-              label="Warehouse Shelf"
-              placeholder="A-2"
-              value={warehouseShelf}
-              onChange={(e) => setWarehouseShelf(e.target.value)}
-            />
-          </div>
-        </div>
-
-        <div style={st.infoCard}>
-          <h3 style={st.sectionTitleSm}>Payment Tracking</h3>
-          <div style={st.grid3}>
-            <FieldSelect
-              label="Payment Type"
-              options={["Cash", "Credit", "Partial"]}
-              value={paymentType}
-              onChange={(e) => setPaymentType(e.target.value)}
-            />
-            <Field
-              label="Amount Paid"
-              placeholder="0"
-              type="number"
-              value={amountPaid}
-              onChange={(e) => setAmountPaid(e.target.value)}
-            />
-            <Field label="Due Date" type="date" />
           </div>
         </div>
       </div>
 
-      {/* SUMMARY PANEL */}
-      <div style={{ ...st.summaryPanel, transform: showSummary ? "translateX(0)" : "translateX(100%)", opacity: showSummary ? 1 : 0 }}>
-        <div style={st.summaryInner}>
-          <div style={st.summaryHeader}>
-            <h2 style={st.summaryTitle}>Review Inventory</h2>
-            <button style={st.closeBtn} onClick={() => setShowSummary(false)}>✕</button>
-          </div>
-
-          <div style={st.summaryBody}>
-            <SumRow label="Valid Batches" value={`${totalProducts}`} />
-            <SumRow label="Inventory Value" value={`Rs ${totalInventoryValue.toFixed(0)}`} />
-            <SumRow label="Pending Payments" value={`Rs ${totalPending.toFixed(0)}`} />
-
-            <div style={st.grandRow}>
-              <span>Total Cost</span>
-              <span style={st.grandValue}>Rs {totalInventoryValue.toFixed(0)}</span>
+      {/* REVIEW & SAVE SECTION */}
+      <div style={st.reviewCard}>
+        <div style={st.reviewHeader}>
+          <h2 style={st.sectionTitle}>Review & Save Record</h2>
+          <p style={st.subText}>Confirm the entered quantities, costs, and payment details before committing to stock.</p>
+        </div>
+        
+        <div style={st.reviewBody}>
+          <div style={st.reviewMetrics}>
+            <div style={st.reviewMetric}>
+              <span style={st.reviewMetricLabel}>Total Batches</span>
+              <span style={st.reviewMetricValue}>{totalProducts}</span>
             </div>
-
-            <button style={st.generateBtn} onClick={handleSave} disabled={saving}>
-              {saving ? "Saving..." : "Save Inventory Record"}
-            </button>
+            <div style={st.reviewMetric}>
+              <span style={st.reviewMetricLabel}>Total Cost</span>
+              <span style={st.reviewMetricValue}>Rs {totalInventoryValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+            </div>
+            <div style={st.reviewMetric}>
+              <span style={st.reviewMetricLabel}>Amount Paid</span>
+              <span style={st.reviewMetricValue}>Rs {(Number(amountPaid) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+            </div>
+            <div style={st.reviewMetric}>
+              <span style={st.reviewMetricLabel}>Remaining Due</span>
+              <span style={{ ...st.reviewMetricValue, color: totalDue > 0 ? "#c62828" : "#2e7d32" }}>
+                Rs {totalDue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </span>
+            </div>
           </div>
+
+          <button
+            id="btn-save-inventory-record"
+            className="save-record-btn"
+            style={st.saveRecordBtn}
+            onClick={handleSave}
+            disabled={saving}
+          >
+            {saving ? "Saving Record..." : "✓ Confirm & Save Inventory"}
+          </button>
         </div>
       </div>
-
-      {showSummary && <div style={st.overlay} onClick={() => setShowSummary(false)} />}
     </div>
   );
 }
@@ -482,7 +591,7 @@ function SumRow({ label, value }) {
   return (
     <div style={st.sumRow}>
       <span>{label}</span>
-      <span>{value}</span>
+      <span style={{ fontFamily: "IBM Plex Mono, monospace" }}>{value}</span>
     </div>
   );
 }
@@ -492,6 +601,8 @@ function StockHistoryTab({ onChanged }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [editValues, setEditValues] = useState({});
 
@@ -510,11 +621,18 @@ function StockHistoryTab({ onChanged }) {
 
   useEffect(() => { loadData(); }, []);
 
-  const filtered = purchases.filter(p =>
-    !search ||
-    (p.supplierName || "").toLowerCase().includes(search.toLowerCase()) ||
-    (p.purchaseDate || "").includes(search)
-  );
+  const filtered = purchases.filter(p => {
+    if (search && !(p.supplierName || "").toLowerCase().includes(search.toLowerCase())) {
+      return false;
+    }
+    if (fromDate && p.purchaseDate && p.purchaseDate < fromDate) {
+      return false;
+    }
+    if (toDate && p.purchaseDate && p.purchaseDate > toDate) {
+      return false;
+    }
+    return true;
+  });
 
   const startEdit = (p) => {
     setEditingId(p.id);
@@ -578,12 +696,32 @@ function StockHistoryTab({ onChanged }) {
             <h2 style={st.sectionTitle}>Purchase History</h2>
             <p style={st.subText}>Every stock purchase logged via Stock Entry. Edit header info or delete a record entirely.</p>
           </div>
-          <input
-            style={st.searchInp}
-            placeholder="Search supplier or date..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 13, color: "#666" }}>From</span>
+              <input
+                type="date"
+                style={{ ...st.inp, width: 140, fontFamily: "IBM Plex Mono, monospace", padding: "6px 8px" }}
+                value={fromDate}
+                onChange={e => setFromDate(e.target.value)}
+              />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 13, color: "#666" }}>To</span>
+              <input
+                type="date"
+                style={{ ...st.inp, width: 140, fontFamily: "IBM Plex Mono, monospace", padding: "6px 8px" }}
+                value={toDate}
+                onChange={e => setToDate(e.target.value)}
+              />
+            </div>
+            <input
+              style={{ ...st.searchInp, width: 220 }}
+              placeholder="Search supplier..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
         </div>
 
         <div style={st.tableWrap}>
@@ -610,21 +748,21 @@ function StockHistoryTab({ onChanged }) {
               const remaining = (parseFloat(p.totalCost) || 0) - (parseFloat(p.amountPaid) || 0);
 
               return (
-                <div key={p.id} style={{
+                <div key={p.id} className="ledger-row" style={{
                   ...st.tableRowView,
                   background: isEditing ? "#f5fdf5" : "transparent",
-                  outline: isEditing ? "1.5px solid #c8e6c9" : "none",
-                  borderRadius: isEditing ? 10 : 0,
+                  outline: isEditing ? "1px solid #c8e6c9" : "none",
+                  borderRadius: isEditing ? 2 : 0,
                   padding: "12px 8px",
                   alignItems: "flex-start",
                 }}>
                   {/* Date */}
                   {isEditing ? (
-                    <input type="date" style={{ ...st.inp, flex: 1.2 }}
+                    <input type="date" style={{ ...st.inp, flex: 1.2, fontFamily: "IBM Plex Mono, monospace" }}
                       value={editValues.purchaseDate}
                       onChange={e => setEditValues(v => ({ ...v, purchaseDate: e.target.value }))} />
                   ) : (
-                    <span style={{ flex: 1.2, color: "#333", fontWeight: 600 }}>{p.purchaseDate}</span>
+                    <span style={{ flex: 1.2, color: "#333", fontWeight: 600, fontFamily: "IBM Plex Mono, monospace" }}>{p.purchaseDate}</span>
                   )}
 
                   {/* Supplier */}
@@ -633,42 +771,42 @@ function StockHistoryTab({ onChanged }) {
                   {/* Batch count — expand on click */}
                   <div style={{ flex: 0.8, textAlign: "center" }}>
                     <span style={{
-                      display: "inline-block", background: "#e8f5e9", color: "#2e7d32",
-                      borderRadius: 20, padding: "2px 10px", fontSize: 13, fontWeight: 700
+                      display: "inline-block", background: "#2e7d3218", color: "#2e7d32", borderLeft: "2px solid #2e7d32",
+                      borderRadius: 2, padding: "2px 8px", fontSize: 11, fontWeight: 700
                     }}>
                       {(p.items || []).length}
                     </span>
                     {(p.items || []).length > 0 && (
                       <div style={{ marginTop: 4, fontSize: 11, color: "#777", lineHeight: 1.5 }}>
                         {(p.items || []).map((item, i) => (
-                          <div key={i}>{item.productName} × {item.qty} {item.unit}</div>
+                          <div key={i}>{item.productName} × {item.qty}</div>
                         ))}
                       </div>
                     )}
                   </div>
 
                   {/* Total cost */}
-                  <span style={{ flex: 1, textAlign: "right", fontWeight: 600 }}>
-                    Rs {(parseFloat(p.totalCost) || 0).toLocaleString()}
+                  <span style={{ flex: 1, textAlign: "right", fontWeight: 600, fontFamily: "IBM Plex Mono, monospace" }}>
+                    Rs {(parseFloat(p.totalCost) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
                   </span>
 
                   {/* Amount paid */}
                   {isEditing ? (
-                    <input type="number" style={{ ...st.inp, flex: 1, textAlign: "right" }}
+                    <input type="number" style={{ ...st.inp, flex: 1, textAlign: "right", fontFamily: "IBM Plex Mono, monospace" }}
                       value={editValues.amountPaid}
                       onChange={e => setEditValues(v => ({ ...v, amountPaid: e.target.value }))} />
                   ) : (
-                    <span style={{ flex: 1, textAlign: "right", color: "#2e7d32" }}>
-                      Rs {(parseFloat(p.amountPaid) || 0).toLocaleString()}
+                    <span style={{ flex: 1, textAlign: "right", color: "#2e7d32", fontFamily: "IBM Plex Mono, monospace" }}>
+                      Rs {(parseFloat(p.amountPaid) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
                     </span>
                   )}
 
                   {/* Remaining */}
                   <span style={{
                     flex: 1, textAlign: "right",
-                    color: remaining > 0 ? "#c62828" : "#2e7d32", fontWeight: 600
+                    color: remaining > 0 ? "#c62828" : "#2e7d32", fontWeight: 600, fontFamily: "IBM Plex Mono, monospace"
                   }}>
-                    Rs {Math.max(0, remaining).toLocaleString()}
+                    Rs {Math.max(0, remaining).toLocaleString(undefined, { maximumFractionDigits: 0 })}
                   </span>
 
                   {/* Payment method */}
@@ -731,65 +869,73 @@ function StockHistoryTab({ onChanged }) {
 }
 
 const st = {
-  page: { display: "flex", flexDirection: "column", minHeight: "100%", background: "#f0f6f0", fontFamily: "system-ui, sans-serif" },
+  page: { display: "flex", flexDirection: "column", minHeight: "100%", background: "#f5f8f5", fontFamily: "Segoe UI, -apple-system, BlinkMacSystemFont, sans-serif" },
   main: { flex: 1, padding: 20, overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 },
-  toolbar: { display: "flex", justifyContent: "space-between", alignItems: "center" },
+  toolbar: { display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #c8d8c8", paddingBottom: 12, marginBottom: 4 },
   toolbarLeft: { display: "flex", alignItems: "center", gap: 12 },
-  pageTitle: { margin: 0, fontSize: 24, fontWeight: "bold", color: "#1b3a1d" },
+  pageTitle: { margin: 0, fontSize: 16, fontWeight: 700, color: "#1b3a1d", textTransform: "uppercase", letterSpacing: "0.08em", paddingLeft: 12, borderLeft: "3px solid #2e7d32" },
 
-  navStrip: { display: "flex", gap: 4, background: "#e4ede4", borderRadius: 12, padding: 4 },
-  navBtn: { padding: "10px 18px", border: "none", borderRadius: 9, background: "transparent", fontSize: 14, fontWeight: 600, color: "#5a755c", cursor: "pointer", transition: "background 0.2s" },
-  navBtnActive: { background: "#fff", color: "#1d351f", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" },
+  navStrip: { display: "flex", gap: 20, padding: "0 4px" },
+  navBtn: { padding: "10px 4px", border: "none", borderBottom: "2px solid transparent", background: "transparent", fontSize: 14, fontWeight: 600, color: "#5a755c", cursor: "pointer", borderRadius: 0, transition: "all 0.2s" },
+  navBtnActive: { color: "#1d351f", borderBottom: "2px solid #2e7d32", fontWeight: 700 },
 
-  metricCard: { background: "#fff", border: "1px solid #dbe8db", borderRadius: 14, padding: "20px" },
-  metricLabel: { fontSize: 12, fontWeight: 600, color: "#6a8f6c", textTransform: "uppercase", marginBottom: 6 },
-  metricValue: { fontSize: 24, fontWeight: 700, color: "#1b3a1d" },
+  metricCard: { background: "#fff", border: "1px solid #c8d8c8", borderRadius: 2, padding: "16px 20px" },
+  metricLabel: { fontSize: 10, fontWeight: 700, color: "#6a8f6c", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 },
+  metricValue: { fontSize: 24, fontWeight: 700, color: "#1b3a1d", fontFamily: "IBM Plex Mono, monospace" },
 
-  summaryToggle: { padding: "10px 18px", border: "none", background: "#2e7d32", color: "#fff", borderRadius: 8, cursor: "pointer", fontWeight: 600 },
+  summaryToggle: { padding: "10px 18px", border: "none", background: "#2e7d32", color: "#fff", borderRadius: 4, cursor: "pointer", fontWeight: 600, transition: "background 0.2s" },
 
-  productCard: { background: "#fff", borderRadius: 14, padding: 20, border: "1px solid #d5e8d5" },
-  productTop: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 },
-  sectionTitle: { margin: 0, fontSize: 18, fontWeight: "bold", color: "#1b3a1d" },
-  subText: { margin: "4px 0 0 0", fontSize: 13, color: "#666" },
-  addBtn: { padding: "8px 16px", background: "#43a047", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600 },
-  searchInp: { padding: "8px 14px", border: "1.5px solid #cde0cd", borderRadius: 8, outline: "none", width: 280 },
+  productCard: { background: "#fff", borderRadius: 2, padding: 20, border: "1px solid #b8c8b8" },
+  productTop: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
+  sectionTitle: { margin: 0, fontSize: 15, fontWeight: 700, color: "#1b3a1d", textTransform: "uppercase", letterSpacing: "0.03em" },
+  subText: { margin: "4px 0 0 0", fontSize: 12, color: "#666" },
+  addBtn: { padding: "8px 16px", background: "#2e7d32", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontWeight: 600, transition: "background 0.2s" },
+  searchInp: { padding: "8px 14px", border: "1px solid #cde0cd", borderRadius: 4, outline: "none", width: 280, fontSize: 13, background: "#fcfdfc" },
 
-  tableWrap: { display: "flex", flexDirection: "column", gap: 8 },
-  tableHead: { display: "flex", padding: "0 4px 8px", borderBottom: "2px solid #e8f0e8", fontSize: 12, fontWeight: 700, color: "#6a8f6c", textTransform: "uppercase" },
-  tableRow: { display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: "1px solid #f2f7f2" },
-  tableRowView: { display: "flex", alignItems: "center", gap: 10, padding: "14px 4px", borderBottom: "1px solid #f2f7f2", fontSize: 14 },
+  tableWrap: { display: "flex", flexDirection: "column" },
+  tableHead: { display: "flex", padding: "10px 12px", borderBottom: "2px solid #c8d8c8", fontSize: 11, fontWeight: 700, color: "#6a8f6c", textTransform: "uppercase", letterSpacing: "0.05em" },
+  tableRow: { display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", borderBottom: "1px solid rgba(0,0,0,0.08)" },
+  tableRowView: { display: "flex", alignItems: "center", gap: 10, padding: "12px 12px", borderBottom: "1px solid rgba(0,0,0,0.08)", fontSize: 13.5 },
   rowNum: { fontSize: 13, fontWeight: 600, color: "#a3bca5", textAlign: "center" },
-  inp: { padding: "10px", border: "1.5px solid #cde0cd", borderRadius: 8, background: "#fafff9", outline: "none", boxSizing: "border-box" },
-  delBtn: { width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", background: "#fff0f0", color: "#d32f2f", border: "none", borderRadius: 8, cursor: "pointer" },
+  inp: { padding: "8px 10px", border: "1px solid #cde0cd", borderRadius: 4, background: "#fcfdfc", outline: "none", boxSizing: "border-box", fontSize: 13 },
+  delBtn: { width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", background: "#fff0f0", color: "#d32f2f", border: "none", borderRadius: 4, cursor: "pointer", fontSize: 12 },
 
   infoRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 },
-  infoCard: { background: "#fff", borderRadius: 14, padding: 20, border: "1px solid #d5e8d5" },
-  sectionTitleSm: { margin: "0 0 16px 0", fontSize: 16, fontWeight: 600, color: "#1b3a1d" },
+  infoCard: { background: "#fff", borderRadius: 2, padding: 20, border: "1px solid #b8c8b8" },
+  sectionTitleSm: { margin: "0 0 16px 0", fontSize: 13.5, fontWeight: 700, color: "#1b3a1d", textTransform: "uppercase", letterSpacing: "0.03em" },
   grid3: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 },
 
   fieldWrap: { display: "flex", flexDirection: "column", gap: 6 },
-  fieldLabel: { fontSize: 11, fontWeight: 700, color: "#6a8f6c", textTransform: "uppercase" },
-  fieldInput: { padding: "10px", border: "1.5px solid #cde0cd", borderRadius: 8, background: "#fafff9", outline: "none" },
+  fieldLabel: { fontSize: 10, fontWeight: 700, color: "#6a8f6c", textTransform: "uppercase", letterSpacing: "0.05em" },
+  fieldInput: { padding: "8px 10px", border: "1px solid #cde0cd", borderRadius: 4, background: "#fcfdfc", outline: "none", fontSize: 13 },
 
-  summaryPanel: { position: "fixed", top: 0, right: 0, bottom: 0, width: 360, background: "#fff", boxShadow: "-4px 0 20px rgba(0,0,0,0.1)", zIndex: 100, transition: "transform 0.3s ease, opacity 0.3s ease" },
-  summaryInner: { display: "flex", flexDirection: "column", height: "100%" },
-  summaryHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: 20, borderBottom: "1px solid #e8f0e8" },
-  summaryTitle: { margin: 0, fontSize: 18, fontWeight: "bold", color: "#1b3a1d" },
-  closeBtn: { background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "#666" },
-  summaryBody: { padding: 20, flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 },
+  reviewCard: { background: "#fff", borderRadius: 2, padding: 20, border: "1px solid #b8c8b8", display: "flex", flexDirection: "column", gap: 16 },
+  reviewHeader: { display: "flex", flexDirection: "column", gap: 4, borderBottom: "1px solid #e8f0e8", paddingBottom: 12 },
+  reviewBody: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 },
+  reviewMetrics: { display: "flex", gap: 32, flexWrap: "wrap" },
+  reviewMetric: { display: "flex", flexDirection: "column", gap: 4 },
+  reviewMetricLabel: { fontSize: 10, fontWeight: 700, color: "#6a8f6c", textTransform: "uppercase", letterSpacing: "0.08em" },
+  reviewMetricValue: { fontSize: 18, fontWeight: 700, color: "#1b3a1d", fontFamily: "IBM Plex Mono, monospace" },
+  saveRecordBtn: { padding: "12px 28px", background: "#2e7d32", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontWeight: 700, fontSize: 14, textTransform: "uppercase", letterSpacing: "0.05em", boxShadow: "0 2px 4px rgba(46, 125, 50, 0.2)" },
 
-  sumRow: { display: "flex", justifyContent: "space-between", fontSize: 15, color: "#444" },
-  grandRow: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0", borderTop: "2px solid #e8f0e8", borderBottom: "2px solid #e8f0e8", fontWeight: "bold", fontSize: 16 },
-  grandValue: { fontSize: 20, color: "#2e7d32" },
-  generateBtn: { marginTop: "auto", padding: 16, background: "#2e7d32", color: "#fff", border: "none", borderRadius: 12, fontSize: 16, fontWeight: "bold", cursor: "pointer" },
+  alertError: { padding: "12px", borderRadius: 4, background: "#fff0f0", border: "1px solid #f5c6c6", color: "#c62828", fontSize: 13.5, fontWeight: 500 },
+  alertSuccess: { padding: "12px", borderRadius: 4, background: "#e8f5e9", border: "1px solid #c8e6c9", color: "#2e7d32", fontSize: 13.5, fontWeight: 500 },
 
-  overlay: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.3)", zIndex: 90 },
+  statusBadge: { padding: "4px 8px", borderRadius: 2, fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap" },
+  badgeSuccess: { background: "#2e7d3218", color: "#2e7d32", borderLeft: "3px solid #2e7d32" },
+  badgeWarning: { background: "#e6510018", color: "#e65100", borderLeft: "3px solid #e65100" },
+  badgeDanger: { background: "#c6282818", color: "#c62828", borderLeft: "3px solid #c62828" },
 
-  alertError: { padding: "12px", borderRadius: 8, background: "#fff0f0", border: "1px solid #f5c6c6", color: "#c62828", fontSize: 14, fontWeight: 500 },
-  alertSuccess: { padding: "12px", borderRadius: 8, background: "#e8f5e9", border: "1px solid #c8e6c9", color: "#2e7d32", fontSize: 14, fontWeight: 500 },
+  // New custom flat chip elements
+  filterStrip: { display: "flex", gap: 12, borderBottom: "1px solid rgba(0,0,0,0.08)", paddingBottom: 10, marginBottom: 16, flexWrap: "wrap" },
+  filterChip: { background: "none", border: "none", borderBottom: "2px solid transparent", padding: "6px 2px", fontSize: 13, fontWeight: 600, color: "#666", cursor: "pointer", borderRadius: 0, transition: "all 0.2s" },
+  filterChipActive: { color: "#2e7d32", borderBottom: "2px solid #2e7d32" },
 
-  statusBadge: { padding: "4px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600, textTransform: "capitalize", whiteSpace: "nowrap" },
-  badgeSuccess: { background: "#e8f5e9", color: "#2e7d32" },
-  badgeWarning: { background: "#fff3e0", color: "#e65100" },
-  badgeDanger: { background: "#ffebee", color: "#c62828" },
+  settingsRow: { display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f8faf8", border: "1px solid #c8d8c8", borderRadius: 2, padding: "8px 12px", marginBottom: 12, gap: 12, flexWrap: "wrap" },
+  checkboxLabel: { display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 500, color: "#1b3a1d", cursor: "pointer" },
+  checkbox: { width: 14, height: 14, cursor: "pointer" },
+  settingsText: { fontSize: 13, color: "#555" },
+  thresholdInp: { width: 50, padding: "4px 6px", border: "1px solid #cde0cd", borderRadius: 4, outline: "none", textAlign: "center", fontSize: 13, fontFamily: "IBM Plex Mono, monospace" },
+
+  tableFooter: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "#f8faf8", borderTop: "2px solid #c8d8c8", borderBottom: "1px solid #c8d8c8", fontSize: 13.5, color: "#1b3a1d" },
 };

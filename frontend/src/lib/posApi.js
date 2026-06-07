@@ -139,6 +139,25 @@ export async function saveCustomerPayment(payload) {
   });
 }
 
+export async function saveWithdrawal(payload) {
+  if (usingIpc()) return window.pos.saveWithdrawal(payload);
+  return httpJson("/customer-withdrawals", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listExpenses(args = {}) {
+  if (usingIpc()) return window.pos.listExpenses(args);
+  const q = new URLSearchParams(args).toString();
+  return httpJson(`/expenses?${q}`);
+}
+
+export async function saveExpense(payload) {
+  if (usingIpc()) return window.pos.saveExpense(payload);
+  return httpJson("/expenses", { method: "POST", body: JSON.stringify(payload) });
+}
+
 export async function listSales(args = {}) {
   if (usingIpc()) return window.pos.listSales(args);
   const query = new URLSearchParams();
@@ -284,4 +303,22 @@ export async function getCashBook(args = {}) {
 export async function deleteCustomer(id) {
   if (usingIpc()) return window.pos.deleteCustomer(id);
   return httpJson(`/customers/${id}`, { method: "DELETE" });
+}
+
+export async function getReceivables(args = {}) {
+  if (usingIpc()) return window.pos.getReceivables(args);
+  const q = new URLSearchParams(args).toString();
+  return httpJson(`/reports/receivables?${q}`);
+}
+
+export async function getPayables(args = {}) {
+  if (usingIpc()) return window.pos.getPayables(args);
+  const q = new URLSearchParams(args).toString();
+  return httpJson(`/reports/payables?${q}`);
+}
+
+export async function getCashFlow(args = {}) {
+  if (usingIpc()) return window.pos.getCashFlow(args);
+  const q = new URLSearchParams(args).toString();
+  return httpJson(`/reports/cashflow?${q}`);
 }

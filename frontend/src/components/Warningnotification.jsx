@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
 /**
@@ -43,6 +43,15 @@ export default function WarningNotification({
     autoDismissMs = 5000, // set to 0 to disable auto-dismiss
 }) {
     const timerRef = useRef(null);
+    const [localTitle, setLocalTitle] = useState(title);
+    const [localLines, setLocalLines] = useState(lines);
+
+    useEffect(() => {
+        if (visible) {
+            setLocalTitle(title);
+            setLocalLines(lines);
+        }
+    }, [visible, title, lines]);
 
     /* auto-dismiss when no confirm action is required */
     useEffect(() => {
@@ -95,7 +104,7 @@ export default function WarningNotification({
 
                             <div style={{ flex: 1 }}>
                                 <p style={st.label}>Warning</p>
-                                <h3 id="warn-title" style={st.title}>{title}</h3>
+                                <h3 id="warn-title" style={st.title}>{localTitle}</h3>
                             </div>
 
                             <button style={st.closeBtn} onClick={onClose} aria-label="Close">
@@ -106,9 +115,9 @@ export default function WarningNotification({
                         </div>
 
                         {/* lines */}
-                        {lines.length > 0 && (
+                        {localLines.length > 0 && (
                             <div style={st.lines}>
-                                {lines.map((line, i) => (
+                                {localLines.map((line, i) => (
                                     <div key={i} style={st.lineRow}>
                                         <span style={st.lineLabel}>{line.label}</span>
                                         <span style={{ ...st.lineValue, ...(line.mono ? st.mono : {}) }}>

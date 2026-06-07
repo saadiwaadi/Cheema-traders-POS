@@ -132,6 +132,21 @@ db.serialize(() => {
   `);
 
   db.run(`
+    CREATE TABLE IF NOT EXISTS customer_withdrawals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL,
+      withdrawal_date TEXT NOT NULL DEFAULT CURRENT_DATE,
+      amount REAL NOT NULL DEFAULT 0,
+      type TEXT NOT NULL DEFAULT 'advance_draw',
+      payment_method TEXT NOT NULL DEFAULT 'Cash',
+      notes TEXT,
+      status TEXT NOT NULL DEFAULT 'completed',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (customer_id) REFERENCES customers(id)
+    )
+  `);
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS batches (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       product_id INTEGER NOT NULL,
@@ -225,6 +240,7 @@ db.serialize(() => {
       quantity REAL NOT NULL,
       unit_price REAL NOT NULL,
       refund_amount REAL NOT NULL,
+      notes TEXT,
       returned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (sale_id) REFERENCES sales(id),
       FOREIGN KEY (product_id) REFERENCES products(id)
@@ -336,6 +352,91 @@ db.serialize(() => {
     )
   `);
 
+  // --- CHART OF ACCOUNTS MODULE SCHEMA ---
+  db.run(`
+    CREATE TABLE IF NOT EXISTS accounts (
+      id          INTEGER PRIMARY KEY,
+      code        TEXT UNIQUE NOT NULL,          -- '1100'
+      name        TEXT NOT NULL,
+      type        TEXT NOT NULL CHECK(type IN ('asset','liability','equity','revenue','expense')),
+      parent_id   INTEGER REFERENCES accounts(id),
+      is_control  INTEGER NOT NULL DEFAULT 0,    -- 1 for AR / AP control accounts
+      is_active   INTEGER NOT NULL DEFAULT 1,
+      created_at  TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS journal_entries (
+      id          INTEGER PRIMARY KEY,
+      entry_no    TEXT UNIQUE NOT NULL,          -- 'JV-2026-00001'
+      date        TEXT NOT NULL,                 -- 'YYYY-MM-DD'
+      narration   TEXT,
+      status      TEXT NOT NULL DEFAULT 'posted' CHECK(status IN ('draft','posted','void')),
+      source_type TEXT NOT NULL DEFAULT 'manual',-- 'sale','payment','return','opening','manual'
+      source_id   INTEGER,                       -- e.g. sale id, payment id
+      reverses    INTEGER REFERENCES journal_entries(id),
+      reversed_by INTEGER REFERENCES journal_entries(id),
+      created_at  TEXT DEFAULT (datetime('now')),
+      UNIQUE(source_type, source_id)             -- idempotent POS posting (NULL source_id allowed many times)
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS journal_lines (
+      id          INTEGER PRIMARY KEY,
+      entry_id    INTEGER NOT NULL REFERENCES journal_entries(id),
+      account_id  INTEGER NOT NULL REFERENCES accounts(id),
+      debit       INTEGER NOT NULL DEFAULT 0,    -- paisa
+      credit      INTEGER NOT NULL DEFAULT 0,    -- paisa
+      customer_id INTEGER,                       -- subledger link (nullable)
+      line_memo   TEXT,
+      CHECK (debit >= 0 AND credit >= 0),
+      CHECK (NOT (debit > 0 AND credit > 0))     -- a line is either a debit or a credit
+    )
+  `);
+
+  db.run(`CREATE INDEX IF NOT EXISTS idx_lines_account ON journal_lines(account_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_lines_entry   ON journal_lines(entry_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_entries_date  ON journal_entries(date)`);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS accounting_periods (
+      id INTEGER PRIMARY KEY, name TEXT,
+      start_date TEXT, end_date TEXT, is_closed INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+
+  db.get("SELECT COUNT(*) AS count FROM accounts", (err, row) => {
+    if (!err && row && row.count === 0) {
+      console.log("Seeding default Chart of Accounts...");
+      const defaultAccounts = [
+        ['1000', 'Cash in Hand', 'asset', 0],
+        ['1010', 'Bank - HBL', 'asset', 0],
+        ['1011', 'Bank - Meezan', 'asset', 0],
+        ['1100', 'Accounts Receivable', 'asset', 1],
+        ['1200', 'Inventory', 'asset', 0],
+        ['2000', 'Accounts Payable', 'liability', 1],
+        ['2200', 'Sales Tax Payable', 'liability', 0],
+        ['3000', "Owner's Capital", 'equity', 0],
+        ['3900', 'Opening Balance Equity', 'equity', 0],
+        ['3950', 'Retained Earnings', 'equity', 0],
+        ['4000', 'Sales Revenue', 'revenue', 0],
+        ['4100', 'Sales Returns', 'revenue', 0],
+        ['5000', 'Cost of Goods Sold', 'expense', 0],
+        ['6000', 'Salaries', 'expense', 0],
+        ['6100', 'Rent', 'expense', 0],
+        ['6200', 'Utilities', 'expense', 0],
+        ['6900', 'Misc Expense', 'expense', 0],
+      ];
+      const stmt = db.prepare("INSERT INTO accounts (code, name, type, is_control) VALUES (?, ?, ?, ?)");
+      defaultAccounts.forEach((acc) => {
+        stmt.run(acc);
+      });
+      stmt.finalize();
+    }
+  });
+
   db.run(`ALTER TABLE users ADD COLUMN pin TEXT`, ignoreColumnExists);
   db.run(`ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1`, ignoreColumnExists);
   db.run(`ALTER TABLE products ADD COLUMN sku TEXT`, ignoreColumnExists);
@@ -357,6 +458,21 @@ db.serialize(() => {
   db.run(`ALTER TABLE customer_payments ADD COLUMN unapplied_amount REAL NOT NULL DEFAULT 0`, ignoreColumnExists);
   db.run(`ALTER TABLE customer_payments ADD COLUMN type TEXT DEFAULT 'payment'`, ignoreColumnExists);
   db.run(`ALTER TABLE sales ADD COLUMN credit_applied REAL NOT NULL DEFAULT 0`, ignoreColumnExists);
+  db.run(`ALTER TABLE customers ADD COLUMN cached_balance REAL NOT NULL DEFAULT 0`, ignoreColumnExists);
+  db.run(`ALTER TABLE sales_returns ADD COLUMN notes TEXT`, ignoreColumnExists);
+  db.run(`ALTER TABLE expenses ADD COLUMN money_from TEXT`, ignoreColumnExists);
+  db.run(`ALTER TABLE expenses ADD COLUMN money_to TEXT`, ignoreColumnExists);
+  db.run(`
+    CREATE VIEW IF NOT EXISTS sale_returns_summary AS
+    SELECT
+      sale_id,
+      MIN(returned_at) AS returned_at,
+      SUM(refund_amount) AS total_refund,
+      SUM(quantity) AS total_qty,
+      GROUP_CONCAT(product_name || ' x' || quantity, ', ') AS items_summary
+    FROM sales_returns
+    GROUP BY sale_id
+  `);
 
   db.run(`
     UPDATE customer_payments
@@ -491,7 +607,7 @@ db.serialize(() => {
         db.run(`INSERT INTO "${tableName}" SELECT * FROM "${oldTableName}"`);
         db.run(`DROP TABLE "${oldTableName}"`);
       });
-      
+
       db.run("PRAGMA foreign_keys = ON", (err) => {
         if (!err) {
           console.log("Foreign keys healing completed successfully.");

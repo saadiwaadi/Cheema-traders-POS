@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld("pos", {
   saveSupplierPayment: (payload) => invoke("pos:suppliers:payment", payload),
   getCustomerHistory: (id) => invoke("pos:customers:history", id),
   saveCustomerPayment: (payload) => invoke("pos:customers:payment", payload),
+  saveWithdrawal: (payload) => invoke("pos:customers:withdrawal", payload),
   listCustomers: (search) => invoke("pos:customers:list", search),
   saveCustomer: (payload) => invoke("pos:customers:save", payload),
   deleteCustomer: (id) => invoke("pos:customers:delete", id),
@@ -38,4 +39,10 @@ contextBridge.exposeInMainWorld("pos", {
   saveSetting: (payload) => invoke("pos:settings:save", payload),
   exportBackup: (targetPath) => invoke("pos:backup:export", targetPath),
   importBackup: (sourcePath) => invoke("pos:backup:import", sourcePath),
+  listExpenses: (args) => invoke("pos:expenses:list", args),
+  saveExpense: (payload) => invoke("pos:expenses:save", payload),
+});
+
+contextBridge.exposeInMainWorld("ipc", {
+  invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
 });

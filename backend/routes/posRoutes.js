@@ -169,6 +169,15 @@ router.post("/customer-payments", async (req, res) => {
   }
 });
 
+router.post("/customer-withdrawals", async (req, res) => {
+  try {
+    const withdrawal = await store.saveWithdrawal(req.body);
+    return res.status(201).json({ withdrawal });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
 router.delete("/customers/:id", async (req, res) => {
   try {
     await store.softDeleteCustomer(req.params.id);
@@ -314,6 +323,27 @@ router.delete("/suppliers/:id", async (req, res) => {
   }
 });
 
+router.get("/expenses", async (req, res) => {
+  try {
+    const result = await store.listExpenses({
+      from: req.query.from,
+      to: req.query.to,
+    });
+    return res.json(result);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.post("/expenses", async (req, res) => {
+  try {
+    const result = await store.saveExpense(req.body);
+    return res.status(201).json(result);
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
 // ============================================================================
 // BANK ACCOUNTS & TRANSFERS
 // ============================================================================
@@ -388,6 +418,35 @@ router.post("/backup/import", async (req, res) => {
     if (!req.body.path) return res.status(400).json({ message: "Backup path is required" });
     const dbPath = await store.importBackup(req.body.path);
     return res.json({ dbPath });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+// --- REPORTS ---
+
+router.get("/reports/receivables", async (req, res) => {
+  try {
+    const data = await store.getReceivablesReport(req.query);
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/reports/payables", async (req, res) => {
+  try {
+    const data = await store.getPayablesReport(req.query);
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/reports/cashflow", async (req, res) => {
+  try {
+    const data = await store.getCashFlowReport(req.query);
+    return res.json(data);
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }

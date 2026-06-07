@@ -6,6 +6,7 @@ import BillingPage from "./bill";
 import InvoiceHistory from "./invoices";
 import InventoryManagementPage from "./inventory";
 import CustomersPage from "./customers";
+import PaymentsPage from "./PaymentsPage";
 import ExpensesPage from "./expenses";
 import LedgerPage from "./ledger";
 import CashBookPage from "./CashBook";
@@ -13,20 +14,28 @@ import BanksPage from "./banks";
 import AnalysisPage from "./analysis/AnalysisShell";
 import { getDashboardSummary } from "../lib/posApi";
 import OverviewWorkspace from "./analysis/OverviewWorkspace";
+import SettingsPage from "./settings";
+import ChartOfAccountsPage from "./ChartOfAccounts";
+import ReportsPage from "./reports";
 
 const NAV_ITEMS = [
   { id: "home", label: "Dashboard", icon: "M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" },
   { id: "addCompany", label: "Suppliers", icon: "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" },
   { id: "customers", label: "Customers", icon: "M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z" },
+  { id: "payments", label: "Receipts & Payments", icon: "M20 4H4c-1.11 0-2 .89-2 2v12c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V6c0-1.11-.89-2-2-2zm0 14H4v-6h16v6zm0-10H4V6h16v2z" },
   { id: "sales", label: "Billing", icon: "M7 18c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm10 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zM5.1 4H3V2H1v2h2l3.6 7.59L5.25 14c-.16.28-.25.61-.25.96C5 16.1 5.9 17 7 17h14v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63H19c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1 1 0 0 0 23.47 4H5.1z" },
   { id: "invoices", label: "Invoices", icon: "M6 2h9l5 5v15a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm8 1.5V8h4.5L14 3.5zM8 12h8v2H8v-2zm0 4h8v2H8v-2zm0-8h4v2H8V8z" },
   { id: "products", label: "Inventory", icon: "M20 4H4v2l8 5 8-5V4zM4 13v7h16v-7l-8 5-8-5z" },
   { id: "expenses", label: "Expenses", icon: "M21 18v1c0 1.1-.9 2-2 2H5c-1.11 0-2-.9-2-2V5c0-1.1.89-2 2-2h14c1.1 0 2 .9 2 2v1h-9c-1.11 0-2 .9-2 2v8c0 1.1.89 2 2 2h9zm-9-2h10V9H12v9zm4-5.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z" },
   { id: "banks", label: "Banks", icon: "M4 10h3v7H4zm6.5 0h3v7h-3zM2 19h20v3H2zm15-9h3v7h-3zm-5-9L2 6v2h20V6z" },
   { id: "cashbook", label: "Cash Book", icon: "M2 4v16h20V4H2zm18 14H4V6h16v12zm-9-9h2v2h-2zm0 4h2v2h-2zm-4-4h2v2H7zm0 4h2v2H7zm8-4h2v2h-2zm0 4h2v2h-2z" },
+  { id: "reports", label: "Reports", icon: "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z" },
+  /*
+  { id: "coa", label: "Chart of Accounts", icon: "M22 11V3h-7v3H9V3H2v8h7V8h2v10h4v3h7v-8h-7v3h-2V8h2v3h7z" },
   { id: "ledger", label: "Ledger", icon: "M3 3h18v18H3V3zm16 16V5H5v14h14zM7 7h10v2H7V7zm0 4h10v2H7v-2zm0 4h7v2H7v-2z" },
   { id: "analysis", label: "Analysis", icon: "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z" },
-  { id: "reports", label: "Reports", icon: "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z" },
+  { id: "settings", label: "Settings", icon: "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" },
+  */
 ];
 
 export default function Dashboard() {
@@ -91,7 +100,7 @@ export default function Dashboard() {
           <div style={s.navLabel}>Main</div>
           {NAV_ITEMS.filter(item => {
             if (userRole !== "admin") {
-              return ["home", "sales", "invoices", "products", "customers"].includes(item.id);
+              return ["home", "sales", "invoices", "products", "customers", "settings", "reports"].includes(item.id);
             }
             return true;
           }).map((item) => (
@@ -176,12 +185,15 @@ export default function Dashboard() {
                 {active === "invoices" && <InvoiceHistory />}
                 {active === "products" && <InventoryManagementPage />}
                 {active === "customers" && <CustomersPage />}
+                {active === "payments" && <PaymentsPage />}
+                {active === "settings" && <SettingsPage />}
                 {userRole === "admin" && active === "expenses" && <ExpensesPage />}
                 {userRole === "admin" && active === "banks" && <BanksPage />}
                 {userRole === "admin" && active === "cashbook" && <CashBookPage />}
                 {userRole === "admin" && active === "ledger" && <LedgerPage />}
+                {userRole === "admin" && active === "coa" && <ChartOfAccountsPage />}
                 {userRole === "admin" && active === "analysis" && <AnalysisPage />}
-                {userRole === "admin" && active === "reports" && <ReportsView summary={summary} hideFinancials={hideFinancials} />}
+                {userRole === "admin" && active === "reports" && <ReportsPage />}
                 {userRole === "admin" && active === "addCompany" && <SuppliersPage />}
               </div>
             </motion.div>

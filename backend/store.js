@@ -1,6 +1,7 @@
 const fs = require("fs/promises");
 const path = require("path");
 const sqlite3 = require("sqlite3").verbose();
+const Database = require("better-sqlite3");
 const dbModule = require("./db");
 
 const dbPath = dbModule.filename || path.resolve(__dirname, "..", "database", "pos.db");
@@ -41,6 +42,33 @@ function all(db, sql, params = []) {
   });
 }
 
+class Mutex {
+  constructor() {
+    this.queue = [];
+    this.locked = false;
+  }
+
+  async acquire() {
+    return new Promise((resolve) => {
+      if (!this.locked) {
+        this.locked = true;
+        resolve();
+      } else {
+        this.queue.push(resolve);
+      }
+    });
+  }
+
+  release() {
+    if (this.queue.length > 0) {
+      const next = this.queue.shift();
+      next();
+    } else {
+      this.locked = false;
+    }
+  }
+}
+
 function normalizeSearch(value) {
   return `%${String(value || "").trim().replace(/\s+/g, " ")}%`;
 }
@@ -49,6 +77,8 @@ class PosStore {
   constructor() {
     this.dbPath = dbPath;
     this.db = dbModule;
+    this.txMutex = new Mutex();
+    this.dbBetterInstance = null;
   }
 
   async reopen() {
@@ -80,14 +110,19 @@ class PosStore {
 
   async transaction(work) {
     const db = await this._db();
-    await run(db, "BEGIN IMMEDIATE TRANSACTION");
+    await this.txMutex.acquire();
     try {
-      const result = await work(db);
-      await run(db, "COMMIT");
-      return result;
-    } catch (err) {
-      await run(db, "ROLLBACK").catch(() => {});
-      throw err;
+      await run(db, "BEGIN IMMEDIATE TRANSACTION");
+      try {
+        const result = await work(db);
+        await run(db, "COMMIT");
+        return result;
+      } catch (err) {
+        await run(db, "ROLLBACK").catch(() => {});
+        throw err;
+      }
+    } finally {
+      this.txMutex.release();
     }
   }
 
@@ -127,6 +162,7 @@ class PosStore {
             + COALESCE((SELECT SUM(balance_due) FROM purchases WHERE supplier_id = s.id), 0)
             - COALESCE((SELECT SUM(amount) FROM supplier_payments WHERE supplier_id = s.id), 0)
           ) AS current_balance,
+          (SELECT COUNT(*) FROM purchases WHERE supplier_id = s.id) AS transaction_count,
           (SELECT MAX(purchase_date) FROM purchases WHERE supplier_id = s.id) AS last_purchase
         FROM suppliers s
         WHERE s.deleted_at IS NULL
@@ -424,6 +460,16 @@ class PosStore {
 
         SELECT
           0 AS cash_in,
+          CASE WHEN LOWER(cw.payment_method) = 'cash' THEN cw.amount ELSE 0 END AS cash_out,
+          0 AS bank_in,
+          CASE WHEN LOWER(cw.payment_method) <> 'cash' THEN cw.amount ELSE 0 END AS bank_out,
+          cw.withdrawal_date AS entry_date
+        FROM customer_withdrawals cw
+
+        UNION ALL
+
+        SELECT
+          0 AS cash_in,
           CASE WHEN LOWER(p.payment_method) = 'cash' THEN p.amount_paid ELSE 0 END AS cash_out,
           0 AS bank_in,
           CASE WHEN LOWER(p.payment_method) <> 'cash' THEN p.amount_paid ELSE 0 END AS bank_out,
@@ -433,10 +479,10 @@ class PosStore {
         UNION ALL
 
         SELECT
-          0 AS cash_in,
-          CASE WHEN LOWER(sp.payment_method) = 'cash' THEN sp.amount ELSE 0 END AS cash_out,
-          0 AS bank_in,
-          CASE WHEN LOWER(sp.payment_method) <> 'cash' THEN sp.amount ELSE 0 END AS bank_out,
+          CASE WHEN LOWER(sp.payment_method) = 'cash' AND sp.amount < 0 THEN -sp.amount ELSE 0 END AS cash_in,
+          CASE WHEN LOWER(sp.payment_method) = 'cash' AND sp.amount > 0 THEN sp.amount ELSE 0 END AS cash_out,
+          CASE WHEN LOWER(sp.payment_method) <> 'cash' AND sp.amount < 0 THEN -sp.amount ELSE 0 END AS bank_in,
+          CASE WHEN LOWER(sp.payment_method) <> 'cash' AND sp.amount > 0 THEN sp.amount ELSE 0 END AS bank_out,
           sp.payment_date AS entry_date
         FROM supplier_payments sp
 
@@ -517,6 +563,21 @@ class PosStore {
         UNION ALL
 
         SELECT
+          cw.withdrawal_date AS entry_date,
+          'Customer Withdrawal: ' || c.name || COALESCE(' (' || cw.notes || ')', '') AS description,
+          '' AS receipt_number,
+          0 AS cash_in,
+          CASE WHEN LOWER(cw.payment_method) = 'cash' THEN cw.amount ELSE 0 END AS cash_out,
+          0 AS bank_in,
+          CASE WHEN LOWER(cw.payment_method) <> 'cash' THEN cw.amount ELSE 0 END AS bank_out,
+          cw.created_at
+        FROM customer_withdrawals cw
+        JOIN customers c ON cw.customer_id = c.id
+        WHERE cw.amount > 0
+
+        UNION ALL
+
+        SELECT
           p.purchase_date AS entry_date,
           'Purchase: ' || p.invoice_no || ' (' || COALESCE(sup.name, 'Walk-in') || ')' AS description,
           p.invoice_no AS receipt_number,
@@ -533,16 +594,16 @@ class PosStore {
 
         SELECT
           sp.payment_date AS entry_date,
-          'Supplier Payment: ' || sup.name || COALESCE(' (' || sp.notes || ')', '') AS description,
+          CASE WHEN sp.amount < 0 THEN 'Supplier Withdrawal: ' ELSE 'Supplier Payment: ' END || sup.name || COALESCE(' (' || sp.notes || ')', '') AS description,
           '' AS receipt_number,
-          0 AS cash_in,
-          CASE WHEN LOWER(sp.payment_method) = 'cash' THEN sp.amount ELSE 0 END AS cash_out,
-          0 AS bank_in,
-          CASE WHEN LOWER(sp.payment_method) <> 'cash' THEN sp.amount ELSE 0 END AS bank_out,
+          CASE WHEN LOWER(sp.payment_method) = 'cash' AND sp.amount < 0 THEN -sp.amount ELSE 0 END AS cash_in,
+          CASE WHEN LOWER(sp.payment_method) = 'cash' AND sp.amount > 0 THEN sp.amount ELSE 0 END AS cash_out,
+          CASE WHEN LOWER(sp.payment_method) <> 'cash' AND sp.amount < 0 THEN -sp.amount ELSE 0 END AS bank_in,
+          CASE WHEN LOWER(sp.payment_method) <> 'cash' AND sp.amount > 0 THEN sp.amount ELSE 0 END AS bank_out,
           sp.created_at
         FROM supplier_payments sp
         JOIN suppliers sup ON sp.supplier_id = sup.id
-        WHERE sp.amount > 0
+        WHERE sp.amount <> 0
 
         UNION ALL
 
@@ -626,11 +687,8 @@ class PosStore {
           c.phone, 
           c.opening_balance,
           c.created_at,
-          (
-            c.opening_balance 
-            + COALESCE((SELECT SUM(balance_due) FROM sales WHERE customer_id = c.id AND COALESCE(voided_at, '') = ''), 0)
-            - COALESCE((SELECT SUM(COALESCE(unapplied_amount, amount)) FROM customer_payments WHERE customer_id = c.id), 0)
-          ) AS current_balance,
+          c.cached_balance AS current_balance,
+          (SELECT COUNT(*) FROM sales WHERE customer_id = c.id AND COALESCE(voided_at, '') = '') AS transaction_count,
           (SELECT MAX(sale_date) FROM sales WHERE customer_id = c.id AND COALESCE(voided_at, '') = '') AS last_purchase
         FROM customers c
         WHERE c.deleted_at IS NULL
@@ -639,6 +697,37 @@ class PosStore {
       `,
       [normalizeSearch(search), normalizeSearch(search)]
     );
+  }
+
+  async _syncCustomerBalance(db, customerId) {
+    if (!customerId) return;
+    await run(db, `
+      UPDATE customers SET
+        cached_balance = (
+          COALESCE(opening_balance, 0)
+          + COALESCE((
+              SELECT SUM(balance_due) 
+              FROM sales 
+              WHERE customer_id = customers.id 
+                AND COALESCE(voided_at, '') = ''
+                AND payment_status != 'Returned'
+            ), 0)
+          + COALESCE((
+              SELECT SUM(amount)
+              FROM customer_withdrawals
+              WHERE customer_id = customers.id
+                AND type = 'loan'
+            ), 0)
+          - COALESCE((
+              SELECT SUM(COALESCE(unapplied_amount, amount))
+              FROM customer_payments
+              WHERE customer_id = customers.id
+                AND amount > 0
+            ), 0)
+        ),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [customerId]);
   }
 
   async saveCustomer(input) {
@@ -665,6 +754,7 @@ class PosStore {
         `UPDATE customers SET name = ?, phone = ?, opening_balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
         [name, phone, opening_balance, input.id]
       );
+      await this._syncCustomerBalance(db, input.id);
       return { id: input.id, name, phone, opening_balance };
     }
 
@@ -673,6 +763,7 @@ class PosStore {
       `INSERT INTO customers (name, phone, opening_balance) VALUES (?, ?, ?)`,
       [name, phone, opening_balance]
     );
+    await this._syncCustomerBalance(db, result.lastID);
     return { id: result.lastID, name, phone, opening_balance };
   }
 
@@ -684,34 +775,72 @@ class PosStore {
 
   async getCustomerHistory(customerId) {
     const db = await this._db();
-    // Union sales and standalone payments to generate a combined ledger
     return all(
       db,
       `
         SELECT 
           id AS ref_id,
           'Sale' AS type,
+          'sale' AS payment_type,
           sale_date AS date,
           invoice_no AS reference,
+          notes AS notes,
           payment_method AS method,
           payment_status,
           paid_at AS paid_date,
           total AS total_amount,
           amount_paid AS paid_amount,
           balance_due AS remaining_amount,
-          balance_due AS balance_change,
+          MIN(
+            balance_due + COALESCE(
+              (SELECT SUM(amount) FROM customer_payments 
+               WHERE sale_id = sales.id AND amount > 0), 
+            0),
+            total
+          ) AS balance_change,
           created_at || '_1' AS sort_key,
           created_at
         FROM sales
-        WHERE customer_id = ? AND COALESCE(voided_at, '') = ''
-        
+        WHERE customer_id = ? 
+          AND COALESCE(voided_at, '') = ''
+          AND payment_status != 'Returned'
+
         UNION ALL
-        
+
+        SELECT
+          sr.sale_id AS ref_id,
+          'Return' AS type,
+          'return' AS payment_type,
+          DATE(srs.returned_at) AS date,
+          s.invoice_no AS reference,
+          'Return: ' || srs.items_summary AS notes,
+          'Refund' AS method,
+          'Returned' AS payment_status,
+          NULL AS paid_date,
+          srs.total_refund AS total_amount,
+          srs.total_refund AS paid_amount,
+          0 AS remaining_amount,
+          -srs.total_refund AS balance_change,
+          srs.returned_at || '_2' AS sort_key,
+          srs.returned_at AS created_at
+        FROM sale_returns_summary srs
+        JOIN sales s ON s.id = srs.sale_id
+        JOIN sales_returns sr ON sr.sale_id = srs.sale_id
+        WHERE s.customer_id = ?
+        GROUP BY srs.sale_id
+
+        UNION ALL
+
         SELECT 
           id AS ref_id,
           'Payment' AS type,
+          COALESCE(type, 'payment') AS payment_type,
           payment_date AS date,
-          notes AS reference,
+          CASE 
+            WHEN type = 'advance' THEN 'Advance Deposit'
+            ELSE COALESCE(notes, 'Payment Received')
+          END AS reference,
+          notes AS notes,
           payment_method AS method,
           NULL AS payment_status,
           NULL AS paid_date,
@@ -722,20 +851,148 @@ class PosStore {
           created_at || '_3' AS sort_key,
           created_at
         FROM customer_payments
+        WHERE customer_id = ? AND amount > 0
+
+        UNION ALL
+
+        SELECT
+          id AS ref_id,
+          'Withdrawal' AS type,
+          type AS payment_type,
+          withdrawal_date AS date,
+          CASE
+            WHEN type = 'loan' THEN 'Loan Disbursed'
+            ELSE 'Advance Withdrawal'
+          END AS reference,
+          notes AS notes,
+          payment_method AS method,
+          status AS payment_status,
+          NULL AS paid_date,
+          amount AS total_amount,
+          amount AS paid_amount,
+          0 AS remaining_amount,
+          CASE
+            WHEN type = 'loan' THEN amount
+            ELSE 0
+          END AS balance_change,
+          created_at || '_4' AS sort_key,
+          created_at
+        FROM customer_withdrawals
         WHERE customer_id = ?
-        
+
+        UNION ALL
+
+        SELECT
+          0 AS ref_id,
+          'Opening' AS type,
+          'opening' AS payment_type,
+          '0000-00-00' AS date,
+          'Opening Balance' AS reference,
+          NULL AS notes,
+          '-' AS method,
+          NULL AS payment_status,
+          NULL AS paid_date,
+          ABS(opening_balance) AS total_amount,
+          ABS(opening_balance) AS paid_amount,
+          0 AS remaining_amount,
+          opening_balance AS balance_change,
+          '0000-00-00_0' AS sort_key,
+          created_at
+        FROM customers
+        WHERE id = ? AND opening_balance != 0
+
         ORDER BY date DESC, created_at DESC, sort_key DESC
       `,
-      [customerId, customerId]
+      [customerId, customerId, customerId, customerId, customerId]
     );
   }
 
-  async saveCustomerPayment(input) {
-    if (!input.customerId || !input.amount) {
-      throw new Error("Customer ID and amount are required");
-    }
+  async saveWithdrawal(input) {
+    const db = await this._db();
 
     const customerId = Number(input.customerId);
+    const amount = Number(input.amount);
+    const type = String(input.type || 'advance_draw').trim();
+    const paymentMethod = String(input.method || 'Cash').trim();
+    const notes = String(input.notes || '').trim() || null;
+    const withdrawalDate = input.date || new Date().toISOString().split('T')[0];
+
+    if (!customerId) throw new Error('Customer is required');
+    if (!Number.isFinite(amount) || amount <= 0) throw new Error('Amount must be greater than 0');
+    if (!['advance_draw', 'loan'].includes(type)) throw new Error('Invalid withdrawal type');
+
+    return this.transaction(async (db) => {
+      const customer = await get(db,
+        `SELECT id, cached_balance, opening_balance FROM customers WHERE id = ? AND deleted_at IS NULL`,
+        [customerId]
+      );
+      if (!customer) throw new Error('Customer not found');
+
+      if (type === 'advance_draw') {
+        const availableCredit = customer.cached_balance < 0
+          ? Math.abs(customer.cached_balance)
+          : 0;
+
+        if (amount > availableCredit) {
+          throw new Error(
+            `Insufficient advance balance. Available: Rs ${availableCredit.toLocaleString()}`
+          );
+        }
+
+        let remaining = amount;
+        const advances = await all(db,
+          `SELECT id, unapplied_amount FROM customer_payments
+           WHERE customer_id = ? AND unapplied_amount > 0 AND type = 'advance'
+           ORDER BY payment_date ASC, created_at ASC`,
+          [customerId]
+        );
+
+        for (const adv of advances) {
+          if (remaining <= 0) break;
+          const deduct = Math.min(remaining, adv.unapplied_amount);
+          await run(db,
+            `UPDATE customer_payments
+             SET unapplied_amount = MAX(unapplied_amount - ?, 0)
+             WHERE id = ?`,
+            [deduct, adv.id]
+          );
+          remaining -= deduct;
+        }
+
+        if (remaining > 0 && customer.opening_balance < 0) {
+          const fromOpening = Math.min(remaining, Math.abs(customer.opening_balance));
+          await run(db,
+            `UPDATE customers SET opening_balance = opening_balance + ? WHERE id = ?`,
+            [fromOpening, customerId]
+          );
+        }
+      }
+
+      const result = await run(db,
+        `INSERT INTO customer_withdrawals
+           (customer_id, withdrawal_date, amount, type, payment_method, notes, status)
+         VALUES (?, ?, ?, ?, ?, ?, 'completed')`,
+        [customerId, withdrawalDate, amount, type, paymentMethod, notes]
+      );
+
+      await this._syncCustomerBalance(db, customerId);
+
+      return {
+        id: result.lastID,
+        customerId,
+        amount,
+        type,
+        paymentMethod,
+        withdrawalDate,
+      };
+    });
+  }
+
+  async saveCustomerPayment(input) {
+    if (!input.amount) {
+      throw new Error("Amount is required");
+    }
+
     const saleId = input.saleId ? Number(input.saleId) : null;
     const amount = Number(input.amount);
     const paymentDate = input.date || new Date().toISOString().split("T")[0];
@@ -747,7 +1004,34 @@ class PosStore {
       throw new Error("Amount must be greater than 0");
     }
 
-    return this.transaction(async (db) => {
+    const result = await this.transaction(async (db) => {
+      let customerId = input.customerId ? Number(input.customerId) : null;
+      let isWalkIn = false;
+      let selectedSale = null;
+
+      if (saleId) {
+        selectedSale = await get(
+          db,
+          `SELECT id, amount_paid, balance_due, payment_status, paid_at, customer_id
+           FROM sales
+           WHERE id = ? AND COALESCE(voided_at, '') = ''`,
+          [saleId]
+        );
+        if (!selectedSale) {
+          throw new Error("Sale not found or voided");
+        }
+        if (!customerId) {
+          customerId = selectedSale.customer_id ? Number(selectedSale.customer_id) : null;
+        }
+        if (!customerId) {
+          isWalkIn = true;
+        }
+      }
+
+      if (!customerId && !isWalkIn) {
+        throw new Error("Customer ID and amount are required");
+      }
+
       let remainingToApply = amount;
       let appliedAmount = 0;
 
@@ -790,22 +1074,21 @@ class PosStore {
         appliedAmount += applied;
       };
 
+      if (isWalkIn) {
+        await applyToSale(selectedSale);
+        return {
+          id: 0,
+          customerId: null,
+          saleId,
+          amount,
+          appliedAmount,
+          unappliedAmount: Math.max(0, remainingToApply),
+          type,
+        };
+      }
+
       if (type !== "advance") {
-        if (saleId) {
-          const selectedSale = await get(
-            db,
-            `SELECT id, amount_paid, balance_due, payment_status, paid_at
-             FROM sales
-             WHERE id = ?
-               AND customer_id = ?
-               AND COALESCE(voided_at, '') = ''`,
-            [saleId, customerId]
-          );
-
-          if (!selectedSale) {
-            throw new Error("Sale not found for this customer");
-          }
-
+        if (selectedSale) {
           await applyToSale(selectedSale);
         }
 
@@ -828,7 +1111,6 @@ class PosStore {
           }
         }
       } else {
-        // Skip applying to any open sales for advance/store credit
         remainingToApply = amount;
         appliedAmount = 0;
       }
@@ -839,9 +1121,11 @@ class PosStore {
         db,
         `INSERT INTO customer_payments
            (customer_id, sale_id, payment_date, amount, applied_amount, unapplied_amount, payment_method, notes, type)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [customerId, saleId, paymentDate, amount, appliedAmount, unappliedAmount, paymentMethod, notes, type]
       );
+
+      await this._syncCustomerBalance(db, customerId);
 
       return {
         id: insertResult.lastID,
@@ -853,6 +1137,23 @@ class PosStore {
         type,
       };
     });
+
+    try {
+      const dbBetter = this.getBetterDb();
+      const amountPaisa = Math.round(result.amount * 100);
+      const bankCode = getBankCodeForMethod(paymentMethod);
+      postPayment(dbBetter, {
+        paymentId: result.id,
+        customerId: result.customerId,
+        date: paymentDate,
+        amountPaisa,
+        bankCode
+      });
+    } catch (err) {
+      console.error("POS Bridge: Failed to post payment to GL:", err);
+    }
+
+    return result;
   }
 
   async listCategories() {
@@ -975,8 +1276,21 @@ class PosStore {
     const existing = await get(db, `SELECT id FROM products WHERE name = ? AND COALESCE(deleted_at, '') = '' LIMIT 1`, [productName]);
     if (existing) return existing.id;
 
+    let categoryId = fallback.categoryId || null;
+    if (!categoryId && fallback.category) {
+      const catName = String(fallback.category).trim();
+      const cat = await get(db, `SELECT id FROM categories WHERE name = ? LIMIT 1`, [catName]);
+      if (!cat) {
+        const catRes = await run(db, `INSERT INTO categories (name) VALUES (?)`, [catName]);
+        categoryId = catRes.lastID;
+      } else {
+        categoryId = cat.id;
+      }
+    }
+
     const created = await this.saveProduct({
       name: productName,
+      categoryId: categoryId,
       unit: fallback.unit || "Piece",
       basePrice: fallback.basePrice || 0,
       costPrice: fallback.costPrice || 0,
@@ -1009,10 +1323,13 @@ class PosStore {
           b.updated_at AS updatedAt,
           p.name AS productName,
           p.unit,
-          s.name AS supplierName
+          p.low_stock_level AS lowStockLevel,
+          s.name AS supplierName,
+          c.name AS category
         FROM batches b
         JOIN products p ON p.id = b.product_id
         LEFT JOIN suppliers s ON s.id = b.supplier_id
+        LEFT JOIN categories c ON c.id = p.category_id
         WHERE COALESCE(b.deleted_at, '') = ''
           AND (p.name LIKE ? OR b.batch_no LIKE ? OR s.name LIKE ?)
         ORDER BY
@@ -1210,7 +1527,8 @@ class PosStore {
           unit: unit,
           costPrice: costPrice,
           basePrice: salePrice,
-          currentStock: 0
+          currentStock: 0,
+          category: item.category
         });
         
         const batchNo = String(item.batchNo || "").trim() || `BATCH-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
@@ -1414,7 +1732,7 @@ class PosStore {
     const items = Array.isArray(input.items) ? input.items : [];
     if (!items.length) throw new Error("At least one sale item is required");
 
-    return this.transaction(async (db) => {
+    const result = await this.transaction(async (db) => {
       const invoiceNo = String(input.invoiceNo || "").trim() || await this.nextInvoiceNo(db, saleDate);
       let subtotal = 0;
       let discountTotal = 0;
@@ -1557,6 +1875,8 @@ class PosStore {
         }
       }
 
+      await this._syncCustomerBalance(db, input.customerId);
+
       await this.audit("sale", saleId, "create", null, { ...input, invoiceNo, items: auditItems, subtotal, discountTotal, total, amountPaid, balanceDue, creditApplied });
       return {
         id: saleId,
@@ -1573,6 +1893,25 @@ class PosStore {
         items: auditItems,
       };
     });
+
+    try {
+      const dbBetter = this.getBetterDb();
+      const totalPaisa = Math.round(result.total * 100);
+      const paidPaisa = Math.round(result.amountPaid * 100);
+      postSale(dbBetter, {
+        saleId: result.id,
+        saleRef: result.invoiceNo,
+        customerId: input.customerId || null,
+        date: result.saleDate,
+        totalPaisa,
+        taxPaisa: 0,
+        paidPaisa
+      });
+    } catch (err) {
+      console.error("POS Bridge: Failed to post sale to GL:", err);
+    }
+
+    return result;
   }
 
   async consumeStock(db, productId, quantityNeeded, options = {}) {
@@ -1669,9 +2008,9 @@ class PosStore {
     const params = [];
 
     if (search) {
-      conditions.push("(invoice_no LIKE ? OR customer_name LIKE ? OR phone LIKE ?)");
+      conditions.push("(invoice_no LIKE ? OR customer_name LIKE ? OR phone LIKE ? OR id IN (SELECT sale_id FROM sale_items WHERE product_name LIKE ?))");
       const s = normalizeSearch(search);
-      params.push(s, s, s);
+      params.push(s, s, s, s);
     }
     if (paymentMethod) {
       conditions.push("payment_method = ?");
@@ -1767,6 +2106,23 @@ class PosStore {
           `UPDATE products SET current_stock = COALESCE(current_stock, 0) + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
           [item.quantity, item.product_id]
         );
+
+        // Restock batches
+        await run(
+          db,
+          `UPDATE batches 
+           SET quantity_remaining = quantity_remaining + ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = (
+             SELECT id FROM batches
+             WHERE product_id = ?
+               AND quantity_remaining < quantity_received
+             ORDER BY created_at DESC
+             LIMIT 1
+           )`,
+          [item.quantity, item.product_id]
+        );
+
         // Write reversal movement
         await run(
           db,
@@ -1782,10 +2138,12 @@ class PosStore {
         await run(
           db,
           `INSERT INTO customer_payments (customer_id, sale_id, payment_date, amount, applied_amount, unapplied_amount, payment_method, notes, type)
-           VALUES (?, ?, ?, 0, 0, ?, 'Adjustment', 'Refund of applied credit from voided sale', 'advance')`,
-          [sale.customer_id, id, new Date().toISOString().slice(0, 10), sale.credit_applied]
+           VALUES (?, ?, ?, ?, 0, ?, 'Adjustment', 'Refund of applied credit from voided sale', 'advance')`,
+          [sale.customer_id, id, new Date().toISOString().slice(0, 10), sale.credit_applied, sale.credit_applied]
         );
       }
+
+      await this._syncCustomerBalance(db, sale.customer_id);
 
       await this.audit("sale", id, "void", { invoiceNo: sale.invoice_no }, null);
       return { id, invoiceNo: sale.invoice_no, voidedAt: new Date().toISOString() };
@@ -1806,6 +2164,7 @@ class PosStore {
           quantity REAL NOT NULL,
           unit_price REAL NOT NULL,
           refund_amount REAL NOT NULL,
+          notes TEXT,
           returned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY (sale_id) REFERENCES sales(id),
           FOREIGN KEY (product_id) REFERENCES products(id)
@@ -1816,15 +2175,31 @@ class PosStore {
         const refundAmount = item.quantity * item.price;
         await run(
           db,
-          `INSERT INTO sales_returns (sale_id, product_id, product_name, quantity, unit_price, refund_amount)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [saleId, item.productId, item.productName, item.quantity, item.price, refundAmount]
+          `INSERT INTO sales_returns (sale_id, product_id, product_name, quantity, unit_price, refund_amount, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [saleId, item.productId, item.productName, item.quantity, item.price, refundAmount, item.notes || null]
         );
 
         // Reverse stock deduction
         await run(
           db,
           `UPDATE products SET current_stock = COALESCE(current_stock, 0) + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+          [item.quantity, item.productId]
+        );
+
+        // Restock batches
+        await run(
+          db,
+          `UPDATE batches 
+           SET quantity_remaining = quantity_remaining + ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = (
+             SELECT id FROM batches
+             WHERE product_id = ?
+               AND quantity_remaining < quantity_received
+             ORDER BY created_at DESC
+             LIMIT 1
+           )`,
           [item.quantity, item.productId]
         );
 
@@ -1837,7 +2212,12 @@ class PosStore {
         );
       }
 
-      await run(db, `UPDATE sales SET voided_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [saleId]);
+      await run(db, `
+        UPDATE sales 
+        SET payment_status = 'Returned',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `, [saleId]);
 
       if (sale.credit_applied > 0 && sale.customer_id) {
         await run(
@@ -1847,6 +2227,8 @@ class PosStore {
           [sale.customer_id, saleId, new Date().toISOString().slice(0, 10), sale.credit_applied]
         );
       }
+
+      await this._syncCustomerBalance(db, sale.customer_id);
 
       await this.audit("sale", saleId, "return", { invoiceNo: sale.invoice_no, items }, null);
       return { id: saleId, invoiceNo: sale.invoice_no, returnedAt: new Date().toISOString() };
@@ -1943,6 +2325,583 @@ class PosStore {
     );
     return { key, value: String(value) };
   }
+
+  // ============================================================================
+  // CHART OF ACCOUNTS (COA) MODULE
+  // ============================================================================
+
+  async listCoaAccounts() {
+    const db = await this._db();
+    return all(
+      db,
+      `
+        SELECT 
+          a.id,
+          a.code,
+          a.name,
+          a.type,
+          a.parent_id,
+          a.is_control,
+          a.is_active,
+          a.created_at,
+          COALESCE(SUM(jl.debit - jl.credit), 0) AS balance
+        FROM accounts a
+        LEFT JOIN journal_lines jl ON jl.account_id = a.id
+        LEFT JOIN journal_entries je ON jl.entry_id = je.id AND je.status = 'posted'
+        GROUP BY a.id
+        ORDER BY a.code ASC
+      `
+    );
+  }
+
+  async createCoaAccount({ code, name, type, parentId, isControl }) {
+    const db = await this._db();
+    const cleanCode = String(code || "").trim();
+    const cleanName = String(name || "").trim();
+    
+    if (!cleanCode) throw new Error("Account code is required");
+    if (!cleanName) throw new Error("Account name is required");
+    
+    const validTypes = ['asset', 'liability', 'equity', 'revenue', 'expense'];
+    if (!validTypes.includes(type)) {
+      throw new Error(`Invalid account type: ${type}`);
+    }
+
+    // Check code uniqueness
+    const existing = await get(db, "SELECT id FROM accounts WHERE code = ?", [cleanCode]);
+    if (existing) {
+      throw new Error(`Account code ${cleanCode} already exists.`);
+    }
+
+    const result = await run(
+      db,
+      `INSERT INTO accounts (code, name, type, parent_id, is_control, is_active)
+       VALUES (?, ?, ?, ?, ?, 1)`,
+      [cleanCode, cleanName, type, parentId || null, isControl ? 1 : 0]
+    );
+    return { id: result.lastID };
+  }
+
+  async updateCoaAccount({ id, code, name, type, parentId, isControl, isActive }) {
+    const db = await this._db();
+    const cleanCode = String(code || "").trim();
+    const cleanName = String(name || "").trim();
+    
+    if (!cleanCode) throw new Error("Account code is required");
+    if (!cleanName) throw new Error("Account name is required");
+
+    const validTypes = ['asset', 'liability', 'equity', 'revenue', 'expense'];
+    if (!validTypes.includes(type)) {
+      throw new Error(`Invalid account type: ${type}`);
+    }
+
+    if (parentId && Number(parentId) === Number(id)) {
+      throw new Error("An account cannot be its own parent.");
+    }
+
+    // Check code uniqueness for other accounts
+    const existing = await get(db, "SELECT id FROM accounts WHERE code = ? AND id != ?", [cleanCode, id]);
+    if (existing) {
+      throw new Error(`Account code ${cleanCode} already exists.`);
+    }
+
+    await run(
+      db,
+      `UPDATE accounts
+       SET code = ?, name = ?, type = ?, parent_id = ?, is_control = ?, is_active = ?
+       WHERE id = ?`,
+      [cleanCode, cleanName, type, parentId || null, isControl ? 1 : 0, isActive ? 1 : 0, id]
+    );
+    return { id };
+  }
+
+  async deactivateCoaAccount({ id }) {
+    const db = await this._db();
+    
+    // Check if there are journal lines using this account
+    const lines = await get(db, "SELECT COUNT(*) as count FROM journal_lines WHERE account_id = ?", [id]);
+    const count = Number(lines?.count || 0);
+
+    if (count > 0) {
+      // Deactivate instead
+      await run(db, "UPDATE accounts SET is_active = 0 WHERE id = ?", [id]);
+      return { action: "deactivated" };
+    } else {
+      // Delete
+      await run(db, "DELETE FROM accounts WHERE id = ?", [id]);
+      return { action: "deleted" };
+    }
+  }
+
+  assertBalanced(lines) {
+    if (!Array.isArray(lines) || lines.length < 2)
+      throw new Error("A journal entry needs at least two lines.");
+    let totalDebit = 0, totalCredit = 0;
+    for (const l of lines) {
+      const d = Number(l.debit) || 0, c = Number(l.credit) || 0;
+      if (d < 0 || c < 0)        throw new Error("Negative amounts are not allowed.");
+      if (d > 0 && c > 0)        throw new Error("A line cannot be both debit and credit.");
+      if (d === 0 && c === 0)    throw new Error("Each line must have a debit or a credit.");
+      totalDebit += d; totalCredit += c;
+    }
+    if (totalDebit !== totalCredit)   // exact equality — safe because integers
+      throw new Error(`Out of balance: Dr ${totalDebit} ≠ Cr ${totalCredit} (paisa).`);
+    return { totalDebit, totalCredit };
+  }
+
+  async listExpenses({ from, to }) {
+    const db = await this._db();
+    const cleanFrom = from || '1970-01-01';
+    const cleanTo = to || '2100-12-31';
+    const rows = await all(
+      db,
+      `SELECT 
+        id,
+        expense_date AS expenseDate,
+        expense_date AS date,
+        category,
+        description,
+        amount,
+        payment_method AS paymentMethod,
+        money_from AS moneyFrom,
+        money_from AS credit,
+        money_to AS moneyTo,
+        money_to AS debit
+       FROM expenses
+       WHERE expense_date >= ? AND expense_date <= ?
+       ORDER BY expense_date DESC, id DESC`,
+      [cleanFrom, cleanTo]
+    );
+    return { expenses: rows };
+  }
+
+  async saveExpense({ amount, category, moneyFrom, moneyTo, description, expenseDate }) {
+    const db = await this._db();
+    const cleanDate = expenseDate || new Date().toISOString().split("T")[0];
+    const result = await run(
+      db,
+      `INSERT INTO expenses (expense_date, category, description, amount, payment_method, money_from, money_to)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [cleanDate, category, description, Number(amount || 0), moneyFrom, moneyFrom, moneyTo]
+    );
+    return {
+      id: result.lastID,
+      expenseDate: cleanDate,
+      category,
+      description,
+      amount: Number(amount || 0),
+      paymentMethod: moneyFrom,
+      moneyFrom,
+      moneyTo
+    };
+  }
+
+  // ── JOURNAL ENTRIES MODULE HANDLERS ─────────────────────────
+  
+  getBetterDb() {
+    if (!this.dbBetterInstance) {
+      this.dbBetterInstance = new Database(this.dbPath);
+      this.dbBetterInstance.pragma('foreign_keys = ON');
+      this.dbBetterInstance.pragma('journal_mode = WAL');
+    }
+    return this.dbBetterInstance;
+  }
+
+  async createJournalEntry(payload) {
+    try {
+      const dbBetter = this.getBetterDb();
+      const entryId = createJournalEntry(dbBetter, payload);
+      return { id: entryId };
+    } catch (err) {
+      throw new Error(err.message);
+    }
+  }
+
+  async listJournalEntries({ from, to, accountId, sourceType } = {}) {
+    const db = await this._db();
+    let query = `
+      SELECT je.*, 
+        (SELECT COALESCE(SUM(debit), 0) FROM journal_lines WHERE entry_id = je.id) as total_amount
+      FROM journal_entries je
+      WHERE 1=1
+    `;
+    const params = [];
+    if (from) {
+      query += " AND je.date >= ?";
+      params.push(from);
+    }
+    if (to) {
+      query += " AND je.date <= ?";
+      params.push(to);
+    }
+    if (sourceType) {
+      query += " AND je.source_type = ?";
+      params.push(sourceType);
+    }
+    if (accountId) {
+      query += " AND EXISTS (SELECT 1 FROM journal_lines WHERE entry_id = je.id AND account_id = ?)";
+      params.push(accountId);
+    }
+    query += " ORDER BY je.date DESC, je.id DESC";
+    return all(db, query, params);
+  }
+
+  async getJournalEntry(id) {
+    const db = await this._db();
+    const entry = await get(db, "SELECT * FROM journal_entries WHERE id = ?", [id]);
+    if (!entry) throw new Error("Journal entry not found");
+    const lines = await all(
+      db,
+      `SELECT jl.*, a.code as account_code, a.name as account_name
+       FROM journal_lines jl
+       JOIN accounts a ON jl.account_id = a.id
+       WHERE jl.entry_id = ?`,
+      [id]
+    );
+    entry.lines = lines;
+    return entry;
+  }
+
+  async reverseJournalEntry({ id, date, reason }) {
+    try {
+      const dbBetter = this.getBetterDb();
+      const newId = reverseEntry(dbBetter, id, date, reason);
+      return { id: newId };
+    } catch (err) {
+      throw new Error(err.message);
+    }
+  }
+
+  async nextJournalEntryNo(date) {
+    try {
+      const dbBetter = this.getBetterDb();
+      return nextEntryNo(dbBetter, date);
+    } catch (err) {
+      throw new Error(err.message);
+    }
+  }
+
+  async getGeneralLedger(args = {}) {
+    const db = await this._db();
+    let query = `
+      SELECT jl.*, je.entry_no, je.date, je.narration, je.source_type,
+             a.code as account_code, a.name as account_name
+      FROM journal_lines jl
+      JOIN journal_entries je ON jl.entry_id = je.id
+      JOIN accounts a ON jl.account_id = a.id
+      WHERE je.status = 'posted'
+    `;
+    const params = [];
+    if (args.accountId && args.accountId !== "All") {
+      query += " AND jl.account_id = ?";
+      params.push(args.accountId);
+    }
+    if (args.from) {
+      query += " AND je.date >= ?";
+      params.push(args.from);
+    }
+    if (args.to) {
+      query += " AND je.date <= ?";
+      params.push(args.to);
+    }
+    query += " ORDER BY je.date ASC, je.id ASC, jl.id ASC";
+    return all(db, query, params);
+  }
+
+  async getReceivablesReport(args = {}) {
+    const db = await this._db();
+    const { from, to, search, status, aging } = args;
+    
+    let query = `
+      SELECT
+        s.id,
+        s.invoice_no,
+        s.sale_date,
+        COALESCE(s.customer_name, c.name, 'Walk-in') AS customer_name,
+        s.customer_id,
+        s.total,
+        s.amount_paid,
+        s.balance_due,
+        s.payment_status,
+        s.payment_method,
+        CAST(julianday('now') - julianday(s.sale_date) AS INTEGER) AS days_outstanding
+      FROM sales s
+      LEFT JOIN customers c ON c.id = s.customer_id
+      WHERE s.voided_at IS NULL
+        AND s.payment_status IN ('Unpaid', 'Partial')
+    `;
+    const params = [];
+    if (from) {
+      query += " AND s.sale_date >= ?";
+      params.push(from);
+    }
+    if (to) {
+      query += " AND s.sale_date <= ?";
+      params.push(to);
+    }
+    if (search) {
+      query += " AND LOWER(COALESCE(s.customer_name, c.name, '')) LIKE '%' || LOWER(?) || '%'";
+      params.push(search);
+    }
+    query += " ORDER BY s.sale_date ASC";
+
+    const rows = await all(db, query, params);
+    
+    let finalRows = [];
+    let summary = { total_billed: 0, total_collected: 0, total_outstanding: 0, overdue_count: 0 };
+    
+    for (const r of rows) {
+      let bucket = 'Current';
+      const days = r.days_outstanding || 0;
+      if (days > 0 && days <= 30) bucket = '1-30d';
+      else if (days >= 31 && days <= 60) bucket = '31-60d';
+      else if (days >= 61 && days <= 90) bucket = '61-90d';
+      else if (days > 90) bucket = '90+';
+      
+      r.aging_bucket = bucket;
+      
+      if (aging && aging !== 'All' && aging !== bucket) {
+        continue;
+      }
+      if (status && status !== 'All' && status !== r.payment_status) {
+        continue;
+      }
+      
+      finalRows.push(r);
+      summary.total_billed += r.total;
+      summary.total_collected += r.amount_paid;
+      summary.total_outstanding += r.balance_due;
+      if (days > 0) summary.overdue_count++;
+    }
+    
+    return { rows: finalRows, summary };
+  }
+
+  async getPayablesReport(args = {}) {
+    const db = await this._db();
+    const { from, to, search, aging } = args;
+    
+    let query = `
+      SELECT
+        p.id,
+        p.invoice_no,
+        p.purchase_date,
+        COALESCE(sup.name, 'Unknown Supplier') AS supplier_name,
+        p.supplier_id,
+        p.subtotal AS total,
+        p.amount_paid,
+        p.balance_due,
+        p.payment_method,
+        CAST(julianday('now') - julianday(p.purchase_date) AS INTEGER) AS days_outstanding
+      FROM purchases p
+      LEFT JOIN suppliers sup ON sup.id = p.supplier_id AND sup.deleted_at IS NULL
+      WHERE p.balance_due > 0
+    `;
+    const params = [];
+    if (from) {
+      query += " AND p.purchase_date >= ?";
+      params.push(from);
+    }
+    if (to) {
+      query += " AND p.purchase_date <= ?";
+      params.push(to);
+    }
+    if (search) {
+      query += " AND LOWER(COALESCE(sup.name, '')) LIKE '%' || LOWER(?) || '%'";
+      params.push(search);
+    }
+    query += " ORDER BY p.purchase_date ASC";
+
+    const rows = await all(db, query, params);
+    
+    let finalRows = [];
+    let summary = { total_owed: 0, total_paid: 0, total_payable: 0, overdue_count: 0 };
+    
+    for (const r of rows) {
+      let bucket = 'Current';
+      const days = r.days_outstanding || 0;
+      if (days > 0 && days <= 30) bucket = '1-30d';
+      else if (days >= 31 && days <= 60) bucket = '31-60d';
+      else if (days >= 61 && days <= 90) bucket = '61-90d';
+      else if (days > 90) bucket = '90+';
+      
+      r.aging_bucket = bucket;
+      
+      if (aging && aging !== 'All' && aging !== bucket) {
+        continue;
+      }
+      
+      finalRows.push(r);
+      summary.total_owed += r.total;
+      summary.total_paid += r.amount_paid;
+      summary.total_payable += r.balance_due;
+      if (days > 0) summary.overdue_count++;
+    }
+    
+    return { rows: finalRows, summary };
+  }
+
+  async getCashFlowReport(args = {}) {
+    const db = await this._db();
+    let { from, to, period } = args;
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+    const today = now.toISOString().split('T')[0];
+    
+    if (!from) from = firstDay;
+    if (!to) to = today;
+    if (!period) period = 'monthly';
+    
+    const inflows = await all(db, `
+      SELECT payment_date AS txn_date, SUM(amount) AS inflow, 0 AS outflow
+      FROM customer_payments
+      WHERE payment_date BETWEEN ? AND ?
+      GROUP BY payment_date
+    `, [from, to]);
+    
+    const outflows = await all(db, `
+      SELECT payment_date AS txn_date, 0 AS inflow, SUM(amount) AS outflow
+      FROM supplier_payments
+      WHERE payment_date BETWEEN ? AND ?
+      GROUP BY payment_date
+    `, [from, to]);
+    
+    const map = new Map();
+    const addTxns = (arr) => {
+      for (const t of arr) {
+        if (!t.txn_date) continue;
+        const bucket = period === 'daily' ? t.txn_date : t.txn_date.slice(0, 7);
+        if (!map.has(bucket)) map.set(bucket, { period: bucket, total_inflow: 0, total_outflow: 0 });
+        const cur = map.get(bucket);
+        cur.total_inflow += t.inflow;
+        cur.total_outflow += t.outflow;
+      }
+    };
+    addTxns(inflows);
+    addTxns(outflows);
+    
+    let merged = Array.from(map.values());
+    merged.sort((a, b) => a.period.localeCompare(b.period));
+    
+    let running = 0;
+    let summary = { total_inflow: 0, total_outflow: 0, net_cashflow: 0 };
+    
+    for (const r of merged) {
+      r.net = r.total_inflow - r.total_outflow;
+      running += r.net;
+      r.running_balance = running;
+      
+      summary.total_inflow += r.total_inflow;
+      summary.total_outflow += r.total_outflow;
+    }
+    summary.net_cashflow = summary.total_inflow - summary.total_outflow;
+    
+    return { rows: merged, summary };
+  }
+}
+
+// ── VERBATIM FUNCTIONS ────────────────────────────────────────
+
+function assertBalanced(lines) {
+  if (!Array.isArray(lines) || lines.length < 2)
+    throw new Error("A journal entry needs at least two lines.");
+  let totalDebit = 0, totalCredit = 0;
+  for (const l of lines) {
+    const d = Number(l.debit) || 0, c = Number(l.credit) || 0;
+    if (d < 0 || c < 0)        throw new Error("Negative amounts are not allowed.");
+    if (d > 0 && c > 0)        throw new Error("A line cannot be both debit and credit.");
+    if (d === 0 && c === 0)    throw new Error("Each line must have a debit or a credit.");
+    totalDebit += d; totalCredit += c;
+  }
+  if (totalDebit !== totalCredit)   // exact equality — safe because integers
+    throw new Error(`Out of balance: Dr ${totalDebit} ≠ Cr ${totalCredit} (paisa).`);
+  return { totalDebit, totalCredit };
+}
+
+function createJournalEntry(db, { date, narration, source_type = 'manual',
+                                          source_id = null, lines }) {
+  assertBalanced(lines);
+  const tx = db.transaction(() => {
+    const entry_no = nextEntryNo(db, date);
+    const res = db.prepare(
+      `INSERT INTO journal_entries (entry_no, date, narration, status, source_type, source_id)
+       VALUES (?, ?, ?, 'posted', ?, ?)`
+    ).run(entry_no, date, narration ?? null, source_type, source_id);
+    const entryId = res.lastInsertRowid;
+    const ins = db.prepare(
+      `INSERT INTO journal_lines (entry_id, account_id, debit, credit, customer_id, line_memo)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    );
+    for (const l of lines)
+      ins.run(entryId, l.accountId, Number(l.debit)||0, Number(l.credit)||0,
+              l.customerId ?? null, l.memo ?? null);
+    return entryId;
+  });
+  return tx();
+}
+
+function reverseEntry(db, entryId, date, reason) {
+  const orig = db.prepare(`SELECT * FROM journal_entries WHERE id=?`).get(entryId);
+  if (!orig || orig.status !== 'posted') throw new Error("Only posted entries can be reversed.");
+  if (orig.reversed_by)                  throw new Error("Entry already reversed.");
+  const lines = db.prepare(`SELECT * FROM journal_lines WHERE entry_id=?`).all(entryId)
+    .map(l => ({ accountId: l.account_id, debit: l.credit, credit: l.debit,
+                 customerId: l.customer_id, memo: l.line_memo }));
+  const tx = db.transaction(() => {
+    const newId = createJournalEntry(db, {
+      date, narration: `Reversal of ${orig.entry_no}: ${reason ?? ''}`,
+      source_type: 'manual', source_id: null, lines });
+    db.prepare(`UPDATE journal_entries SET reverses=? WHERE id=?`).run(entryId, newId);
+    db.prepare(`UPDATE journal_entries SET reversed_by=? WHERE id=?`).run(newId, entryId);
+    return newId;
+  });
+  return tx();
+}
+
+function nextEntryNo(db, date) {
+  const year = date.slice(0, 4);
+  const row = db.prepare(
+    `SELECT entry_no FROM journal_entries WHERE entry_no LIKE ? ORDER BY id DESC LIMIT 1`
+  ).get(`JV-${year}-%`);
+  const n = row ? parseInt(row.entry_no.split('-')[2], 10) + 1 : 1;
+  return `JV-${year}-${String(n).padStart(5, '0')}`;
+}
+
+const ACC = { CASH:'1000', AR:'1100', SALES:'4000', TAX:'2200', RETURNS:'4100' };
+const idOf = (db,code)=>db.prepare(`SELECT id FROM accounts WHERE code=?`).get(code).id;
+
+function postSale(db, { saleId, saleRef, customerId, date,
+                               totalPaisa, taxPaisa = 0, paidPaisa = 0 }) {
+  const exists = db.prepare(
+    `SELECT 1 FROM journal_entries WHERE source_type='sale' AND source_id=?`).get(saleId);
+  if (exists) return;
+  const netRevenue = totalPaisa - taxPaisa;
+  const arPaisa    = totalPaisa - paidPaisa;
+  const lines = [];
+  if (paidPaisa > 0) lines.push({ accountId: idOf(db,ACC.CASH), debit: paidPaisa, credit: 0 });
+  if (arPaisa  > 0) lines.push({ accountId: idOf(db,ACC.AR),   debit: arPaisa,  credit: 0, customerId });
+  lines.push({ accountId: idOf(db,ACC.SALES), debit: 0, credit: netRevenue });
+  if (taxPaisa > 0) lines.push({ accountId: idOf(db,ACC.TAX), debit: 0, credit: taxPaisa });
+  createJournalEntry(db, { date, narration:`Sale ${saleRef}`,
+                           source_type:'sale', source_id:saleId, lines });
+}
+
+function postPayment(db, { paymentId, customerId, date, amountPaisa, bankCode='1000' }) {
+  const exists = db.prepare(
+    `SELECT 1 FROM journal_entries WHERE source_type='payment' AND source_id=?`).get(paymentId);
+  if (exists) return;
+  createJournalEntry(db, { date, narration:'Customer payment',
+    source_type:'payment', source_id:paymentId, lines:[
+      { accountId: idOf(db,bankCode), debit: amountPaisa, credit: 0 },
+      { accountId: idOf(db,ACC.AR),   debit: 0, credit: amountPaisa, customerId },
+    ]});
+}
+
+function getBankCodeForMethod(method) {
+  const m = String(method || "").toLowerCase();
+  if (m.includes("hbl")) return "1010";
+  if (m.includes("meezan")) return "1011";
+  return "1000";
 }
 
 module.exports = new PosStore();
