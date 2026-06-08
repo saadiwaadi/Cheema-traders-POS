@@ -45,6 +45,15 @@ export async function getTopDebtors() {
   return httpJson("/top-debtors");
 }
 
+export async function getTrialBalance(args) {
+  if (usingIpc()) {
+    if (window.ipc) return window.ipc.invoke("trialbalance:get", args);
+  }
+  const query = new URLSearchParams();
+  if (args.asOf) query.set("asOf", args.asOf);
+  return httpJson(`/trialbalance?${query.toString()}`);
+}
+
 export async function listProducts(args = {}) {
   if (usingIpc()) return window.pos.listProducts(args);
   const query = new URLSearchParams();

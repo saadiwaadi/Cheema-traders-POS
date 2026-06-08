@@ -3,6 +3,7 @@ const path = require("path");
 const sqlite3 = require("sqlite3").verbose();
 const Database = require("better-sqlite3");
 const dbModule = require("./db");
+const { postSale, postPayment, postPurchase, postSupplierPayment, voidSale } = require('./glBridge');
 
 const dbPath = dbModule.filename || path.resolve(__dirname, "..", "database", "pos.db");
 
@@ -282,6 +283,20 @@ class PosStore {
        VALUES (?, ?, ?, ?, ?)`,
       [input.supplierId, input.date || new Date().toISOString().split('T')[0], input.amount, input.method || 'Cash', input.notes || null]
     );
+
+    try {
+      const dbBetter = this.getBetterDb();
+      postSupplierPayment(dbBetter, {
+        id:             result.lastID,
+        supplier_id:    input.supplierId,
+        amount:         input.amount,
+        payment_method: input.method || 'Cash',
+        payment_date:   input.date || new Date().toISOString().slice(0, 10),
+      });
+    } catch (err) {
+      console.error("[GL] postSupplierPayment failed:", err.message);
+    }
+
     return { id: result.lastID };
   }
 
@@ -1179,17 +1194,16 @@ class PosStore {
 
     try {
       const dbBetter = this.getBetterDb();
-      const amountPaisa = Math.round(result.amount * 100);
-      const bankCode = getBankCodeForMethod(dbBetter, paymentMethod);
       postPayment(dbBetter, {
-        paymentId: result.id,
-        customerId: result.customerId,
-        date: paymentDate,
-        amountPaisa,
-        bankCode
+        id:             result.id,
+        customer_id:    result.customerId,
+        payment_date:   paymentDate,       // already in scope above this block
+        amount:         result.amount,
+        payment_method: paymentMethod,     // already in scope above this block
+        type:           result.type,
       });
     } catch (err) {
-      console.error("POS Bridge: Failed to post payment to GL:", err);
+      console.error("[GL] postPayment failed:", err.message);
     }
 
     return result;
@@ -1519,7 +1533,7 @@ class PosStore {
     const items = Array.isArray(input.items) ? input.items : [];
     if (!items.length) throw new Error("At least one purchase item is required");
 
-    return this.transaction(async (db) => {
+    const result = await this.transaction(async (db) => {
       const invoiceNo = `PUR-${Date.now()}`;
       
       let subtotal = 0;
@@ -1656,6 +1670,22 @@ class PosStore {
         items: savedBatches
       };
     });
+
+    try {
+      const dbBetter = this.getBetterDb();
+      postPurchase(dbBetter, {
+        id:             result.id,
+        invoice_no:     result.invoiceNo,
+        purchase_date:  result.purchaseDate,
+        total:          result.subtotal,        // subtotal is your grand total here
+        amount_paid:    result.amountPaid,
+        payment_method: result.paymentMethod,
+      });
+    } catch (err) {
+      console.error("[GL] postPurchase failed:", err.message);
+    }
+
+    return result;
   }
 
   async listPurchases({ limit = 200 } = {}) {
@@ -1935,20 +1965,20 @@ class PosStore {
 
     try {
       const dbBetter = this.getBetterDb();
-      const totalPaisa = Math.round(result.total * 100);
-      const paidPaisa = Math.round(result.amountPaid * 100);
       postSale(dbBetter, {
-        saleId: result.id,
-        saleRef: result.invoiceNo,
-        customerId: input.customerId || null,
-        date: result.saleDate,
-        totalPaisa,
-        taxPaisa: 0,
-        paidPaisa,
-        paymentMethod: result.paymentMethod
+        id:             result.id,
+        invoice_no:     result.invoiceNo,
+        sale_date:      result.saleDate,
+        customer_id:    input.customerId || null,
+        payment_method: result.paymentMethod,
+        total:          result.total,
+        amount_paid:    result.amountPaid,
+        balance_due:    result.balanceDue,
+        credit_applied: result.creditApplied || 0,
+        voided_at:      null,
       });
     } catch (err) {
-      console.error("POS Bridge: Failed to post sale to GL:", err);
+      console.error("[GL] postSale failed:", err.message);
     }
 
     return result;
@@ -2133,7 +2163,7 @@ class PosStore {
   }
 
   async voidSale(id) {
-    return this.transaction(async (db) => {
+    const result = await this.transaction(async (db) => {
       const sale = await get(db, `SELECT * FROM sales WHERE id = ? LIMIT 1`, [id]);
       if (!sale) throw new Error("Sale not found");
       if (sale.voided_at) throw new Error("Sale is already voided");
@@ -2188,6 +2218,16 @@ class PosStore {
       await this.audit("sale", id, "void", { invoiceNo: sale.invoice_no }, null);
       return { id, invoiceNo: sale.invoice_no, voidedAt: new Date().toISOString() };
     });
+
+    // GL reversal — outside the async transaction, uses better-sqlite3
+    try {
+      const dbBetter = this.getBetterDb();
+      voidSale(dbBetter, { id });   // calls glBridge.voidSale, not this method
+    } catch (err) {
+      console.error("[GL] voidSale failed:", err.message);
+    }
+
+    return result;
   }
 
   async returnSaleItems(saleId, items) {
@@ -3037,52 +3077,6 @@ function nextEntryNo(db, date) {
   return `JV-${year}-${String(n).padStart(5, '0')}`;
 }
 
-const ACC = { CASH:'1000', AR:'1100', SALES:'4000', TAX:'2200', RETURNS:'4100' };
-const idOf = (db,code)=>db.prepare(`SELECT id FROM accounts WHERE code=?`).get(code).id;
 
-function postSale(db, { saleId, saleRef, customerId, date,
-                               totalPaisa, taxPaisa = 0, paidPaisa = 0, paymentMethod }) {
-  const exists = db.prepare(
-    `SELECT 1 FROM journal_entries WHERE source_type='sale' AND source_id=?`).get(saleId);
-  if (exists) return;
-  const netRevenue = totalPaisa - taxPaisa;
-  const arPaisa    = totalPaisa - paidPaisa;
-  const lines = [];
-
-  const bankCode = getBankCodeForMethod(db, paymentMethod);
-
-  if (paidPaisa > 0) lines.push({ accountId: idOf(db, bankCode), debit: paidPaisa, credit: 0 });
-  if (arPaisa  > 0) lines.push({ accountId: idOf(db, ACC.AR),   debit: arPaisa,  credit: 0, customerId });
-  lines.push({ accountId: idOf(db, ACC.SALES), debit: 0, credit: netRevenue });
-  if (taxPaisa > 0) lines.push({ accountId: idOf(db, ACC.TAX), debit: 0, credit: taxPaisa });
-  createJournalEntry(db, { date, narration:`Sale ${saleRef}`,
-                           source_type:'sale', source_id:saleId, lines });
-}
-
-function postPayment(db, { paymentId, customerId, date, amountPaisa, bankCode='1000' }) {
-  const exists = db.prepare(
-    `SELECT 1 FROM journal_entries WHERE source_type='payment' AND source_id=?`).get(paymentId);
-  if (exists) return;
-  createJournalEntry(db, { date, narration:'Customer payment',
-    source_type:'payment', source_id:paymentId, lines:[
-      { accountId: idOf(db,bankCode), debit: amountPaisa, credit: 0 },
-      { accountId: idOf(db,ACC.AR),   debit: 0, credit: amountPaisa, customerId },
-    ]});
-}
-
-function getBankCodeForMethod(db, method) {
-  const m = String(method || "").trim();
-  if (!m || m.toLowerCase() === "cash") return "1000";
-
-  try {
-    const row = db.prepare(`SELECT code FROM accounts WHERE name = ? OR name = ? COLLATE NOCASE LIMIT 1`).get(m, `Bank - ${m}`);
-    if (row && row.code) return row.code;
-  } catch (err) {}
-
-  const mLower = m.toLowerCase();
-  if (mLower.includes("hbl")) return "1010";
-  if (mLower.includes("meezan")) return "1011";
-  return "1000";
-}
 
 module.exports = new PosStore();

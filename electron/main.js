@@ -62,6 +62,7 @@ function registerIpc() {
     "coa:deactivate": (_, payload) => store.deactivateCoaAccount(payload),
     "db:get-monthly-report": () => store.getMonthlyReport(),
     "db:get-top-debtors": () => store.getTopDebtors(),
+    "trialbalance:get": (_, args) => store.getTrialBalance(args),
     "journal:create": (_, payload) => store.createJournalEntry(payload),
     "journal:list": (_, args) => store.listJournalEntries(args),
     "journal:get": (_, id) => store.getJournalEntry(id),

@@ -13,6 +13,7 @@ import CustomersPage from "./customers";
 import PaymentsPage from "./PaymentsPage";
 import ExpensesPage from "./expenses";
 import LedgerPage from "./ledger";
+import JournalPage from "./Journal";
 import CashBookPage from "./CashBook";
 import BanksPage from "./banks";
 import AnalysisPage from "./analysis/AnalysisShell";
@@ -21,6 +22,7 @@ import OverviewWorkspace from "./analysis/OverviewWorkspace";
 import SettingsPage from "./settings";
 import ChartOfAccountsPage from "./ChartOfAccounts";
 import ReportsPage from "./reports";
+import TrialBalancePage from "./TrialBalance";
 
 // ─────────────────────────────────────────────────────────────
 //  IMPORTANT: You need to add these two API functions to posApi.js
@@ -67,8 +69,10 @@ const NAV_ITEMS = [
   { id: "expenses", label: "Expenses", icon: "M21 18v1c0 1.1-.9 2-2 2H5c-1.11 0-2-.9-2-2V5c0-1.1.89-2 2-2h14c1.1 0 2 .9 2 2v1h-9c-1.11 0-2 .9-2 2v8c0 1.1.89 2 2 2h9zm-9-2h10V9H12v9zm4-5.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z", section: "finance" },
   { id: "banks", label: "Banks", icon: "M4 10h3v7H4zm6.5 0h3v7h-3zM2 19h20v3H2zm15-9h3v7h-3zm-5-9L2 6v2h20V6z", section: "finance" },
   { id: "cashbook", label: "Cash Book", icon: "M2 4v16h20V4H2zm18 14H4V6h16v12zm-9-9h2v2h-2zm0 4h2v2h-2zm-4-4h2v2H7zm0 4h2v2H7zm8-4h2v2h-2zm0 4h2v2h-2z", section: "finance" },
-  { id: "ledger", label: "Ledger", icon: "M3 3h18v18H3V3zm16 16V5H5v14h14zM7 7h10v2H7V7zm0 4h10v2H7v-2zm0 4h7v2H7v-2z", section: "accounting" },
+  { id: "ledger", label: "General Ledger", icon: "M3 3h18v18H3V3zm16 16V5H5v14h14zM7 7h10v2H7V7zm0 4h10v2H7v-2zm0 4h7v2H7v-2z", section: "accounting" },
+  { id: "journal", label: "Journal Entries", icon: "M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z", section: "accounting" },
   { id: "coa", label: "Chart of Accounts", icon: "M22 11V3h-7v3H9V3H2v8h7V8h2v10h4v3h7v-8h-7v3h-2V8h2v3h7z", section: "accounting" },
+  { id: "trialbalance", label: "Trial Balance", icon: "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z", section: "accounting" },
   { id: "analysis", label: "Analysis", icon: "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z", section: "accounting" },
   { id: "reports", label: "Reports", icon: "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.89 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z", section: "accounting" },
   { id: "settings", label: "Settings", icon: "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z", section: "system" },
@@ -249,7 +253,9 @@ export default function Dashboard() {
                 {userRole === "admin" && active === "banks" && <BanksPage />}
                 {userRole === "admin" && active === "cashbook" && <CashBookPage />}
                 {userRole === "admin" && active === "ledger" && <LedgerPage />}
+                {userRole === "admin" && active === "journal" && <JournalPage />}
                 {userRole === "admin" && active === "coa" && <ChartOfAccountsPage />}
+                {userRole === "admin" && active === "trialbalance" && <TrialBalancePage />}
                 {userRole === "admin" && active === "analysis" && <AnalysisPage />}
                 {userRole === "admin" && active === "reports" && <ReportsPage />}
                 {userRole === "admin" && active === "addCompany" && <SuppliersPage />}

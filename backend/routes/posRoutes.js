@@ -28,6 +28,33 @@ router.get("/dashboard", async (_req, res) => {
   }
 });
 
+router.get("/monthly-report", async (_req, res) => {
+  try {
+    const report = await store.getMonthlyReport();
+    return res.json(report);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/top-debtors", async (_req, res) => {
+  try {
+    const debtors = await store.getTopDebtors();
+    return res.json(debtors);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/trialbalance", async (req, res) => {
+  try {
+    const tb = await store.getTrialBalance({ asOf: req.query.asOf });
+    return res.json(tb);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
 router.get("/cashbook", async (req, res) => {
   try {
     const cashbook = await store.getCashBook({
