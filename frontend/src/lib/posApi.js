@@ -29,6 +29,22 @@ export async function getDashboardSummary() {
   return httpJson("/dashboard");
 }
 
+export async function getMonthlyReport() {
+  if (usingIpc()) {
+    if (window.pos.getMonthlyReport) return window.pos.getMonthlyReport();
+    if (window.ipc) return window.ipc.invoke("db:get-monthly-report");
+  }
+  return httpJson("/monthly-report");
+}
+
+export async function getTopDebtors() {
+  if (usingIpc()) {
+    if (window.pos.getTopDebtors) return window.pos.getTopDebtors();
+    if (window.ipc) return window.ipc.invoke("db:get-top-debtors");
+  }
+  return httpJson("/top-debtors");
+}
+
 export async function listProducts(args = {}) {
   if (usingIpc()) return window.pos.listProducts(args);
   const query = new URLSearchParams();
@@ -321,4 +337,26 @@ export async function getCashFlow(args = {}) {
   if (usingIpc()) return window.pos.getCashFlow(args);
   const q = new URLSearchParams(args).toString();
   return httpJson(`/reports/cashflow?${q}`);
+}
+
+// --- CHART OF ACCOUNTS ---
+
+export async function listCoaAccounts() {
+  if (usingIpc() && window.ipc) return window.ipc.invoke("coa:list");
+  return httpJson("/coa");
+}
+
+export async function createCoaAccount(payload) {
+  if (usingIpc() && window.ipc) return window.ipc.invoke("coa:create", payload);
+  return httpJson("/coa", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function updateCoaAccount(payload) {
+  if (usingIpc() && window.ipc) return window.ipc.invoke("coa:update", payload);
+  return httpJson(`/coa/${payload.id}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export async function deactivateCoaAccount(id) {
+  if (usingIpc() && window.ipc) return window.ipc.invoke("coa:deactivate", { id });
+  return httpJson(`/coa/${id}/deactivate`, { method: "POST" });
 }

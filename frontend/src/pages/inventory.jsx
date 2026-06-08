@@ -233,6 +233,7 @@ function StockEntryTab({ onSaved }) {
 
   const [inventory, setInventory] = useState([createEmptyBatch()]);
   const [suppliers, setSuppliers] = useState([]);
+  const [banks, setBanks] = useState([]);
   const [supplierId, setSupplierId] = useState("");
   const [purchaseDate, setPurchaseDate] = useState(new Date().toISOString().split("T")[0]);
   const [paymentType, setPaymentType] = useState("Cash");
@@ -240,15 +241,19 @@ function StockEntryTab({ onSaved }) {
   const [warehouseShelf, setWarehouseShelf] = useState("");
 
   useEffect(() => {
-    const loadSuppliers = async () => {
+    const loadSuppliersAndBanks = async () => {
       try {
-        const res = await api.listSuppliers();
-        setSuppliers(res.suppliers || []);
+        const [resSuppliers, resBanks] = await Promise.all([
+          api.listSuppliers(),
+          api.listBanks()
+        ]);
+        setSuppliers(resSuppliers.suppliers || []);
+        if (resBanks && resBanks.banks) setBanks(resBanks.banks);
       } catch (err) {
-        console.error("Failed to load suppliers:", err);
+        console.error("Failed to load:", err);
       }
     };
-    loadSuppliers();
+    loadSuppliersAndBanks();
   }, []);
 
   function createEmptyBatch() {
@@ -393,7 +398,7 @@ function StockEntryTab({ onSaved }) {
           <div style={st.grid3}>
             <FieldSelect
               label="Payment Type"
-              options={["Cash", "Credit", "Partial"]}
+              options={["Cash", "Credit", "Partial", ...banks.map(b => b.name)]}
               value={paymentType}
               onChange={(e) => setPaymentType(e.target.value)}
             />
@@ -598,6 +603,7 @@ function SumRow({ label, value }) {
 
 function StockHistoryTab({ onChanged }) {
   const [purchases, setPurchases] = useState([]);
+  const [banks, setBanks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
@@ -610,8 +616,12 @@ function StockHistoryTab({ onChanged }) {
     setLoading(true);
     setError("");
     try {
-      const res = await api.listPurchases();
-      setPurchases(res.purchases || []);
+      const [resPurchases, resBanks] = await Promise.all([
+        api.listPurchases(),
+        api.listBanks()
+      ]);
+      setPurchases(resPurchases.purchases || []);
+      if (resBanks && resBanks.banks) setBanks(resBanks.banks);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -814,7 +824,7 @@ function StockHistoryTab({ onChanged }) {
                     <select style={{ ...st.inp, flex: 1 }}
                       value={editValues.paymentMethod}
                       onChange={e => setEditValues(v => ({ ...v, paymentMethod: e.target.value }))}>
-                      {["Cash", "Credit", "Partial", "HBL Bank", "UBL Bank", "JazzCash"].map(m => (
+                      {["Cash", "Credit", "Partial", ...banks.map(b => b.name)].map(m => (
                         <option key={m}>{m}</option>
                       ))}
                     </select>

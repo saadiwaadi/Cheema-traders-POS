@@ -341,6 +341,45 @@ class PosStore {
       [payload.name, payload.openingBalance]
     );
     await this.audit("bank_account", result.lastID, "create", null, payload);
+
+    // Auto-create COA account
+    try {
+      const maxRow = await get(db, "SELECT MAX(CAST(code AS INTEGER)) as maxCode FROM accounts WHERE code LIKE '10%' AND type = 'asset'");
+      let nextCode = "1010";
+      if (maxRow && maxRow.maxCode) {
+        nextCode = String(maxRow.maxCode + 1);
+      }
+      
+      const accountName = `Bank - ${payload.name}`;
+      
+      const accountResult = await run(
+        db,
+        `INSERT INTO accounts (code, name, type, parent_id, is_control, is_active)
+         VALUES (?, ?, 'asset', null, 0, 1)`,
+        [nextCode, accountName]
+      );
+      const newAccountId = accountResult.lastID;
+
+      // Add Opening Balance Journal Entry if > 0
+      if (payload.openingBalance > 0) {
+        const equityAcc = await get(db, "SELECT id FROM accounts WHERE code = '3900' OR name = 'Opening Balance Equity'");
+        if (equityAcc) {
+          await this.createJournalEntry({
+            date: new Date().toISOString().split('T')[0],
+            narration: `Opening balance for ${accountName}`,
+            source_type: 'bank_account',
+            source_id: result.lastID,
+            lines: [
+              { accountId: newAccountId, debit: payload.openingBalance, credit: 0 },
+              { accountId: equityAcc.id, debit: 0, credit: payload.openingBalance }
+            ]
+          });
+        }
+      }
+    } catch (coaErr) {
+      console.error("Failed to auto-create COA for bank:", coaErr);
+    }
+
     return { id: result.lastID, ...payload };
   }
 
@@ -1141,7 +1180,7 @@ class PosStore {
     try {
       const dbBetter = this.getBetterDb();
       const amountPaisa = Math.round(result.amount * 100);
-      const bankCode = getBankCodeForMethod(paymentMethod);
+      const bankCode = getBankCodeForMethod(dbBetter, paymentMethod);
       postPayment(dbBetter, {
         paymentId: result.id,
         customerId: result.customerId,
@@ -1905,7 +1944,8 @@ class PosStore {
         date: result.saleDate,
         totalPaisa,
         taxPaisa: 0,
-        paidPaisa
+        paidPaisa,
+        paymentMethod: result.paymentMethod
       });
     } catch (err) {
       console.error("POS Bridge: Failed to post sale to GL:", err);
@@ -2246,7 +2286,10 @@ class PosStore {
     const today = new Date().toISOString().slice(0, 10);
     const expiringCutoff = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
 
-    const [todaySales, creditDue, lowStock, expiringSoon, recentSales] = await Promise.all([
+    const [
+      todaySales, creditDue, lowStock, expiringSoon, recentSales,
+      todayExpenses, todayCashSales, todayCreditSales, todayTransactionCount
+    ] = await Promise.all([
       get(db, `SELECT COALESCE(SUM(total), 0) AS value FROM sales WHERE sale_date = ? AND COALESCE(voided_at, '') = ''`, [today]),
       get(db, `SELECT COALESCE(SUM(balance_due), 0) AS value FROM sales WHERE balance_due > 0 AND COALESCE(voided_at, '') = ''`),
       get(db, `SELECT COUNT(*) AS value FROM products WHERE COALESCE(deleted_at, '') = '' AND COALESCE(current_stock, quantity, 0) <= COALESCE(low_stock_level, 0) AND COALESCE(active, 1) = 1`),
@@ -2261,6 +2304,10 @@ class PosStore {
           LIMIT 8
         `
       ),
+      get(db, `SELECT COALESCE(SUM(amount), 0) AS value FROM expenses WHERE expense_date = ?`, [today]),
+      get(db, `SELECT COALESCE(SUM(total), 0) AS value FROM sales WHERE sale_date = ? AND payment_method = 'Cash' AND COALESCE(voided_at, '') = ''`, [today]),
+      get(db, `SELECT COALESCE(SUM(total), 0) AS value FROM sales WHERE sale_date = ? AND payment_method != 'Cash' AND COALESCE(voided_at, '') = ''`, [today]),
+      get(db, `SELECT COUNT(*) AS value FROM sales WHERE sale_date = ? AND COALESCE(voided_at, '') = ''`, [today]),
     ]);
 
     const productCount = await get(db, `SELECT COUNT(*) AS value FROM products WHERE COALESCE(deleted_at, '') = '' AND COALESCE(active, 1) = 1`);
@@ -2269,6 +2316,11 @@ class PosStore {
 
     return {
       todaySales: Number(todaySales?.value || 0),
+      todayExpenses: Number(todayExpenses?.value || 0),
+      todayProfit: Number(todaySales?.value || 0) - Number(todayExpenses?.value || 0),
+      todayCashSales: Number(todayCashSales?.value || 0),
+      todayCreditSales: Number(todayCreditSales?.value || 0),
+      todayTransactionCount: Number(todayTransactionCount?.value || 0),
       creditDue: Number(creditDue?.value || 0),
       lowStockCount: Number(lowStock?.value || 0),
       expiringSoonCount: Number(expiringSoon?.value || 0),
@@ -2277,6 +2329,82 @@ class PosStore {
       supplierCount: Number(supplierCount?.value || 0),
       recentSales,
     };
+  }
+
+  async getMonthlyReport() {
+    const db = await this._db();
+    
+    // Revenue from sales
+    const salesData = await all(db, `
+      SELECT 
+        strftime('%m', sale_date) AS m, 
+        strftime('%Y', sale_date) AS y, 
+        COALESCE(SUM(total), 0) AS revenue
+      FROM sales 
+      WHERE sale_date >= date('now', '-12 months') AND COALESCE(voided_at, '') = ''
+      GROUP BY y, m 
+      ORDER BY y ASC, m ASC
+    `);
+
+    // Expenses from expenses table
+    const expensesData = await all(db, `
+      SELECT 
+        strftime('%m', expense_date) AS m, 
+        strftime('%Y', expense_date) AS y, 
+        COALESCE(SUM(amount), 0) AS expenses
+      FROM expenses 
+      WHERE expense_date >= date('now', '-12 months')
+      GROUP BY y, m 
+      ORDER BY y ASC, m ASC
+    `);
+
+    // Combine data
+    const map = {};
+    const now = new Date();
+    // Pre-fill last 12 months
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const mStr = String(d.getMonth() + 1).padStart(2, '0');
+      const yStr = String(d.getFullYear());
+      const key = `${yStr}-${mStr}`;
+      map[key] = {
+        month: d.toLocaleString('default', { month: 'short' }),
+        year: d.getFullYear(),
+        revenue: 0,
+        expenses: 0,
+        profit: 0
+      };
+    }
+
+    for (const row of salesData) {
+      if (!row.m || !row.y) continue;
+      const key = `${row.y}-${row.m}`;
+      if (map[key]) map[key].revenue = row.revenue;
+    }
+
+    for (const row of expensesData) {
+      if (!row.m || !row.y) continue;
+      const key = `${row.y}-${row.m}`;
+      if (map[key]) map[key].expenses = row.expenses;
+    }
+
+    // Calculate profit
+    for (const key in map) {
+      map[key].profit = map[key].revenue - map[key].expenses;
+    }
+
+    return Object.values(map);
+  }
+
+  async getTopDebtors() {
+    const db = await this._db();
+    return await all(db, `
+      SELECT id, name, phone, current_balance AS balance
+      FROM customers
+      WHERE current_balance > 0 AND (is_deleted IS NULL OR is_deleted = 0)
+      ORDER BY current_balance DESC
+      LIMIT 10
+    `);
   }
 
   async audit(entityType, entityId, action, beforeValue, afterValue, userId = null) {
@@ -2581,6 +2709,48 @@ class PosStore {
     }
   }
 
+  async getTrialBalance({ asOf }) {
+    const db = await this._db();
+    const rows = await all(db, `
+      SELECT a.id, a.code, a.name, a.type,
+             COALESCE(SUM(l.debit),0)  AS total_debit,
+             COALESCE(SUM(l.credit),0) AS total_credit,
+             COALESCE(SUM(l.debit),0) - COALESCE(SUM(l.credit),0) AS net
+      FROM accounts a
+      LEFT JOIN journal_lines   l ON l.account_id = a.id
+      LEFT JOIN journal_entries e ON e.id = l.entry_id AND e.status='posted' AND e.date <= ?
+      WHERE a.is_active = 1
+      GROUP BY a.id
+      ORDER BY a.code
+    `, [asOf]);
+
+    let totalDebit = 0;
+    let totalCredit = 0;
+
+    const formattedRows = rows.map(r => {
+      let debit = 0;
+      let credit = 0;
+      if (r.net > 0) debit = r.net;
+      else if (r.net < 0) credit = Math.abs(r.net);
+      
+      totalDebit += debit;
+      totalCredit += credit;
+
+      return {
+        ...r,
+        debit,
+        credit
+      };
+    }).filter(r => r.debit !== 0 || r.credit !== 0);
+
+    return {
+      rows: formattedRows,
+      totalDebit,
+      totalCredit,
+      balanced: totalDebit === totalCredit
+    };
+  }
+
   async getGeneralLedger(args = {}) {
     const db = await this._db();
     let query = `
@@ -2871,17 +3041,20 @@ const ACC = { CASH:'1000', AR:'1100', SALES:'4000', TAX:'2200', RETURNS:'4100' }
 const idOf = (db,code)=>db.prepare(`SELECT id FROM accounts WHERE code=?`).get(code).id;
 
 function postSale(db, { saleId, saleRef, customerId, date,
-                               totalPaisa, taxPaisa = 0, paidPaisa = 0 }) {
+                               totalPaisa, taxPaisa = 0, paidPaisa = 0, paymentMethod }) {
   const exists = db.prepare(
     `SELECT 1 FROM journal_entries WHERE source_type='sale' AND source_id=?`).get(saleId);
   if (exists) return;
   const netRevenue = totalPaisa - taxPaisa;
   const arPaisa    = totalPaisa - paidPaisa;
   const lines = [];
-  if (paidPaisa > 0) lines.push({ accountId: idOf(db,ACC.CASH), debit: paidPaisa, credit: 0 });
-  if (arPaisa  > 0) lines.push({ accountId: idOf(db,ACC.AR),   debit: arPaisa,  credit: 0, customerId });
-  lines.push({ accountId: idOf(db,ACC.SALES), debit: 0, credit: netRevenue });
-  if (taxPaisa > 0) lines.push({ accountId: idOf(db,ACC.TAX), debit: 0, credit: taxPaisa });
+
+  const bankCode = getBankCodeForMethod(db, paymentMethod);
+
+  if (paidPaisa > 0) lines.push({ accountId: idOf(db, bankCode), debit: paidPaisa, credit: 0 });
+  if (arPaisa  > 0) lines.push({ accountId: idOf(db, ACC.AR),   debit: arPaisa,  credit: 0, customerId });
+  lines.push({ accountId: idOf(db, ACC.SALES), debit: 0, credit: netRevenue });
+  if (taxPaisa > 0) lines.push({ accountId: idOf(db, ACC.TAX), debit: 0, credit: taxPaisa });
   createJournalEntry(db, { date, narration:`Sale ${saleRef}`,
                            source_type:'sale', source_id:saleId, lines });
 }
@@ -2897,10 +3070,18 @@ function postPayment(db, { paymentId, customerId, date, amountPaisa, bankCode='1
     ]});
 }
 
-function getBankCodeForMethod(method) {
-  const m = String(method || "").toLowerCase();
-  if (m.includes("hbl")) return "1010";
-  if (m.includes("meezan")) return "1011";
+function getBankCodeForMethod(db, method) {
+  const m = String(method || "").trim();
+  if (!m || m.toLowerCase() === "cash") return "1000";
+
+  try {
+    const row = db.prepare(`SELECT code FROM accounts WHERE name = ? OR name = ? COLLATE NOCASE LIMIT 1`).get(m, `Bank - ${m}`);
+    if (row && row.code) return row.code;
+  } catch (err) {}
+
+  const mLower = m.toLowerCase();
+  if (mLower.includes("hbl")) return "1010";
+  if (mLower.includes("meezan")) return "1011";
   return "1000";
 }
 

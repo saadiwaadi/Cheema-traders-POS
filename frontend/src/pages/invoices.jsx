@@ -18,7 +18,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 
-import { listSales, getSale, voidSale, saveCustomerPayment, returnSale } from "../lib/posApi";
+import { listSales, getSale, voidSale, saveCustomerPayment, returnSale, listBanks } from "../lib/posApi";
 
 const BUSINESS_NAME = "Cheema Traders";
 const BUSINESS_EMAIL = "contact@cheematraders.com";
@@ -75,6 +75,13 @@ export default function InvoiceHistoryModule() {
   const [payingInvoice, setPayingInvoice] = useState(null);
   const [payingBulk, setPayingBulk] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState("Cash");
+  const [banks, setBanks] = useState([]);
+
+  useEffect(() => {
+    listBanks().then(res => {
+      if (res && res.banks) setBanks(res.banks);
+    }).catch(console.error);
+  }, []);
 
   const loadInvoices = () => {
     setLoading(true);
@@ -1071,7 +1078,7 @@ export default function InvoiceHistoryModule() {
                         onChange={(e) => setDrawerPayMethod(e.target.value)}
                         className="w-full rounded-sm border border-[#cde0cd] p-2 bg-white text-xs outline-none"
                       >
-                        {["Cash", "HBL Bank", "UBL Bank", "JazzCash", "EasyPaisa", "Cheque"].map((m) => (
+                        {["Cash", ...banks.map(b => b.name), "Cheque"].map((m) => (
                           <option key={m} value={m}>
                             {m}
                           </option>
@@ -1292,7 +1299,7 @@ export default function InvoiceHistoryModule() {
                 onChange={e => setPaymentMethod(e.target.value)}
                 className="w-full rounded-sm border border-[#cde0cd] p-2 bg-[#fcfdfc] text-xs outline-none"
               >
-                {["Cash", "HBL Bank", "UBL Bank", "JazzCash", "EasyPaisa", "Cheque"].map(m => (
+                {["Cash", ...banks.map(b => b.name), "Cheque"].map(m => (
                   <option key={m} value={m}>{m}</option>
                 ))}
               </select>

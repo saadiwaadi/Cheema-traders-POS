@@ -452,4 +452,41 @@ router.get("/reports/cashflow", async (req, res) => {
   }
 });
 
+// --- CHART OF ACCOUNTS ---
+router.get("/coa", async (req, res) => {
+  try {
+    const list = await store.listCoaAccounts();
+    return res.json(list);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.post("/coa", async (req, res) => {
+  try {
+    const result = await store.createCoaAccount(req.body);
+    return res.status(201).json(result);
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+router.patch("/coa/:id", async (req, res) => {
+  try {
+    const result = await store.updateCoaAccount({ id: Number(req.params.id), ...req.body });
+    return res.json(result);
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+router.post("/coa/:id/deactivate", async (req, res) => {
+  try {
+    const result = await store.deactivateCoaAccount({ id: Number(req.params.id) });
+    return res.json(result);
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
 module.exports = router;

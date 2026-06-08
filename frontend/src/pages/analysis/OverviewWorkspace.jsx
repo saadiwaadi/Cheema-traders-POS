@@ -38,7 +38,7 @@ export default function OverviewWorkspace() {
             </div>
           </div>
           <div style={{ height: 260, width: "100%", marginTop: 10 }}>
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
               <AreaChart data={revenueData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
@@ -67,7 +67,7 @@ export default function OverviewWorkspace() {
             </div>
           </div>
           <div style={{ height: 260, width: "100%", marginTop: 10 }}>
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
               <BarChart data={categoryData} layout="vertical" margin={{ top: 0, right: 20, left: -10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e4eee4" />
                 <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "#708571" }} tickFormatter={(val) => `${val / 1000}k`} />

@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useCallback } from "react";
 import DropdownSelect from "../components/DropdownSelect";
-import { listCustomers, saveCustomer, listProducts, saveSale, getNextInvoiceNo } from "../lib/posApi";
+import { listCustomers, saveCustomer, listProducts, saveSale, getNextInvoiceNo, listBanks } from "../lib/posApi";
 import SuccessNotification from "../components/SuccessNotification";
 import WarningNotification from "../components/Warningnotification";
 import { printReceipt } from "../components/Thermalreceipt";
@@ -39,6 +39,7 @@ export default function BillingWorkspace() {
   const [receivedAmount, setReceivedAmount] = useState("");
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
+  const [banks, setBanks] = useState([]);
   const [selectedCustomerObj, setSelectedCustomerObj] = useState(null);
   const [successData, setSuccessData] = useState(null);
   const [warnData, setWarnData] = useState(null);
@@ -62,6 +63,10 @@ export default function BillingWorkspace() {
         const prodRes = await listProducts();
         if (prodRes && prodRes.products) {
           setProducts(prodRes.products);
+        }
+        const bankRes = await listBanks();
+        if (bankRes && bankRes.banks) {
+          setBanks(bankRes.banks);
         }
       } catch (e) {
         console.error("Failed to load initial billing data", e);
@@ -385,12 +390,10 @@ export default function BillingWorkspace() {
               value={paymentType}
               onChange={(e) => setPaymentType(e.target.value)}
             >
-              <option>Cash</option>
-              <option>HBL Bank</option>
-              <option>UBL Bank</option>
-              <option>Meezan Bank</option>
-              <option>JazzCash</option>
-              <option>EasyPaisa</option>
+              <option value="Cash">Cash</option>
+              {banks.map(b => (
+                <option key={b.id} value={b.name}>{b.name}</option>
+              ))}
             </select>
           </div>
         </div>
