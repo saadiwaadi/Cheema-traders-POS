@@ -108,8 +108,8 @@ export default function BanksPage() {
     setHistoryError(null)
     try {
       const cashbookRes = await getCashBook({
-        startDate: historyFrom,
-        endDate: historyTo,
+        fromDate: historyFrom,
+        toDate: historyTo,
       })
 
       const mapped = (cashbookRes.entries || [])
@@ -229,18 +229,16 @@ export default function BanksPage() {
     finally { setBtcSaving(false) }
   }
 
+  const filteredHistoryRows = historyRows.filter(row => 
+    activeTab === 'ctb' ? row.transfer_type === 'cash_to_bank' : row.transfer_type === 'bank_to_cash'
+  );
+
   const exportTransferHistoryExcel = async () => {
-    if (!historyRows.length) return
+    if (!filteredHistoryRows.length) return
 
-    const totalCashToBank = historyRows
-      .filter(r => r.transfer_type === 'cash_to_bank')
-      .reduce((s, r) => s + Number(r.amount || 0), 0)
-    const totalBankToCash = historyRows
-      .filter(r => r.transfer_type === 'bank_to_cash')
-      .reduce((s, r) => s + Number(r.amount || 0), 0)
-    const grandTotal = historyRows.reduce((s, r) => s + Number(r.amount || 0), 0)
+    const totalAmount = filteredHistoryRows.reduce((s, r) => s + Number(r.amount || 0), 0)
 
-    const rows = historyRows.map((row, index) => ([
+    const rows = filteredHistoryRows.map((row, index) => ([
       index + 1,
       row.entry_date || '',
       row.transfer_type === 'cash_to_bank' ? 'Cash to Bank' : 'Bank to Cash',
@@ -250,16 +248,14 @@ export default function BanksPage() {
     ]))
 
     rows.push([])
-    rows.push(['', '', '', '', 'Total Cash to Bank', totalCashToBank])
-    rows.push(['', '', '', '', 'Total Bank to Cash', totalBankToCash])
-    rows.push(['', '', '', '', 'Grand Total', grandTotal])
+    rows.push(['', '', '', '', 'Total Amount', totalAmount])
 
     await exportExcelFile({
-      fileName: `cash-bank-transfer-history-${historyFrom}-to-${historyTo}`,
-      sheetName: 'Cash-Bank Transfers',
-      title: 'Company Transfer History',
-      subtitle: `Cash/Bank Transfer History - ${historyFrom} to ${historyTo}`,
-      meta: [`Generated: ${new Date().toLocaleDateString('en-PK')} | Entries: ${historyRows.length}`],
+      fileName: `cash-bank-transfer-history-${activeTab}-${historyFrom}-to-${historyTo}`,
+      sheetName: activeTab === 'ctb' ? 'Cash to Bank' : 'Bank to Cash',
+      title: activeTab === 'ctb' ? 'Cash to Bank Transfer History' : 'Bank to Cash Transfer History',
+      subtitle: `Transfer History - ${historyFrom} to ${historyTo}`,
+      meta: [`Generated: ${new Date().toLocaleDateString('en-PK')} | Entries: ${filteredHistoryRows.length}`],
       headers: ['Sr', 'Date', 'Type', 'Bank', 'Description', 'Amount (Rs.)'],
       rows,
       numericColumns: [1, 6],
@@ -429,7 +425,7 @@ export default function BanksPage() {
               <button style={btnGhost} onClick={loadTransferHistory}>
                 <RefreshCw size={13} /> Refresh
               </button>
-              <button style={btnGhost} onClick={exportTransferHistoryExcel} disabled={historyLoading || historyRows.length === 0}>
+              <button style={btnGhost} onClick={exportTransferHistoryExcel} disabled={historyLoading || filteredHistoryRows.length === 0}>
                 <FileDown size={13} /> Export Excel
               </button>
             </div>
@@ -455,8 +451,8 @@ export default function BanksPage() {
               <tbody>
                 {historyLoading && <tr><td colSpan={5} style={{ padding: '12px 20px', color: '#6a8f6c' }}>Loading...</td></tr>}
                 {!historyLoading && historyError && <tr><td colSpan={5} style={{ padding: '12px 20px', color: '#b91c1c' }}>{historyError}</td></tr>}
-                {!historyLoading && !historyError && historyRows.length === 0 && <tr><td colSpan={5} style={{ padding: '12px 20px', color: '#6a8f6c' }}>No transactions found.</td></tr>}
-                {!historyLoading && !historyError && historyRows.map((row, index) => (
+                {!historyLoading && !historyError && filteredHistoryRows.length === 0 && <tr><td colSpan={5} style={{ padding: '12px 20px', color: '#6a8f6c' }}>No transactions found.</td></tr>}
+                {!historyLoading && !historyError && filteredHistoryRows.map((row, index) => (
                   <tr key={index} style={{ borderBottom: '1px solid #e8f0e8' }}>
                     <td style={{ ...tdStyle, fontFamily: 'monospace' }}>{row.entry_date}</td>
                     <td style={tdStyle}>

@@ -4,6 +4,7 @@ import { listCustomers, saveCustomer, listProducts, saveSale, getNextInvoiceNo, 
 import SuccessNotification from "../components/SuccessNotification";
 import WarningNotification from "../components/Warningnotification";
 import { printReceipt } from "../components/Thermalreceipt";
+import { useThemeLanguage } from "../context/ThemeLanguageContext";
 
 const palette = {
   pageBg: "#f2f6f2",
@@ -31,6 +32,7 @@ function createRow() {
 }
 
 export default function BillingWorkspace() {
+  const { t } = useThemeLanguage();
   const [rows, setRows] = useState([createRow()]);
   const [customer, setCustomer] = useState("");
   const [paymentType, setPaymentType] = useState("Cash");
@@ -205,10 +207,10 @@ export default function BillingWorkspace() {
   const proceedGenerateInvoice = useCallback(async (activeRows, saleItems) => {
     if (!selectedCustomerObj && parsedReceived < subtotal) {
       setWarnData({
-        title: "Payment Required",
+        title: t("billing.warn_payment_required_title", "Payment Required"),
         lines: [
-          { label: "Customer", value: "Walk-in Customer" },
-          { label: "Rule", value: "Must pay full invoice amount" }
+          { label: t("billing.warn_customer_label", "Customer"), value: t("billing.walkin_customer", "Walk-in Customer") },
+          { label: t("billing.warn_rule_label", "Rule"), value: t("billing.walkin_warning", "Must pay full invoice amount") }
         ]
       });
       return;
@@ -234,12 +236,12 @@ export default function BillingWorkspace() {
       const res = await saveSale(payload);
       if (res?.sale) {
         setSuccessData({
-          title: "Invoice Generated!",
+          title: t("billing.success_invoice_generated_title", "Invoice Generated!"),
           lines: [
-            { label: "Invoice No", value: res.sale.invoiceNo },
-            { label: "Total Bill", value: `Rs ${res.sale.total?.toLocaleString()}`, mono: true },
-            { label: "Cash Paid", value: `Rs ${res.sale.amountPaid?.toLocaleString()}`, mono: true },
-            { label: "Remaining Due", value: `Rs ${res.sale.balanceDue?.toLocaleString()}`, mono: true },
+            { label: t("billing.invoice_no", "Invoice No"), value: res.sale.invoiceNo },
+            { label: t("billing.total_bill_label", "Total Bill"), value: `Rs ${res.sale.total?.toLocaleString()}`, mono: true },
+            { label: t("billing.cash_paid_label", "Cash Paid"), value: `Rs ${res.sale.amountPaid?.toLocaleString()}`, mono: true },
+            { label: t("billing.remaining_due", "Remaining Due"), value: `Rs ${res.sale.balanceDue?.toLocaleString()}`, mono: true },
           ],
           onPrint: () => printReceipt({
             invoiceNo:      res.sale.invoiceNo,
@@ -276,8 +278,8 @@ export default function BillingWorkspace() {
     } catch (error) {
       console.error("Failed to generate invoice", error);
       setWarnData({
-        title: "Error Generating Invoice",
-        lines: [{ label: "Error", value: error.message || "Unknown error occurred" }]
+        title: t("billing.warn_error_generating_title", "Error Generating Invoice"),
+        lines: [{ label: t("billing.warn_error_label", "Error"), value: error.message || "Unknown error occurred" }]
       });
     }
   }, [
@@ -301,8 +303,8 @@ export default function BillingWorkspace() {
     const activeRows = rows.filter((r) => r.product);
     if (!activeRows.length) {
       setWarnData({
-        title: "Empty Invoice",
-        lines: [{ label: "Alert", value: "Please add at least one product item to the invoice." }]
+        title: t("billing.warn_empty_invoice_title", "Empty Invoice"),
+        lines: [{ label: t("billing.warn_alert_label", "Alert"), value: t("billing.warn_empty_invoice_msg", "Please add at least one product item to the invoice.") }]
       });
       return;
     }
@@ -319,17 +321,19 @@ export default function BillingWorkspace() {
 
     if (outOfStockItems.length > 0 || overStockItems.length > 0) {
       setWarnData({
-        title: "Stock Warning",
+        title: t("billing.warn_stock_warning_title", "Stock Warning"),
         lines: [
-          ...outOfStockItems.map((r) => ({ label: r.product, value: "Out of Stock" })),
+          ...outOfStockItems.map((r) => ({ label: r.product, value: t("billing.out_of_stock", "Out of Stock") })),
           ...overStockItems.map((r) => ({
             label: r.product,
-            value: `Qty ${r.qty} exceeds stock (${r.availableStock} available)`,
+            value: t("billing.warn_qty_exceeds_stock", "Qty {qty} exceeds stock ({available} available)")
+              .replace("{qty}", r.qty)
+              .replace("{available}", r.availableStock),
           })),
-          { label: "Note", value: "Invoice will still be generated" },
+          { label: t("billing.warn_note_label", "Note"), value: t("billing.warn_stock_invoice_anyway", "Invoice will still be generated") },
         ],
-        confirmLabel: "Generate Anyway",
-        cancelLabel: "Review Items",
+        confirmLabel: t("billing.btn_generate_anyway", "Generate Anyway"),
+        cancelLabel: t("billing.btn_review_items", "Review Items"),
         onConfirm: () => proceedGenerateInvoice(activeRows, saleItems),
       });
       return;
@@ -359,12 +363,12 @@ export default function BillingWorkspace() {
         <div style={st.topStrip}>
           <div style={st.stripLeft}>
             <div style={st.metaBlock}>
-              <span style={st.metaLabel}>Invoice No</span>
+              <span style={st.metaLabel}>{t("billing.invoice_no", "Invoice No")}</span>
               <strong style={st.metaValue}>{invoiceNo}</strong>
             </div>
 
             <div style={st.metaBlock}>
-              <span style={st.metaLabel}>Date</span>
+              <span style={st.metaLabel}>{t("billing.date", "Date")}</span>
               <strong style={st.metaValue}>{billingDate}</strong>
             </div>
           </div>
@@ -375,7 +379,7 @@ export default function BillingWorkspace() {
               options={customers}
               getOptionLabel={(c) => c.name}
               getOptionValue={(c) => c.id}
-              placeholder="Search or Select Customer Name"
+              placeholder={t("billing.search_customer", "Search or Select Customer Name")}
               onChange={(val, obj) => {
                 setSelectedCustomerObj(obj || null);
                 setCustomer(obj ? obj.name : val || "");
@@ -390,7 +394,7 @@ export default function BillingWorkspace() {
               value={paymentType}
               onChange={(e) => setPaymentType(e.target.value)}
             >
-              <option value="Cash">Cash</option>
+              <option value="Cash">{t("billing.cash", "Cash")}</option>
               {banks.map(b => (
                 <option key={b.id} value={b.name}>{b.name}</option>
               ))}
@@ -404,26 +408,26 @@ export default function BillingWorkspace() {
           <div style={st.productWorkspace}>
             <div style={st.sectionTop}>
               <div>
-                <h2 style={st.sectionTitle}>Product Entry</h2>
+                <h2 style={st.sectionTitle}>{t("billing.product_entry", "Product Entry")}</h2>
                 <p style={st.sectionSubtext}>
                 </p>
               </div>
 
               <button style={st.addRowBtn} onClick={addRow}>
-                + Add Row
+                {t("billing.add_row", "+ Add Row")}
               </button>
             </div>
 
             <div>
               <div style={st.tableWrap}>
                 <div style={st.tableHead}>
-                  <span style={{ width: 36 }}>#</span>
-                  <span style={{ flex: 3 }}>Product</span>
-                  <span style={{ flex: 0.9 }}>Qty</span>
-                  <span style={{ flex: 1 }}>Unit</span>
-                  <span style={{ flex: 1.2 }}>Price (Rs)</span>
-                  <span style={{ flex: 1 }}>Discount</span>
-                  <span style={{ flex: 1.3 }}>Total</span>
+                  <span style={{ width: 36 }}>{t("billing.hash", "#")}</span>
+                  <span style={{ flex: 3 }}>{t("billing.product", "Product")}</span>
+                  <span style={{ flex: 0.9 }}>{t("billing.qty", "Qty")}</span>
+                  <span style={{ flex: 1 }}>{t("billing.unit", "Unit")}</span>
+                  <span style={{ flex: 1.2 }}>{t("billing.price", "Price (Rs)")}</span>
+                  <span style={{ flex: 1 }}>{t("billing.discount", "Discount")}</span>
+                  <span style={{ flex: 1.3 }}>{t("billing.total", "Total")}</span>
                   <span style={{ width: 44 }}></span>
                 </div>
 
@@ -443,7 +447,7 @@ export default function BillingWorkspace() {
                         options={products}
                         getOptionLabel={(p) => p.name}
                         getOptionValue={(p) => p.id}
-                        placeholder="Search product..."
+                        placeholder={t("billing.search_product_placeholder", "Search product...")}
                         compact
                         onChange={(val, option) => {
                           if (option) updateRow(row.id, "product", option.name);
@@ -451,12 +455,12 @@ export default function BillingWorkspace() {
                       />
                       {row.outOfStock && (
                         <div style={{ fontSize: 10, color: "#c62828", fontWeight: 700, marginTop: 2, paddingLeft: 2 }}>
-                          ⚠ Out of stock
+                          {t("billing.out_of_stock", "⚠ Out of stock")}
                         </div>
                       )}
                       {row.overStock && (
                         <div style={{ fontSize: 10, color: "#e65100", fontWeight: 700, marginTop: 2, paddingLeft: 2 }}>
-                          ⚠ Only {row.availableStock} in stock
+                          {t("billing.only_stock", "⚠ Only {qty} in stock").replace("{qty}", row.availableStock)}
                         </div>
                       )}
                     </div>
@@ -491,7 +495,7 @@ export default function BillingWorkspace() {
                     />
 
                     <div style={{ ...st.totalCell, flex: 1.3 }}>
-                      Rs {row.total.toFixed(0)}
+                      {t("billing.rs_amount", "Rs {amount}").replace("{amount}", row.total.toFixed(0))}
                     </div>
 
                     <button style={st.deleteBtn} onClick={() => removeRow(row.id)}>
@@ -508,7 +512,7 @@ export default function BillingWorkspace() {
                 rows={2}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder="Notes or delivery instructions..."
+                placeholder={t("billing.notes_placeholder", "Notes or delivery instructions...")}
               />
             </div>
           </div>
@@ -518,7 +522,7 @@ export default function BillingWorkspace() {
             {/* MERGED SUMMARY + PAYMENT */}
             <div style={st.sideCard}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <h3 style={st.sideTitle}>Summary & Payment</h3>
+                <h3 style={st.sideTitle}>{t("billing.summary_payment", "Summary & Payment")}</h3>
                 <div style={{
                   padding: "4px 10px",
                   borderRadius: 999,
@@ -527,36 +531,36 @@ export default function BillingWorkspace() {
                   background: paymentStatus === "Paid" ? "#e8f5e9" : paymentStatus === "Partial" ? "#fff3e0" : "#ffebee",
                   color: paymentStatus === "Paid" ? "#2e7d32" : paymentStatus === "Partial" ? "#ef6c00" : "#c62828"
                 }}>
-                  {paymentStatus}
+                  {t("billing.payment_status_" + paymentStatus.toLowerCase(), paymentStatus)}
                 </div>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
-                <SummaryRow label="Items" value={`${itemCount}`} />
-                <SummaryRow label="Discount" value={`Rs ${totalDiscount.toFixed(0)}`} />
+                <SummaryRow label={t("billing.items", "Items")} value={`${itemCount}`} />
+                <SummaryRow label={t("billing.discount", "Discount")} value={t("billing.rs_amount", "Rs {amount}").replace("{amount}", totalDiscount.toFixed(0))} />
                 {creditApplied > 0 && (
                   <div style={{
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    padding: '8px 12px', borderRadius: 10,
-                    background: '#e8f5e9', border: '1px solid #c8e6c9', fontSize: 14,
+                     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                     padding: '8px 12px', borderRadius: 10,
+                     background: '#e8f5e9', border: '1px solid #c8e6c9', fontSize: 14,
                   }}>
-                    <span style={{ color: '#2e7d32', fontWeight: 700 }}>✓ Advance Credit Applied</span>
-                    <strong style={{ color: '#2e7d32' }}>− Rs {creditApplied.toLocaleString()}</strong>
+                    <span style={{ color: '#2e7d32', fontWeight: 700 }}>{t("billing.advance_credit_applied", "✓ Advance Credit Applied")}</span>
+                    <strong style={{ color: '#2e7d32' }}>− {t("billing.rs_amount", "Rs {amount}").replace("{amount}", creditApplied.toLocaleString())}</strong>
                   </div>
                 )}
               </div>
 
               <div style={{ ...st.grandTotalBox, padding: 12, marginBottom: 10 }}>
-                <span style={st.grandLabel}>Grand Total</span>
-                <strong style={{ ...st.grandValue, fontSize: 22 }}>Rs {subtotal.toFixed(0)}</strong>
+                <span style={st.grandLabel}>{t("billing.grand_total", "Grand Total")}</span>
+                <strong style={{ ...st.grandValue, fontSize: 22 }}>{t("billing.rs_amount", "Rs {amount}").replace("{amount}", subtotal.toFixed(0))}</strong>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <div style={st.paymentBox}>
                   <span style={st.paymentLabel}>
                     {creditApplied > 0
-                      ? `Cash Received (Credit Rs ${creditApplied.toLocaleString()} auto-applied)`
-                      : "Amount Received"}
+                      ? t("billing.cash_received_credit", "Cash Received (Credit Rs {creditApplied} auto-applied)").replace("{creditApplied}", creditApplied.toLocaleString())
+                      : t("billing.amount_received", "Amount Received")}
                   </span>
                   <input
                     type="number"
@@ -568,20 +572,20 @@ export default function BillingWorkspace() {
                 </div>
 
                 <div style={st.paymentBox}>
-                  <span style={st.paymentLabel}>{changeAmount > 0 ? "Change Return" : "Remaining Due"}</span>
+                  <span style={st.paymentLabel}>{changeAmount > 0 ? t("billing.change_return", "Change Return") : t("billing.remaining_due", "Remaining Due")}</span>
                   <strong style={{
                     ...st.paymentValue,
                     fontSize: 18,
                     color: changeAmount > 0 ? "#2e7d32" : remainingAmount > 0 ? "#c62828" : "#2e7d32"
                   }}>
-                    Rs {(changeAmount || remainingAmount).toFixed(0)}
+                    {t("billing.rs_amount", "Rs {amount}").replace("{amount}", (changeAmount || remainingAmount).toFixed(0))}
                   </strong>
                 </div>
               </div>
 
               {!selectedCustomerObj && remainingAmount > 0 && (
                 <div style={{ ...st.walkInWarning, marginTop: 8, fontSize: 12, padding: '8px 12px' }}>
-                  Walk-in customer invoices cannot remain unpaid.
+                  {t("billing.walkin_warning", "Walk-in customer invoices cannot remain unpaid.")}
                 </div>
               )}
             </div>
@@ -589,29 +593,29 @@ export default function BillingWorkspace() {
             {/* CUSTOMER CONTEXT */}
             <div style={st.sideCard}>
               <div style={{ marginBottom: 8 }}>
-                <h3 style={st.sideTitle}>Customer Context</h3>
+                <h3 style={st.sideTitle}>{t("billing.customer_context", "Customer Context")}</h3>
               </div>
 
               {selectedCustomerObj ? (
                 <>
                   <div style={{ ...st.contextItem, borderLeft: `3px solid ${selectedCustomerObj.current_balance > 0 ? '#c62828' : selectedCustomerObj.current_balance < 0 ? '#2e7d32' : '#738675'}` }}>
-                    <div style={{ fontSize: 11, color: "#6f8571", textTransform: "uppercase", fontWeight: 700 }}>Current Balance</div>
+                    <div style={{ fontSize: 11, color: "#6f8571", textTransform: "uppercase", fontWeight: 700 }}>{t("billing.current_balance", "Current Balance")}</div>
                     <div style={{ fontSize: 15, fontWeight: "bold", color: selectedCustomerObj.current_balance > 0 ? '#c62828' : '#203522', marginTop: 2 }}>
                       {selectedCustomerObj.current_balance === 0
-                        ? 'Rs 0'
+                        ? t("billing.rs_zero", "Rs 0")
                         : selectedCustomerObj.current_balance > 0
-                          ? `(Dr) Rs ${Math.abs(selectedCustomerObj.current_balance).toLocaleString()}`
-                          : `(Cr) Rs ${Math.abs(selectedCustomerObj.current_balance).toLocaleString()}`}
+                          ? t("billing.dr_balance", "(Dr) Rs {amount}").replace("{amount}", Math.abs(selectedCustomerObj.current_balance).toLocaleString())
+                          : t("billing.cr_balance", "(Cr) Rs {amount}").replace("{amount}", Math.abs(selectedCustomerObj.current_balance).toLocaleString())}
                     </div>
                     {customerCredit > 0 && (
                       <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 8, background: applyCredit ? '#e8f5e9' : '#f8fbf8', border: `1px solid ${applyCredit ? '#a5d6a7' : '#dde8dd'}` }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                           <span style={{ fontSize: 12, fontWeight: 700, color: '#2e7d32' }}>
-                            Apply Advance Credit
+                            {t("billing.apply_credit", "Apply Advance Credit")}
                           </span>
                           <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                             <span style={{ fontSize: 11, color: applyCredit ? '#2e7d32' : '#999', fontWeight: 600 }}>
-                              {applyCredit ? 'ON' : 'OFF'}
+                              {applyCredit ? t("billing.on", "ON") : t("billing.off", "OFF")}
                             </span>
                             <div
                               onClick={() => setApplyCredit(p => !p)}
@@ -631,24 +635,24 @@ export default function BillingWorkspace() {
                         </div>
                         {applyCredit && subtotal > 0 && (
                           <div style={{ fontSize: 11, color: '#2e7d32', marginTop: 5, fontWeight: 600 }}>
-                            Rs {Math.min(customerCredit, subtotal).toLocaleString()} will be deducted from advance
+                            {t("billing.rs_amount", "Rs {amount}").replace("{amount}", Math.min(customerCredit, subtotal).toLocaleString())} {t("billing.deducted_from_advance", "will be deducted from advance")}
                           </div>
                         )}
                         {!applyCredit && (
                           <div style={{ fontSize: 11, color: '#999', marginTop: 5 }}>
-                            Customer will pay full amount in cash
+                            {t("billing.full_cash_paying", "Customer will pay full amount in cash")}
                           </div>
                         )}
                       </div>
                     )}
                   </div>
                   <div style={{ ...st.contextItem, marginBottom: 0 }}>
-                    Last Purchase: {selectedCustomerObj.last_purchase || "None"}
+                    {t("billing.last_purchase", "Last Purchase:")} {selectedCustomerObj.last_purchase || t("billing.none", "None")}
                   </div>
                 </>
               ) : (
                 <div style={{ fontSize: 13, color: '#738675' }}>
-                  {customer ? "Walk-in / Unregistered" : "No customer selected."}
+                  {customer ? t("billing.walkin_customer", "Walk-in / Unregistered") : t("billing.no_customer", "No customer selected.")}
                 </div>
               )}
             </div>
@@ -659,25 +663,25 @@ export default function BillingWorkspace() {
         <div style={st.bottomBar}>
           <div style={st.bottomLeft}>
             <div style={st.bottomMetric}>
-              <span style={st.bottomLabel}>Total Items</span>
+              <span style={st.bottomLabel}>{t("billing.total_items", "Total Items")}</span>
               <strong>{itemCount}</strong>
             </div>
 
             <div style={st.bottomMetric}>
-              <span style={st.bottomLabel}>Discount Given</span>
-              <strong>Rs {totalDiscount.toFixed(0)}</strong>
+              <span style={st.bottomLabel}>{t("billing.discount_given", "Discount Given")}</span>
+              <strong>{t("billing.rs_amount", "Rs {amount}").replace("{amount}", totalDiscount.toFixed(0))}</strong>
             </div>
 
             <div style={st.bottomMetric}>
-              <span style={st.bottomLabel}>Payment Method</span>
-              <strong>{paymentType}</strong>
+              <span style={st.bottomLabel}>{t("billing.payment_method", "Payment Method")}</span>
+              <strong>{paymentType === "Cash" ? t("billing.cash", "Cash") : paymentType}</strong>
             </div>
           </div>
 
           <div style={st.bottomRight}>
-            <div style={st.bottomTotal}>Rs {subtotal.toFixed(0)}</div>
+            <div style={st.bottomTotal}>{t("billing.rs_amount", "Rs {amount}").replace("{amount}", subtotal.toFixed(0))}</div>
             <button style={st.generateBtn} onClick={handleGenerateInvoice}>
-              Generate Invoice
+              {t("billing.generate_invoice", "Generate Invoice")}
             </button>
           </div>
         </div>

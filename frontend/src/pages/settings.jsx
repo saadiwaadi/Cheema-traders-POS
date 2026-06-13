@@ -1,8 +1,226 @@
 import { useState, useEffect } from "react";
 import * as api from "../lib/posApi";
+import { useThemeLanguage } from "../context/ThemeLanguageContext";
 
-export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState("general"); // "general" | "stock"
+const ALL_MODULES = [
+  { id: "home", label: "Dashboard" },
+  { id: "sales", label: "Billing" },
+  { id: "invoices", label: "Invoices" },
+  { id: "products", label: "Inventory" },
+  { id: "customers", label: "Customers" },
+  { id: "addCompany", label: "Suppliers" },
+  { id: "payments", label: "Payments" },
+  { id: "expenses", label: "Expenses" },
+  { id: "banks", label: "Banks" },
+  { id: "cashbook", label: "Cash Book" },
+  { id: "ledger", label: "General Ledger" },
+  { id: "journal", label: "Journal Entries" },
+  { id: "coa", label: "Chart of Accounts" },
+  { id: "trialbalance", label: "Trial Balance" },
+  { id: "analysis", label: "Analysis" },
+  { id: "reports", label: "Reports" },
+  { id: "settings", label: "Settings" },
+];
+
+export default function SettingsPage({ user }) {
+  const isAdmin = user?.role === "admin";
+  const { t, language } = useThemeLanguage();
+  const [activeTab, setActiveTab] = useState(isAdmin ? "general" : "changePassword");
+
+  // Backup State
+  const [dbInfo, setDbInfo] = useState(null);
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [backupMsg, setBackupMsg] = useState(null);
+  const [recentBackups, setRecentBackups] = useState([]);
+  const [copiedIndex, setCopiedIndex] = useState(null);
+
+  const fetchDbInfo = async () => {
+    try {
+      const info = await api.getDbInfo();
+      setDbInfo(info);
+    } catch (err) {
+      console.error("Failed to fetch database info:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "backup" && isAdmin) {
+      fetchDbInfo();
+    }
+  }, [activeTab, isAdmin]);
+
+  const formatBytes = (bytes) => {
+    if (!bytes) return "0 Bytes";
+    const k = 1024;
+    const sizes = ["Bytes", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+  };
+
+  const handleOneClickBackup = async () => {
+    setBackupLoading(true);
+    setBackupMsg(null);
+    try {
+      const now = new Date();
+      const timestamp = now.getFullYear() +
+        String(now.getMonth() + 1).padStart(2, '0') +
+        String(now.getDate()).padStart(2, '0') + "_" +
+        String(now.getHours()).padStart(2, '0') +
+        String(now.getMinutes()).padStart(2, '0') +
+        String(now.getSeconds()).padStart(2, '0');
+      
+      const targetDir = "C:\\CheemaTradersPOS\\Backups\\";
+      const filename = `cheema_traders_pos_backup_${timestamp}.db`;
+      const fullPath = targetDir + filename;
+
+      await api.exportBackup(fullPath);
+
+      const newBackup = {
+        path: fullPath,
+        time: now.toLocaleTimeString()
+      };
+      setRecentBackups(prev => [newBackup, ...prev]);
+
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(fullPath);
+      }
+
+      setBackupMsg({
+        type: "success",
+        text: t("settings.backup_success", "Database backup created successfully!") + ` (${fullPath})`
+      });
+      fetchDbInfo();
+    } catch (err) {
+      setBackupMsg({
+        type: "error",
+        text: t("settings.backup_failed", "Failed to create database backup: {error}").replace("{error}", err.message)
+      });
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  const handleCustomBackup = async () => {
+    setBackupLoading(true);
+    setBackupMsg(null);
+    try {
+      const now = new Date();
+      const timestamp = now.getFullYear() +
+        String(now.getMonth() + 1).padStart(2, '0') +
+        String(now.getDate()).padStart(2, '0') + "_" +
+        String(now.getHours()).padStart(2, '0') +
+        String(now.getMinutes()).padStart(2, '0') +
+        String(now.getSeconds()).padStart(2, '0');
+      const filename = `cheema_traders_pos_backup_${timestamp}.db`;
+
+      if (api.usingIpc() && window.ipc) {
+        const res = await window.ipc.invoke("system:show-save-dialog", {
+          title: t("settings.custom_backup_btn", "Save to Custom Location..."),
+          defaultPath: filename,
+          filters: [{ name: "SQLite Database", extensions: ["db"] }]
+        });
+
+        if (res.canceled || !res.filePath) {
+          setBackupLoading(false);
+          return;
+        }
+
+        await api.exportBackup(res.filePath);
+
+        const newBackup = {
+          path: res.filePath,
+          time: now.toLocaleTimeString()
+        };
+        setRecentBackups(prev => [newBackup, ...prev]);
+
+        if (navigator.clipboard) {
+          await navigator.clipboard.writeText(res.filePath);
+        }
+
+        setBackupMsg({
+          type: "success",
+          text: t("settings.backup_success", "Database backup created successfully!") + ` (${res.filePath})`
+        });
+      } else {
+        const downloadUrl = api.getBackupDownloadUrl();
+        const a = document.createElement("a");
+        a.href = downloadUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+
+        setBackupMsg({
+          type: "success",
+          text: t("settings.backup_success", "Database backup created successfully!") + " (Initiated download)"
+        });
+      }
+      fetchDbInfo();
+    } catch (err) {
+      setBackupMsg({
+        type: "error",
+        text: t("settings.backup_failed", "Failed to create database backup: {error}").replace("{error}", err.message)
+      });
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  const handleRestoreBackup = async () => {
+    setBackupMsg(null);
+    try {
+      let sourcePath = "";
+
+      if (api.usingIpc() && window.ipc) {
+        const res = await window.ipc.invoke("system:show-open-dialog", {
+          title: t("settings.restore_btn", "Restore from Backup File..."),
+          properties: ["openFile"],
+          filters: [{ name: "SQLite Database", extensions: ["db"] }]
+        });
+
+        if (res.canceled || !res.filePaths || res.filePaths.length === 0) {
+          return;
+        }
+        sourcePath = res.filePaths[0];
+      } else {
+        alert("Restore functionality via Web UI is restricted. Please use the Electron app to import databases locally.");
+        return;
+      }
+
+      const confirmRestore = window.confirm(
+        t("settings.confirm_restore_msg", "Are you absolutely sure you want to restore the database from this file? All current data since the backup will be lost. This cannot be undone.")
+      );
+
+      if (!confirmRestore) return;
+
+      setBackupLoading(true);
+      await api.importBackup(sourcePath);
+
+      setBackupMsg({
+        type: "success",
+        text: t("settings.restore_success", "Database restored successfully! Reloading...")
+      });
+
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
+
+    } catch (err) {
+      setBackupMsg({
+        type: "error",
+        text: t("settings.restore_failed", "Failed to restore database: {error}").replace("{error}", err.message)
+      });
+      setBackupLoading(false);
+    }
+  };
+
+  const handleCopyPath = async (path, idx) => {
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText(path);
+      setCopiedIndex(idx);
+      setTimeout(() => setCopiedIndex(null), 1500);
+    }
+  };
   const [expiryDays, setExpiryDays] = useState(() => {
     return Number(localStorage.getItem("expiryThresholdDays")) || 60;
   });
@@ -13,6 +231,20 @@ export default function SettingsPage() {
   const [savingId, setSavingId] = useState(null);
   const [saveStatus, setSaveStatus] = useState({}); // productId -> "saved" | "error"
 
+  // User Management state
+  const [usersList, setUsersList] = useState([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
+  const [isFormOpen, setIsFormOpen] = useState(false);
+
+  // User Form fields state
+  const [formUsername, setFormUsername] = useState("");
+  const [formPassword, setFormPassword] = useState("");
+  const [formRole, setFormRole] = useState("staff");
+  const [formActive, setFormActive] = useState(1);
+  const [formUseCustomPerms, setFormUseCustomPerms] = useState(false);
+  const [formPerms, setFormPerms] = useState([]);
+
   const handleExpiryThresholdChange = (val) => {
     const days = Number(val) || 0;
     setExpiryDays(days);
@@ -20,7 +252,7 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
-    if (activeTab === "stock") {
+    if (activeTab === "stock" && isAdmin) {
       const fetchProducts = async () => {
         setLoading(true);
         try {
@@ -35,7 +267,27 @@ export default function SettingsPage() {
       };
       fetchProducts();
     }
-  }, [activeTab]);
+  }, [activeTab, isAdmin]);
+
+  const fetchUsersList = async () => {
+    setUsersLoading(true);
+    try {
+      const res = await api.listUsers();
+      if (res?.users) {
+        setUsersList(res.users);
+      }
+    } catch (err) {
+      console.error("Failed to fetch users:", err);
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "users" && isAdmin) {
+      fetchUsersList();
+    }
+  }, [activeTab, isAdmin]);
 
   const handleUpdateStockThreshold = async (product, val) => {
     const newVal = parseInt(val, 10);
@@ -57,6 +309,76 @@ export default function SettingsPage() {
     }
   };
 
+  const handleOpenAdd = () => {
+    setEditingUser(null);
+    setFormUsername("");
+    setFormPassword("");
+    setFormRole("staff");
+    setFormActive(1);
+    setFormUseCustomPerms(false);
+    setFormPerms(["home", "sales", "invoices", "products", "customers", "settings"]);
+    setIsFormOpen(true);
+  };
+
+  const handleOpenEdit = (u) => {
+    setEditingUser(u);
+    setFormUsername(u.username);
+    setFormPassword("");
+    setFormRole(u.role);
+    setFormActive(u.active);
+    if (u.permissions && Array.isArray(u.permissions)) {
+      setFormUseCustomPerms(true);
+      setFormPerms(u.permissions);
+    } else {
+      setFormUseCustomPerms(false);
+      setFormPerms([]);
+    }
+    setIsFormOpen(true);
+  };
+
+  const handleSaveUser = async (e) => {
+    e.preventDefault();
+    if (!formUsername.trim()) return;
+
+    const payload = {
+      username: formUsername.trim(),
+      role: formRole,
+      active: Number(formActive),
+      permissions: formUseCustomPerms ? formPerms : null,
+    };
+
+    if (editingUser) {
+      payload.id = editingUser.id;
+      if (formPassword) {
+        payload.password = formPassword;
+      }
+    } else {
+      if (!formPassword) {
+        alert("Password is required for new users");
+        return;
+      }
+      payload.password = formPassword;
+    }
+
+    try {
+      await api.saveUser(payload);
+      setIsFormOpen(false);
+      fetchUsersList();
+    } catch (err) {
+      alert("Failed to save user: " + err.message);
+    }
+  };
+
+  const handleTogglePerm = (permId) => {
+    setFormPerms(prev => {
+      if (prev.includes(permId)) {
+        return prev.filter(p => p !== permId);
+      } else {
+        return [...prev, permId];
+      }
+    });
+  };
+
   const filteredProducts = products.filter(p =>
     p.name.toLowerCase().includes(search.toLowerCase()) ||
     (p.sku && p.sku.toLowerCase().includes(search.toLowerCase())) ||
@@ -67,22 +389,48 @@ export default function SettingsPage() {
     <div style={st.container}>
       {/* Settings Navigation */}
       <div style={st.navRow}>
+        {isAdmin && (
+          <>
+            <button
+              onClick={() => setActiveTab("general")}
+              style={{ ...st.navTab, ...(activeTab === "general" ? st.navTabActive : {}) }}
+            >
+              {t("settings.general_alerts", "General Alerts")}
+            </button>
+            <button
+              onClick={() => setActiveTab("stock")}
+              style={{ ...st.navTab, ...(activeTab === "stock" ? st.navTabActive : {}) }}
+            >
+              {t("settings.low_stock_thresholds", "Low-Stock Thresholds")}
+            </button>
+          </>
+        )}
         <button
-          onClick={() => setActiveTab("general")}
-          style={{ ...st.navTab, ...(activeTab === "general" ? st.navTabActive : {}) }}
+          onClick={() => setActiveTab("changePassword")}
+          style={{ ...st.navTab, ...(activeTab === "changePassword" ? st.navTabActive : {}) }}
         >
-          General Alerts
+          {t("settings.change_password", "Change Password")}
         </button>
-        <button
-          onClick={() => setActiveTab("stock")}
-          style={{ ...st.navTab, ...(activeTab === "stock" ? st.navTabActive : {}) }}
-        >
-          Low-Stock Thresholds
-        </button>
+        {isAdmin && (
+          <>
+            <button
+              onClick={() => setActiveTab("users")}
+              style={{ ...st.navTab, ...(activeTab === "users" ? st.navTabActive : {}) }}
+            >
+              {t("settings.user_management", "User Management")}
+            </button>
+            <button
+              onClick={() => setActiveTab("backup")}
+              style={{ ...st.navTab, ...(activeTab === "backup" ? st.navTabActive : {}) }}
+            >
+              {t("settings.database_backup", "Database Backup")}
+            </button>
+          </>
+        )}
       </div>
 
       <div style={st.card}>
-        {activeTab === "general" ? (
+        {activeTab === "general" && isAdmin && (
           <div>
             <h3 style={st.sectionTitle}>General Alert Preferences</h3>
             <p style={st.subText}>Configure generic alerts and warning parameters across the system.</p>
@@ -102,7 +450,9 @@ export default function SettingsPage() {
               </div>
             </div>
           </div>
-        ) : (
+        )}
+
+        {activeTab === "stock" && isAdmin && (
           <div>
             <h3 style={st.sectionTitle}>Low-Stock Product Thresholds</h3>
             <p style={st.subText}>Specify minimum quantity limits to trigger low-stock warning labels.</p>
@@ -166,7 +516,585 @@ export default function SettingsPage() {
             )}
           </div>
         )}
+
+        {activeTab === "changePassword" && (
+          <ChangePasswordTab userId={user?.id} />
+        )}
+
+        {activeTab === "users" && isAdmin && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div>
+                <h3 style={st.sectionTitle}>User Management</h3>
+                <p style={st.subText}>Create and manage users, roles, and module access control permissions.</p>
+              </div>
+              <button onClick={handleOpenAdd} style={st.btnPrimary}>
+                + Add User
+              </button>
+            </div>
+
+            {usersLoading ? (
+              <div style={st.loadingText}>Loading users list...</div>
+            ) : usersList.length === 0 ? (
+              <div style={st.loadingText}>No users registered.</div>
+            ) : (
+              <div style={st.tableContainer}>
+                <div style={st.tableHeader}>
+                  <span style={{ flex: 2 }}>Username</span>
+                  <span style={{ flex: 1.5 }}>Role</span>
+                  <span style={{ flex: 1.5 }}>Status</span>
+                  <span style={{ flex: 4 }}>Permissions / Module Access</span>
+                  <span style={{ flex: 1.5, textAlign: "right" }}>Actions</span>
+                </div>
+                <div style={st.tableBody}>
+                  {usersList.map(u => (
+                    <div key={u.id} style={st.tableRow}>
+                      <span style={{ flex: 2, fontWeight: 600, color: "#1b3a1d" }}>{u.username}</span>
+                      <span style={{ flex: 1.5, textTransform: "capitalize" }}>{u.role}</span>
+                      <span style={{ flex: 1.5 }}>
+                        <span style={{
+                          padding: "2px 8px",
+                          borderRadius: 4,
+                          fontSize: 11,
+                          fontWeight: 700,
+                          background: u.active === 1 ? "#e8f5e9" : "#ffebee",
+                          color: u.active === 1 ? "#2e7d32" : "#c62828"
+                        }}>
+                          {u.active === 1 ? "Active" : "Inactive"}
+                        </span>
+                      </span>
+                      <span style={{ flex: 4, fontSize: 12, color: "#555" }}>
+                        {u.permissions && Array.isArray(u.permissions) ? (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                            {u.permissions.map(p => {
+                              const moduleLabel = ALL_MODULES.find(m => m.id === p)?.label || p;
+                              return (
+                                <span key={p} style={{
+                                  background: "#f1f8f4",
+                                  border: "1px solid #cde0cd",
+                                  padding: "2px 6px",
+                                  borderRadius: 4,
+                                  fontSize: 10,
+                                  fontWeight: 600,
+                                  color: "#2e7d32"
+                                }}>
+                                  {moduleLabel}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <span style={{ fontStyle: "italic", color: "#888" }}>
+                            {u.role === "admin" ? "All Access (Admin Default)" : "Default Access (Staff Default)"}
+                          </span>
+                        )}
+                      </span>
+                      <div style={{ flex: 1.5, display: "flex", justifyContent: "flex-end" }}>
+                        <button onClick={() => handleOpenEdit(u)} style={st.btnSecondarySmall}>
+                          Edit
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Modal Overlay / Form Drawer */}
+            {isFormOpen && (
+              <div style={st.modalOverlay}>
+                <div style={st.modalCard}>
+                  <h3 style={st.sectionTitle}>{editingUser ? "Edit User" : "Add User"}</h3>
+                  <form onSubmit={handleSaveUser} style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 16 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <label style={st.formLabel}>Username</label>
+                      <input
+                        type="text"
+                        value={formUsername}
+                        onChange={e => setFormUsername(e.target.value)}
+                        style={st.thresholdInputText}
+                        required
+                        disabled={editingUser && editingUser.username === "admin"}
+                      />
+                    </div>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <label style={st.formLabel}>
+                        {editingUser ? "Change Password (Leave blank to keep)" : "Password"}
+                      </label>
+                      <input
+                        type="password"
+                        value={formPassword}
+                        onChange={e => setFormPassword(e.target.value)}
+                        style={st.thresholdInputText}
+                        required={!editingUser}
+                      />
+                    </div>
+
+                    <div style={{ display: "flex", gap: 16 }}>
+                      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                        <label style={st.formLabel}>Role</label>
+                        <select
+                          value={formRole}
+                          onChange={e => setFormRole(e.target.value)}
+                          style={st.select}
+                          disabled={editingUser && editingUser.username === "admin"}
+                        >
+                          <option value="staff">Staff</option>
+                          <option value="admin">Admin</option>
+                        </select>
+                      </div>
+
+                      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                        <label style={st.formLabel}>Status</label>
+                        <select
+                          value={formActive}
+                          onChange={e => setFormActive(Number(e.target.value))}
+                          style={st.select}
+                          disabled={editingUser && editingUser.username === "admin"}
+                        >
+                          <option value={1}>Active</option>
+                          <option value={0}>Inactive</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, borderTop: "1px solid #e8f0e8", paddingTop: 12 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                        <input
+                          type="checkbox"
+                          id="custom_perms_checkbox"
+                          checked={formUseCustomPerms}
+                          onChange={e => setFormUseCustomPerms(e.target.checked)}
+                          style={{ width: 16, height: 16, cursor: "pointer" }}
+                        />
+                        <label htmlFor="custom_perms_checkbox" style={{ fontSize: 13, fontWeight: 700, color: "#1b3a1d", cursor: "pointer" }}>
+                          Custom Module Access Control
+                        </label>
+                      </div>
+
+                      {formUseCustomPerms && (
+                        <div style={st.checkboxGrid}>
+                          {ALL_MODULES.map(m => (
+                            <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <input
+                                type="checkbox"
+                                id={`perm_${m.id}`}
+                                checked={formPerms.includes(m.id)}
+                                onChange={() => handleTogglePerm(m.id)}
+                                style={{ width: 14, height: 14, cursor: "pointer" }}
+                              />
+                              <label htmlFor={`perm_${m.id}`} style={{ fontSize: 12, color: "#333", cursor: "pointer" }}>
+                                {m.label}
+                              </label>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 12, borderTop: "1px solid #e8f0e8", paddingTop: 12 }}>
+                      <button type="button" onClick={() => setIsFormOpen(false)} style={st.btnSecondary}>
+                        Cancel
+                      </button>
+                      <button type="submit" style={st.btnPrimary}>
+                        Save User
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "backup" && isAdmin && (
+          <div>
+            <h3 style={st.sectionTitle}>{t("settings.backup_recovery_title", "Database Backup & Recovery")}</h3>
+            <p style={st.subText}>{t("settings.backup_recovery_desc", "Safeguard your application data by exporting backups or restoring previous copies.")}</p>
+
+            {backupMsg && (
+              <div style={{
+                padding: "12px 16px",
+                borderRadius: 8,
+                marginBottom: 20,
+                fontSize: "13.5px",
+                fontWeight: 600,
+                background: backupMsg.type === "success" ? "#e8f5e9" : "#ffebee",
+                color: backupMsg.type === "success" ? "#2e7d32" : "#c62828",
+                border: `1.5px solid ${backupMsg.type === "success" ? "#a5d6a7" : "#ffcdd2"}`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between"
+              }}>
+                <span>{backupMsg.text}</span>
+                <button 
+                  onClick={() => setBackupMsg(null)}
+                  style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", fontWeight: 700, fontSize: "16px" }}
+                >
+                  ×
+                </button>
+              </div>
+            )}
+
+            {/* DB Status and size dashboard */}
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+              gap: "16px",
+              marginBottom: "24px"
+            }}>
+              <div style={{
+                background: "var(--surface-secondary, #f4faf4)",
+                border: "1px solid var(--border, #cde0cd)",
+                borderRadius: "8px",
+                padding: "16px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "8px"
+              }}>
+                <div style={{ fontSize: "12px", fontWeight: 700, color: "#5a755c", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                  {t("settings.db_status", "Database Status")}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#43a047", display: "inline-block" }}></span>
+                  <span style={{ fontSize: "16px", fontWeight: 700, color: "#1b3a1d" }}>
+                    {t("settings.db_connected", "Connected")}
+                  </span>
+                  <span style={{
+                    fontSize: "11px",
+                    background: "#e8f0e8",
+                    padding: "2px 6px",
+                    borderRadius: "4px",
+                    color: "#2e7d32",
+                    fontWeight: 600
+                  }}>
+                    {api.usingIpc() ? "Electron IPC" : "HTTP Server"}
+                  </span>
+                </div>
+                <div style={{ fontSize: "11.5px", color: "#555", wordBreak: "break-all", fontFamily: "monospace", marginTop: "4px" }}>
+                  {dbInfo?.path || "pos.db"}
+                </div>
+              </div>
+
+              <div style={{
+                background: "var(--surface-secondary, #f4faf4)",
+                border: "1px solid var(--border, #cde0cd)",
+                borderRadius: "8px",
+                padding: "16px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "8px"
+              }}>
+                <div style={{ fontSize: "12px", fontWeight: 700, color: "#5a755c", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                  {t("settings.db_size", "Database Size")}
+                </div>
+                <div style={{ fontSize: "20px", fontWeight: 800, color: "#1b3a1d" }}>
+                  {formatBytes(dbInfo?.size)}
+                </div>
+                <div style={{ fontSize: "11px", color: "#6a8f6c" }}>
+                  {t("settings.last_backup_date", "Last Backup Date")}: {recentBackups[0]?.time || "N/A"}
+                </div>
+              </div>
+            </div>
+
+            {/* Backup Operations */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "24px", marginTop: "12px" }}>
+              <div style={{ borderTop: "1px solid #e8f0e8", paddingTop: "20px" }}>
+                <h4 style={{ margin: "0 0 16px 0", fontSize: "15px", fontWeight: 700, color: "#1b3a1d" }}>
+                  {t("settings.backup_options_title", "Export / Backup Options")}
+                </h4>
+                
+                <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                  {/* One-click C: Drive Backup */}
+                  <div style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    background: "#fafafa",
+                    border: "1px solid #eee",
+                    borderRadius: "8px",
+                    padding: "16px",
+                    gap: "16px"
+                  }}>
+                    <div style={{ flex: 1, minWidth: "280px" }}>
+                      <div style={{ fontWeight: 600, color: "#333", fontSize: "14px" }}>
+                        {t("settings.one_click_backup_btn", "One-click Backup to C: Drive")}
+                      </div>
+                      <div style={{ fontSize: "12px", color: "#666", marginTop: "4px" }}>
+                        {t("settings.one_click_backup_desc", "Instantly copies the database to {path} using the naming format {format}.")
+                          .replace("{path}", "C:\\CheemaTradersPOS\\Backups\\")
+                          .replace("{format}", "cheema_traders_pos_backup_YYYYMMDD_HHMMSS.db")}
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleOneClickBackup}
+                      disabled={backupLoading}
+                      style={{
+                        ...st.btnPrimary,
+                        padding: "10px 20px",
+                        fontSize: "13.5px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        minWidth: "180px",
+                        justifyContent: "center"
+                      }}
+                    >
+                      {backupLoading ? "..." : "💾 " + t("settings.one_click_backup_btn", "One-click Backup")}
+                    </button>
+                  </div>
+
+                  {/* Custom Export */}
+                  <div style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    background: "#fafafa",
+                    border: "1px solid #eee",
+                    borderRadius: "8px",
+                    padding: "16px",
+                    gap: "16px"
+                  }}>
+                    <div style={{ flex: 1, minWidth: "280px" }}>
+                      <div style={{ fontWeight: 600, color: "#333", fontSize: "14px" }}>
+                        {t("settings.custom_backup_btn", "Save to Custom Location...")}
+                      </div>
+                      <div style={{ fontSize: "12px", color: "#666", marginTop: "4px" }}>
+                        {t("settings.custom_backup_desc", "Choose exactly where to export the database copy and customize the filename.")}
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleCustomBackup}
+                      disabled={backupLoading}
+                      style={{
+                        ...st.btnSecondary,
+                        padding: "10px 20px",
+                        fontSize: "13.5px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        minWidth: "180px",
+                        borderColor: "#43a047",
+                        color: "#2e7d32",
+                        justifyContent: "center"
+                      }}
+                    >
+                      📂 {t("settings.custom_backup_btn", "Save As...")}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Recovery Operations */}
+              <div style={{ borderTop: "1px solid #ffebeb", paddingTop: "20px" }}>
+                <h4 style={{ margin: "0 0 16px 0", fontSize: "15px", fontWeight: 700, color: "#c62828" }}>
+                  {t("settings.recovery_options_title", "Recovery / Restore")}
+                </h4>
+                
+                <div style={{
+                  background: "#fff8f8",
+                  border: "1px solid #ffcdd2",
+                  borderRadius: "8px",
+                  padding: "16px",
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "16px"
+                }}>
+                  <div style={{ flex: 1, minWidth: "280px" }}>
+                    <div style={{ fontWeight: 700, color: "#c62828", fontSize: "14px" }}>
+                      {t("settings.restore_btn", "Restore from Backup File...")}
+                    </div>
+                    <div style={{ fontSize: "12px", color: "#b71c1c", fontWeight: 600, marginTop: "6px" }}>
+                      ⚠️ {t("settings.restore_warning", "WARNING: Restoring will overwrite all current data. The application will reload/restart upon completion.")}
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleRestoreBackup}
+                    disabled={backupLoading}
+                    style={{
+                      background: "#c62828",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: "6px",
+                      padding: "10px 20px",
+                      fontSize: "13.5px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      minWidth: "180px",
+                      justifyContent: "center",
+                      boxShadow: "0 2px 4px rgba(198, 40, 40, 0.15)"
+                    }}
+                  >
+                    🔄 {t("settings.restore_btn", "Restore")}
+                  </button>
+                </div>
+              </div>
+
+              {/* Session backup history */}
+              <div style={{ borderTop: "1px solid #e8f0e8", paddingTop: "20px", marginBottom: "10px" }}>
+                <h4 style={{ margin: "0 0 12px 0", fontSize: "14px", fontWeight: 700, color: "#1b3a1d" }}>
+                  {t("settings.recent_backups_title", "Recent Backups Created (This Session)")}
+                </h4>
+
+                {recentBackups.length === 0 ? (
+                  <p style={{ fontSize: "12.5px", color: "#888", fontStyle: "italic", margin: 0 }}>
+                    {t("settings.recent_backups_no_history", "No backups created during this session.")}
+                  </p>
+                ) : (
+                  <div style={{ border: "1px solid #eee", borderRadius: "8px", overflow: "hidden" }}>
+                    <div style={{ display: "flex", background: "#f9f9f9", padding: "10px 16px", borderBottom: "1px solid #eee", fontSize: "12px", fontWeight: 700, color: "#555" }}>
+                      <span style={{ flex: 3 }}>{t("settings.recent_backups_path", "Saved Path")}</span>
+                      <span style={{ flex: 1, textAlign: "right" }}>{t("settings.recent_backups_time", "Time Created")}</span>
+                    </div>
+                    <div>
+                      {recentBackups.map((b, idx) => (
+                        <div key={idx} style={{ display: "flex", alignItems: "center", padding: "10px 16px", borderBottom: idx === recentBackups.length - 1 ? "none" : "1px solid #eee", fontSize: "12.5px", color: "#333" }}>
+                          <span style={{ flex: 3, wordBreak: "break-all", fontFamily: "monospace", color: "#444", display: "flex", alignItems: "center", gap: "8px" }}>
+                            {b.path}
+                            <button
+                              onClick={() => handleCopyPath(b.path, idx)}
+                              title={t("settings.copy_path_tooltip", "Copy saved path to clipboard")}
+                              style={{
+                                background: copiedIndex === idx ? "#e8f5e9" : "#f5f5f5",
+                                color: copiedIndex === idx ? "#2e7d32" : "#666",
+                                border: "1px solid #dcdcdc",
+                                borderRadius: "4px",
+                                padding: "2px 6px",
+                                fontSize: "10.5px",
+                                fontWeight: 600,
+                                cursor: "pointer"
+                              }}
+                            >
+                              {copiedIndex === idx ? t("settings.copied_tooltip", "Copied!") : "📋"}
+                            </button>
+                          </span>
+                          <span style={{ flex: 1, textAlign: "right", color: "#666", fontWeight: 600 }}>{b.time}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+function ChangePasswordTab({ userId }) {
+  const [oldPassword, setOldPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [msg, setMsg] = useState(null); // { type: 'success'|'error', text: '' }
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!oldPassword || !newPassword || !confirmPassword) {
+      setMsg({ type: "error", text: "Please fill all fields" });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setMsg({ type: "error", text: "New passwords do not match" });
+      return;
+    }
+
+    setLoading(true);
+    setMsg(null);
+    try {
+      await api.changePassword(userId, oldPassword, newPassword);
+      setMsg({ type: "success", text: "Password changed successfully!" });
+      setOldPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (err) {
+      setMsg({ type: "error", text: err.message || "Failed to change password" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ maxWidth: 400 }}>
+      <h3 style={st.sectionTitle}>Change Password</h3>
+      <p style={st.subText}>Update your credentials to maintain security.</p>
+      
+      {msg && (
+        <div style={{
+          padding: "10px 14px",
+          borderRadius: 8,
+          marginBottom: 16,
+          fontSize: 13,
+          fontWeight: 600,
+          background: msg.type === "success" ? "#e8f5e9" : "#ffebee",
+          color: msg.type === "success" ? "#2e7d32" : "#c62828",
+          border: `1.5px solid ${msg.type === "success" ? "#a5d6a7" : "#ffcdd2"}`
+        }}>
+          {msg.text}
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <label style={{ fontSize: 12, fontWeight: 700, color: "#1b3a1d" }}>Current Password</label>
+          <input
+            type="password"
+            value={oldPassword}
+            onChange={e => setOldPassword(e.target.value)}
+            style={st.thresholdInputText}
+            required
+          />
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <label style={{ fontSize: 12, fontWeight: 700, color: "#1b3a1d" }}>New Password</label>
+          <input
+            type="password"
+            value={newPassword}
+            onChange={e => setNewPassword(e.target.value)}
+            style={st.thresholdInputText}
+            required
+          />
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <label style={{ fontSize: 12, fontWeight: 700, color: "#1b3a1d" }}>Confirm New Password</label>
+          <input
+            type="password"
+            value={confirmPassword}
+            onChange={e => setConfirmPassword(e.target.value)}
+            style={st.thresholdInputText}
+            required
+          />
+        </div>
+
+        <button
+          type="submit"
+          disabled={loading}
+          style={{
+            height: 40,
+            background: "#43a047",
+            color: "#fff",
+            border: "none",
+            borderRadius: 8,
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: "pointer",
+            marginTop: 10,
+            boxShadow: "0 2px 6px rgba(67, 160, 71, 0.15)"
+          }}
+        >
+          {loading ? "Updating..." : "Update Password"}
+        </button>
+      </form>
     </div>
   );
 }
@@ -185,7 +1113,9 @@ const st = {
   navTab: {
     background: "none",
     border: "none",
-    borderBottom: "3px solid transparent",
+    borderBottomWidth: "3px",
+    borderBottomStyle: "solid",
+    borderBottomColor: "transparent",
     padding: "8px 12px",
     fontSize: 14,
     fontWeight: 700,
@@ -228,6 +1158,11 @@ const st = {
     textTransform: "uppercase",
     letterSpacing: "0.03em",
   },
+  formLabel: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: "#1b3a1d",
+  },
   inputNumber: {
     width: 90,
     padding: "8px 12px",
@@ -238,6 +1173,31 @@ const st = {
     fontWeight: 600,
     textAlign: "center",
     fontFamily: "IBM Plex Mono, monospace",
+  },
+  thresholdInputText: {
+    height: "38px",
+    padding: "0 12px",
+    border: "1.5px solid #e0e0e0",
+    borderRadius: "8px",
+    outline: "none",
+    fontSize: 14,
+    background: "#fafafa",
+    color: "#333",
+    boxSizing: "border-box",
+    width: "100%",
+  },
+  select: {
+    height: "38px",
+    padding: "0 10px",
+    border: "1.5px solid #e0e0e0",
+    borderRadius: "8px",
+    outline: "none",
+    fontSize: 14,
+    background: "#fafafa",
+    color: "#333",
+    boxSizing: "border-box",
+    width: "100%",
+    cursor: "pointer",
   },
   helperText: {
     fontSize: 13,
@@ -295,5 +1255,67 @@ const st = {
     fontWeight: 700,
     fontFamily: "IBM Plex Mono, monospace",
     outline: "none",
+  },
+  btnPrimary: {
+    background: "#43a047",
+    color: "#fff",
+    border: "none",
+    borderRadius: 6,
+    padding: "8px 16px",
+    fontSize: 13.5,
+    fontWeight: 600,
+    cursor: "pointer",
+    boxShadow: "0 2px 4px rgba(67, 160, 71, 0.15)",
+  },
+  btnSecondary: {
+    background: "#f5f5f5",
+    color: "#555",
+    border: "1px solid #dcdcdc",
+    borderRadius: 6,
+    padding: "8px 16px",
+    fontSize: 13.5,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  btnSecondarySmall: {
+    background: "#f5f5f5",
+    color: "#555",
+    border: "1px solid #dcdcdc",
+    borderRadius: 4,
+    padding: "4px 10px",
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  modalOverlay: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: "rgba(0,0,0,0.4)",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 1000,
+  },
+  modalCard: {
+    background: "#fff",
+    padding: 24,
+    borderRadius: 16,
+    width: "480px",
+    boxShadow: "0 10px 25px rgba(0,0,0,0.15)",
+    maxHeight: "90vh",
+    overflowY: "auto",
+  },
+  checkboxGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, 1fr)",
+    gap: "10px",
+    background: "#f9faf9",
+    border: "1px solid #e2ece2",
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 8,
   },
 };

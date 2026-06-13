@@ -241,7 +241,18 @@ export default function CashBookPage() {
                 <div style={st.tableContainer}>
                     <style>
                         {`
-                        .cashbook-table th { padding: 12px 20px; font-size: 12px; font-weight: 600; color: #6a8f6c; text-transform: uppercase; border-bottom: 1px solid #c8d8c8; }
+                        .cashbook-table th { 
+                            position: sticky; 
+                            top: 0; 
+                            z-index: 10; 
+                            background: #ffffff; 
+                            padding: 12px 20px; 
+                            font-size: 12px; 
+                            font-weight: 600; 
+                            color: #6a8f6c; 
+                            text-transform: uppercase; 
+                            border-bottom: 1px solid #c8d8c8; 
+                        }
                         .cashbook-table td { padding: 14px 20px; }
                         @keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 0.3; } 100% { opacity: 0.6; } }
                         `}
@@ -272,55 +283,58 @@ export default function CashBookPage() {
                                 <tr><td colSpan={8} style={{ textAlign: 'center', padding: 36, color: '#708571', fontSize: 13 }}>
                                     No transactions in this period
                                 </td></tr>
-                            ) : withBalance.map((e, idx) => {
-                                const prevDate = idx > 0 ? withBalance[idx - 1].entry_date : null;
-                                const showDateRow = e.entry_date !== prevDate;
+                            ) : (() => {
+                                const displayEntries = [...withBalance].reverse();
+                                return displayEntries.map((e, idx) => {
+                                    const prevDate = idx > 0 ? displayEntries[idx - 1].entry_date : null;
+                                    const showDateRow = e.entry_date !== prevDate;
 
-                                return (
-                                    <React.Fragment key={e.id}>
-                                        {showDateRow && (
-                                            <tr>
-                                                <td colSpan={8} style={st.dateSeparator}>
-                                                    {new Date(e.entry_date + 'T00:00:00').toLocaleDateString('en-PK', {
-                                                        weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
-                                                    })}
+                                    return (
+                                        <React.Fragment key={idx}>
+                                            {showDateRow && (
+                                                <tr>
+                                                    <td colSpan={8} style={st.dateSeparator}>
+                                                        {new Date(e.entry_date + 'T00:00:00').toLocaleDateString('en-PK', {
+                                                            weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+                                                        })}
+                                                    </td>
+                                                </tr>
+                                            )}
+                                            <tr style={st.dataRow}>
+                                                <td style={{ fontFamily: 'monospace', fontSize: 13, color: '#6a8f6c' }}>
+                                                    {e.entry_date}
+                                                </td>
+                                                <td style={{ fontSize: 14, color: '#333' }}>
+                                                    {e.description}
+                                                    {e.receipt_number && (
+                                                        <span style={{ marginLeft: 6, fontSize: 12, color: '#888', fontFamily: 'monospace' }}>
+                                                            #{e.receipt_number}
+                                                        </span>
+                                                    )}
+                                                </td>
+                                                <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, color: e.cash_in > 0 ? '#388e3c' : '#bbb' }}>
+                                                    {e.cash_in > 0 ? fmt(e.cash_in) : '—'}
+                                                </td>
+                                                <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, color: e.cash_out > 0 ? '#d32f2f' : '#bbb' }}>
+                                                    {e.cash_out > 0 ? fmt(e.cash_out) : '—'}
+                                                </td>
+                                                <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, color: e.bank_in > 0 ? '#388e3c' : '#bbb' }}>
+                                                    {e.bank_in > 0 ? fmt(e.bank_in) : '—'}
+                                                </td>
+                                                <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, color: e.bank_out > 0 ? '#d32f2f' : '#bbb' }}>
+                                                    {e.bank_out > 0 ? fmt(e.bank_out) : '—'}
+                                                </td>
+                                                <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: e.cash_balance >= 0 ? '#1b3a1d' : '#d32f2f' }}>
+                                                    {fmt(e.cash_balance)}
+                                                </td>
+                                                <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: e.bank_balance >= 0 ? '#1b3a1d' : '#d32f2f' }}>
+                                                    {fmt(e.bank_balance)}
                                                 </td>
                                             </tr>
-                                        )}
-                                        <tr style={st.dataRow}>
-                                            <td style={{ fontFamily: 'monospace', fontSize: 13, color: '#6a8f6c' }}>
-                                                {e.entry_date}
-                                            </td>
-                                            <td style={{ fontSize: 14, color: '#333' }}>
-                                                {e.description}
-                                                {e.receipt_number && (
-                                                    <span style={{ marginLeft: 6, fontSize: 12, color: '#888', fontFamily: 'monospace' }}>
-                                                        #{e.receipt_number}
-                                                    </span>
-                                                )}
-                                            </td>
-                                            <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, color: e.cash_in > 0 ? '#388e3c' : '#bbb' }}>
-                                                {e.cash_in > 0 ? fmt(e.cash_in) : '—'}
-                                            </td>
-                                            <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, color: e.cash_out > 0 ? '#d32f2f' : '#bbb' }}>
-                                                {e.cash_out > 0 ? fmt(e.cash_out) : '—'}
-                                            </td>
-                                            <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, color: e.bank_in > 0 ? '#388e3c' : '#bbb' }}>
-                                                {e.bank_in > 0 ? fmt(e.bank_in) : '—'}
-                                            </td>
-                                            <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, color: e.bank_out > 0 ? '#d32f2f' : '#bbb' }}>
-                                                {e.bank_out > 0 ? fmt(e.bank_out) : '—'}
-                                            </td>
-                                            <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: e.cash_balance >= 0 ? '#1b3a1d' : '#d32f2f' }}>
-                                                {fmt(e.cash_balance)}
-                                            </td>
-                                            <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: e.bank_balance >= 0 ? '#1b3a1d' : '#d32f2f' }}>
-                                                {fmt(e.bank_balance)}
-                                            </td>
-                                        </tr>
-                                    </React.Fragment>
-                                );
-                            })}
+                                        </React.Fragment>
+                                    );
+                                });
+                            })()}
                         </tbody>
                         {withBalance.length > 0 && !loading && (
                             <tfoot>

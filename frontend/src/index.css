@@ -2,12 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
+:root, html {
   font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   line-height: 1.4;
   font-weight: 400;
-  color: #214026;
-  background: #edf4ed;
+  color: var(--text-primary, #214026);
+  background-color: var(--background, #edf4ed);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -53,3 +53,316 @@ a {
   background: #cfe6cf;
   color: #17331b;
 }
+
+/* Color system variables using semantic tokens */
+:root {
+  --background: #edf4ed;
+  --surface: #ffffff;
+  --surface-secondary: #f4faf4;
+  --sidebar-bg: #e8f2e8;
+  --border: #d4ddd4;
+  --text-primary: #1b3a1d;
+  --text-secondary: #6a8f6c;
+  --success: #2e7d32;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --accent: #2e7d32;
+  --accent-hover: #1b5e20;
+  --input-bg: #ffffff;
+  --input-text: #1b3a1d;
+  --input-border: #c8d8c8;
+}
+
+html[data-theme="dark"] {
+  background-color: var(--background) !important;
+  color-scheme: dark;
+  --background: #111827;           /* Background: #111827 */
+  --surface: #1f2937;              /* Cards: #1F2937 */
+  --surface-secondary: #111827;    /* Surface Secondary / Page View */
+  --sidebar-bg: #0f172a;           /* Sidebar: #0F172A */
+  --border: #374151;               /* Borders: #374151 */
+  --text-primary: #f9fafb;         /* Text: #F9FAFB */
+  --text-secondary: #9ca3af;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --accent: #2e7d32;               /* Keep same brand green */
+  --accent-hover: #1b5e20;
+  --input-bg: #1f2937;
+  --input-text: #f9fafb;
+  --input-border: #374151;
+}
+
+/* Smooth global transitions for theme changes */
+*, *::before, *::after {
+  transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+/* Dark Mode Overrides */
+html[data-theme="dark"] body {
+  background-color: var(--background) !important;
+  color: var(--text-primary) !important;
+}
+
+html[data-theme="dark"] aside {
+  background-color: var(--sidebar-bg) !important;
+  border-right-color: var(--border) !important;
+}
+
+html[data-theme="dark"] main,
+html[data-theme="dark"] .main-content {
+  background-color: var(--surface-secondary) !important;
+}
+
+/* Override elements with inline white background */
+html[data-theme="dark"] [style*="background: #fff"],
+html[data-theme="dark"] [style*="background:#fff"],
+html[data-theme="dark"] [style*="background: #ffffff"],
+html[data-theme="dark"] [style*="background:#ffffff"],
+html[data-theme="dark"] [style*="background: rgb(255, 255, 255)"],
+html[data-theme="dark"] [style*="background:rgb(255,255,255)"],
+html[data-theme="dark"] [style*="background-color: #fff"],
+html[data-theme="dark"] [style*="background-color:#fff"],
+html[data-theme="dark"] [style*="background-color: #ffffff"],
+html[data-theme="dark"] [style*="background-color:#ffffff"],
+html[data-theme="dark"] [style*="background-color: rgb(255, 255, 255)"],
+html[data-theme="dark"] [style*="background-color:rgb(255,255,255)"] {
+  background-color: var(--surface) !important;
+}
+
+/* Override elements with inline page background */
+html[data-theme="dark"] [style*="background: #f4faf4"],
+html[data-theme="dark"] [style*="background:#f4faf4"],
+html[data-theme="dark"] [style*="background: rgb(244, 250, 244)"],
+html[data-theme="dark"] [style*="background:rgb(244,250,244)"],
+html[data-theme="dark"] [style*="background-color: #f4faf4"],
+html[data-theme="dark"] [style*="background-color:#f4faf4"],
+html[data-theme="dark"] [style*="background-color: rgb(244, 250, 244)"],
+html[data-theme="dark"] [style*="background-color:rgb(244,250,244)"] {
+  background-color: var(--surface-secondary) !important;
+}
+
+/* Override elements with inline sidebar background */
+html[data-theme="dark"] [style*="background: #e8f2e8"],
+html[data-theme="dark"] [style*="background:#e8f2e8"],
+html[data-theme="dark"] [style*="background: rgb(232, 242, 232)"],
+html[data-theme="dark"] [style*="background:rgb(232,242,232)"],
+html[data-theme="dark"] [style*="background-color: #e8f2e8"],
+html[data-theme="dark"] [style*="background-color:#e8f2e8"],
+html[data-theme="dark"] [style*="background-color: rgb(232, 242, 232)"],
+html[data-theme="dark"] [style*="background-color:rgb(232,242,232)"] {
+  background-color: var(--sidebar-bg) !important;
+}
+
+/* Override inputs, select dropdowns, textareas */
+html[data-theme="dark"] input,
+html[data-theme="dark"] select,
+html[data-theme="dark"] textarea {
+  background-color: var(--input-bg) !important;
+  color: var(--input-text) !important;
+  border-color: var(--input-border) !important;
+}
+
+/* Override primary text colors */
+html[data-theme="dark"] h1,
+html[data-theme="dark"] h2,
+html[data-theme="dark"] h3,
+html[data-theme="dark"] h4,
+html[data-theme="dark"] h5,
+html[data-theme="dark"] h6,
+html[data-theme="dark"] [style*="color: #1b3a1d"],
+html[data-theme="dark"] [style*="color:#1b3a1d"],
+html[data-theme="dark"] [style*="color: #1B3A1D"],
+html[data-theme="dark"] [style*="color:#1B3A1D"],
+html[data-theme="dark"] [style*="color: rgb(27, 58, 29)"],
+html[data-theme="dark"] [style*="color:rgb(27,58,29)"] {
+  color: var(--text-primary) !important;
+}
+
+/* Override secondary text colors */
+html[data-theme="dark"] p,
+html[data-theme="dark"] [style*="color: #6a8f6c"],
+html[data-theme="dark"] [style*="color:#6a8f6c"],
+html[data-theme="dark"] [style*="color: #6A8F6C"],
+html[data-theme="dark"] [style*="color:#6A8F6C"],
+html[data-theme="dark"] [style*="color: rgb(106, 143, 108)"],
+html[data-theme="dark"] [style*="color:rgb(106,143,108)"] {
+  color: var(--text-secondary) !important;
+}
+
+/* Table overrides */
+html[data-theme="dark"] table {
+  border-color: var(--border) !important;
+}
+html[data-theme="dark"] tr {
+  border-bottom-color: var(--border) !important;
+}
+html[data-theme="dark"] th {
+  color: var(--text-secondary) !important;
+  border-bottom-color: var(--border) !important;
+  background-color: var(--sidebar-bg) !important;
+}
+html[data-theme="dark"] td {
+  color: var(--text-primary) !important;
+  border-bottom-color: var(--border) !important;
+}
+
+/* Modal and drawer overlay */
+html[data-theme="dark"] [style*="background: rgba(27,58,29,0.5)"],
+html[data-theme="dark"] [style*="background:rgba(27,58,29,0.5)"],
+html[data-theme="dark"] [style*="background: rgba(27, 58, 29, 0.5)"],
+html[data-theme="dark"] [style*="background:rgba(27, 58, 29, 0.5)"] {
+  background: rgba(0, 0, 0, 0.7) !important;
+}
+
+/* Custom list items and buttons */
+html[data-theme="dark"] [style*="background: #f5f8f5"],
+html[data-theme="dark"] [style*="background:#f5f8f5"],
+html[data-theme="dark"] [style*="background: rgb(245, 248, 245)"],
+html[data-theme="dark"] [style*="background:rgb(245,248,245)"] {
+  background-color: var(--sidebar-bg) !important;
+}
+
+html[data-theme="dark"] [style*="background: #f0f7f0"],
+html[data-theme="dark"] [style*="background:#f0f7f0"],
+html[data-theme="dark"] [style*="background: rgb(240, 247, 240)"],
+html[data-theme="dark"] [style*="background:rgb(240,247,240)"] {
+  background-color: #223722 !important;
+}
+
+html[data-theme="dark"] [style*="background: #f9faf9"],
+html[data-theme="dark"] [style*="background:#f9faf9"],
+html[data-theme="dark"] [style*="background: rgb(249, 250, 249)"],
+html[data-theme="dark"] [style*="background:rgb(249,250,249)"],
+html[data-theme="dark"] [style*="background: #fcfdfc"],
+html[data-theme="dark"] [style*="background:#fcfdfc"],
+html[data-theme="dark"] [style*="background: rgb(252, 253, 252)"],
+html[data-theme="dark"] [style*="background:rgb(252,253,252)"] {
+  background-color: var(--surface-secondary) !important;
+}
+
+/* Custom borders in styling */
+html[data-theme="dark"] [style*="border: 1.5px solid"],
+html[data-theme="dark"] [style*="border:1.5px solid"],
+html[data-theme="dark"] [style*="border: 1px solid"],
+html[data-theme="dark"] [style*="border:1px solid"],
+html[data-theme="dark"] [style*="border-bottom: 1px solid"],
+html[data-theme="dark"] [style*="border-bottom:1px solid"],
+html[data-theme="dark"] [style*="border-top: 1px solid"],
+html[data-theme="dark"] [style*="border-top:1px solid"],
+html[data-theme="dark"] [style*="border-left: 1px solid"],
+html[data-theme="dark"] [style*="border-left:1px solid"],
+html[data-theme="dark"] [style*="border-right: 1px solid"],
+html[data-theme="dark"] [style*="border-right:1px solid"] {
+  border-color: var(--border) !important;
+}
+
+/* Recharts grid lines */
+html[data-theme="dark"] .recharts-cartesian-grid-horizontal line,
+html[data-theme="dark"] .recharts-cartesian-grid-vertical line {
+  stroke: var(--border) !important;
+}
+html[data-theme="dark"] .recharts-text {
+  fill: var(--text-secondary) !important;
+}
+
+/* RTL (Right to Left Layout overrides for Urdu) */
+html[dir="rtl"] {
+  text-align: right;
+}
+
+html[dir="rtl"] th,
+html[dir="rtl"] td,
+html[dir="rtl"] h1,
+html[dir="rtl"] h2,
+html[dir="rtl"] h3,
+html[dir="rtl"] h4,
+html[dir="rtl"] h5,
+html[dir="rtl"] p,
+html[dir="rtl"] select,
+html[dir="rtl"] input,
+html[dir="rtl"] textarea,
+html[dir="rtl"] span,
+html[dir="rtl"] div {
+  text-align: right;
+}
+
+/* Exceptions: Keep numbers and amounts left-aligned (standard accounting) */
+html[dir="rtl"] .num,
+html[dir="rtl"] [style*="text-align: right"],
+html[dir="rtl"] [style*="text-align:right"] {
+  text-align: left !important;
+}
+
+/* Sidebar LTR vs RTL borders */
+html[dir="rtl"] aside {
+  border-left: 1px solid var(--border) !important;
+  border-right: none !important;
+}
+html[dir="rtl"] aside button {
+  flex-direction: row-reverse !important;
+}
+
+/* Tailwind Dark Mode Overrides */
+html[data-theme="dark"] .bg-white {
+  background-color: var(--surface) !important;
+}
+html[data-theme="dark"] .bg-\[\#f5f8f5\] {
+  background-color: var(--surface-secondary) !important;
+}
+html[data-theme="dark"] .bg-\[\#fcfdfc\] {
+  background-color: var(--surface) !important;
+}
+html[data-theme="dark"] .hover\:bg-\[\#f7fbf7\]:hover {
+  background-color: rgba(255, 255, 255, 0.05) !important;
+}
+html[data-theme="dark"] .text-\[\#1A1A1A\] {
+  color: var(--text-primary) !important;
+}
+html[data-theme="dark"] .text-\[\#1b3a1d\] {
+  color: var(--text-primary) !important;
+}
+html[data-theme="dark"] .border-\[\#c8d8c8\] {
+  border-color: var(--border) !important;
+}
+html[data-theme="dark"] .divide-\[\#c8d8c8\] > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--border) !important;
+}
+html[data-theme="dark"] .divide-y > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--border) !important;
+}
+html[data-theme="dark"] .divide-x > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--border) !important;
+}
+html[data-theme="dark"] .text-neutral-700 {
+  color: var(--text-secondary) !important;
+}
+html[data-theme="dark"] .text-neutral-500 {
+  color: var(--text-secondary) !important;
+}
+html[data-theme="dark"] .text-neutral-400 {
+  color: var(--text-secondary) !important;
+}
+
+/* RTL layout fixes */
+html[dir="rtl"] input[type="date"] {
+  text-align: right !important;
+}
+html[dir="rtl"] input[type="text"] {
+  text-align: right !important;
+}
+html[dir="rtl"] input[type="number"] {
+  text-align: right !important;
+}
+html[dir="rtl"] select {
+  text-align: right !important;
+}
+html[dir="rtl"] .border-l-\[3px\] {
+  border-left-width: 0px !important;
+  border-right-width: 3px !important;
+}
+html[dir="rtl"] .pl-3 {
+  padding-left: 0px !important;
+  padding-right: 0.75rem !important;
+}
+

@@ -58,7 +58,7 @@ function accountId(db, code) {
 }
 
 // Maps payment method label → account code.
-// Add a row here whenever a new bank account is added to the COA.
+// Used as a fallback if dynamic bank lookup fails.
 const METHOD_TO_CODE = {
   "cash":         "1000",
   "hbl bank":     "1010",
@@ -73,7 +73,29 @@ const METHOD_TO_CODE = {
 };
 
 function methodAccountId(db, method) {
-  const key = (method || "cash").toLowerCase().trim();
+  const methodStr = String(method || "cash").trim();
+  const key = methodStr.toLowerCase();
+  
+  if (key === "cih") return accountId(db, "1000");
+
+  // 1. If method is a numeric bank_id
+  if (!isNaN(methodStr) && Number(methodStr) > 0) {
+    const bankRow = db.prepare(`SELECT name FROM bank_accounts WHERE id = ?`).get(Number(methodStr));
+    if (bankRow) {
+      const coaName = `Bank - ${bankRow.name}`;
+      const accRow = db.prepare(`SELECT id FROM accounts WHERE name = ? COLLATE NOCASE`).get(coaName);
+      if (accRow) return accRow.id;
+    }
+  }
+
+  // 2. Try exactly matching the accounts table by name
+  let accRow = db.prepare(`SELECT id FROM accounts WHERE name = ? COLLATE NOCASE`).get(methodStr);
+  if (accRow) return accRow.id;
+  
+  accRow = db.prepare(`SELECT id FROM accounts WHERE name = ? COLLATE NOCASE`).get(`Bank - ${methodStr}`);
+  if (accRow) return accRow.id;
+
+  // 3. Fallback to hardcoded map
   const code = METHOD_TO_CODE[key] || "1000"; // default to Cash if unknown
   return accountId(db, code);
 }
@@ -82,7 +104,7 @@ function methodAccountId(db, method) {
 function nextEntryNo(db, date) {
   const year = String(date).slice(0, 4);
   const row = db.prepare(
-    `SELECT entry_no FROM journal_entries WHERE entry_no LIKE ? ORDER BY id DESC LIMIT 1`
+    `SELECT entry_no FROM journal_entries WHERE entry_no LIKE ? ORDER BY entry_no DESC LIMIT 1`
   ).get(`JV-${year}-%`);
   const n = row ? parseInt(row.entry_no.split("-")[2], 10) + 1 : 1;
   return `JV-${year}-${String(n).padStart(5, "0")}`;
@@ -99,12 +121,12 @@ function writeEntry(db, { date, narration, source_type, source_id, lines }) {
     `).run(entry_no, date, narration, source_type, source_id ?? null);
 
     const ins = db.prepare(`
-      INSERT INTO journal_lines (entry_id, account_id, debit, credit, customer_id, line_memo)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO journal_lines (entry_id, account_id, debit, credit, customer_id, supplier_id, line_memo)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
     for (const l of lines)
       ins.run(entryId, l.accountId, l.debit, l.credit,
-              l.customerId ?? null, l.memo ?? null);
+              l.customerId ?? null, l.supplierId ?? null, l.memo ?? null);
 
     return entryId;
   });
@@ -309,7 +331,7 @@ function postPurchase(db, purchase) {
     lines.push({
       accountId: accountId(db, "2000"),  // Accounts Payable
       debit: 0, credit: apPaisa,
-      customerId: null,                  // no subledger for suppliers yet
+      supplierId: purchase.supplier_id ?? purchase.supplierId ?? null,
       memo: `AP — ${ref}`,
     });
 
@@ -344,25 +366,49 @@ function postSupplierPayment(db, supplierPayment) {
   const date = (supplierPayment.payment_date ?? supplierPayment.date ?? supplierPayment.created_at ?? "").slice(0, 10);
 
   try {
+    const absAmountPaisa = Math.abs(amountPaisa);
+    const lines = [];
+
+    const supplierId = supplierPayment.supplier_id ?? supplierPayment.supplierId ?? null;
+
+    if (amountPaisa > 0) {
+      lines.push({
+        // Dr Accounts Payable (we're paying off what we owe)
+        accountId: accountId(db, "2000"),
+        debit: absAmountPaisa, credit: 0,
+        supplierId,
+        memo: "AP cleared",
+      });
+      lines.push({
+        // Cr Cash / Bank (money goes out)
+        accountId: methodAccountId(db, supplierPayment.payment_method),
+        debit: 0, credit: absAmountPaisa,
+        memo: "Supplier payment",
+      });
+    } else {
+      lines.push({
+        // Dr Cash / Bank (money comes in / refund)
+        accountId: methodAccountId(db, supplierPayment.payment_method),
+        debit: absAmountPaisa, credit: 0,
+        memo: "Supplier refund/withdrawal",
+      });
+      lines.push({
+        // Cr Accounts Payable (reduces what we owe/prepayment)
+        accountId: accountId(db, "2000"),
+        debit: 0, credit: absAmountPaisa,
+        supplierId,
+        memo: "Supplier refund/withdrawal",
+      });
+    }
+
     writeEntry(db, {
       date,
-      narration: `Supplier payment — ID ${supplierPayment.supplier_id}`,
+      narration: amountPaisa > 0 
+        ? `Supplier payment — ID ${supplierPayment.supplier_id}`
+        : `Supplier refund/withdrawal — ID ${supplierPayment.supplier_id}`,
       source_type: "supplier_payment",
       source_id:   supplierPayment.id,
-      lines: [
-        {
-          // Dr Accounts Payable (we're paying off what we owe)
-          accountId: accountId(db, "2000"),
-          debit: amountPaisa, credit: 0,
-          memo: "AP cleared",
-        },
-        {
-          // Cr Cash / Bank (money goes out)
-          accountId: methodAccountId(db, supplierPayment.payment_method),
-          debit: 0, credit: amountPaisa,
-          memo: "Supplier payment",
-        },
-      ],
+      lines,
     });
   } catch (err) {
     console.error("[glBridge] postSupplierPayment failed:", err.message, { id: supplierPayment.id });
@@ -416,5 +462,99 @@ function voidSale(db, sale) {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   6. POST BANK TRANSFER
+   Fires after a transfer between cash and bank or bank and bank.
+   ═══════════════════════════════════════════════════════════════ */
+function postBankTransfer(db, transfer) {
+  // transfer: { id, date, amount, reference, fromAccount, toAccount }
+  // fromAccount/toAccount can be 'cih' or bank_id
+  if (alreadyPosted(db, "bank_transfer", transfer.id)) return;
 
-module.exports = { postSale, postPayment, postPurchase, postSupplierPayment, voidSale };
+  const amountPaisa = toPaisa(transfer.amount);
+  if (amountPaisa === 0) return;
+
+  const date = (transfer.date || new Date().toISOString()).slice(0, 10);
+  const fromName = transfer.fromAccount === 'cih' ? 'Cash' : `Bank ID ${transfer.fromAccount}`;
+  const toName = transfer.toAccount === 'cih' ? 'Cash' : `Bank ID ${transfer.toAccount}`;
+
+  try {
+    writeEntry(db, {
+      date,
+      narration: `Fund Transfer: ${fromName} -> ${toName} ${transfer.reference ? '(' + transfer.reference + ')' : ''}`,
+      source_type: "bank_transfer",
+      source_id:   transfer.id || Date.now(), // Generate a unique ID if not saved in a table
+      lines: [
+        {
+          // Dr To Account
+          accountId: methodAccountId(db, transfer.toAccount),
+          debit: amountPaisa, credit: 0,
+          memo: "Transfer deposit",
+        },
+        {
+          // Cr From Account
+          accountId: methodAccountId(db, transfer.fromAccount),
+          debit: 0, credit: amountPaisa,
+          memo: "Transfer withdrawal",
+        },
+      ],
+    });
+  } catch (err) {
+    console.error("[glBridge] postBankTransfer failed:", err.message, { transfer });
+  }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   7. POST EXPENSE
+   Fires after an expense is saved.
+   ═══════════════════════════════════════════════════════════════ */
+function postExpense(db, expense) {
+  // expense: { id, expenseDate, category, description, amount, paymentMethod }
+  if (alreadyPosted(db, "expense", expense.id)) return;
+
+  const amountPaisa = toPaisa(expense.amount);
+  if (amountPaisa === 0) return;
+
+  const date = (expense.expenseDate || expense.created_at || new Date().toISOString()).slice(0, 10);
+
+  // Attempt to find the specific expense category account. If not found, use a default Misc Expense (e.g. 6900).
+  let expenseAccountId;
+  try {
+    const accRow = db.prepare(`SELECT id FROM accounts WHERE name = ? COLLATE NOCASE`).get(expense.category);
+    if (accRow) {
+      expenseAccountId = accRow.id;
+    } else {
+      expenseAccountId = accountId(db, "6900");
+    }
+  } catch (e) {
+    expenseAccountId = accountId(db, "6900");
+  }
+
+  try {
+    writeEntry(db, {
+      date,
+      narration: `Expense: ${expense.category} - ${expense.description || ''}`,
+      source_type: "expense",
+      source_id:   expense.id,
+      lines: [
+        {
+          // Dr Expense Account
+          accountId: expenseAccountId,
+          debit: amountPaisa, credit: 0,
+          memo: expense.description || "Expense",
+        },
+        {
+          // Cr Cash / Bank
+          accountId: methodAccountId(db, expense.paymentMethod || expense.moneyFrom),
+          debit: 0, credit: amountPaisa,
+          memo: `Payment for ${expense.category}`,
+        },
+      ],
+    });
+  } catch (err) {
+    console.error("[glBridge] postExpense failed:", err.message, { expense });
+  }
+}
+
+module.exports = { postSale, postPayment, postPurchase, postSupplierPayment, voidSale, postBankTransfer, postExpense };

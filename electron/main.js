@@ -1,11 +1,33 @@
 const path = require("path");
+const fs = require("fs");
 const { app, BrowserWindow, ipcMain } = require("electron");
 
 const isDev = !app.isPackaged;
 
+function ensureDatabase() {
+  if (!isDev) {
+    const userDataPath = app.getPath("userData");
+    fs.mkdirSync(userDataPath, { recursive: true });
+  }
+}
+ensureDatabase();
+
 // Must set DB_PATH before requiring any backend modules
 if (!isDev) {
-  process.env.DB_PATH = path.join(app.getPath("userData"), "pos.db");
+  const targetDbPath = path.join(app.getPath("userData"), "pos.db");
+  process.env.DB_PATH = targetDbPath;
+  
+  if (!fs.existsSync(targetDbPath)) {
+    const sourceDbPath = path.join(__dirname, "..", "database", "pos.db");
+    try {
+      if (fs.existsSync(sourceDbPath)) {
+        fs.copyFileSync(sourceDbPath, targetDbPath);
+        console.log("Copied seeded database to:", targetDbPath);
+      }
+    } catch (err) {
+      console.error("Failed to copy database:", err);
+    }
+  }
 }
 
 const store = require("../backend/store");
@@ -23,39 +45,44 @@ let mainWindow;
 function registerIpc() {
   const handlers = {
     "pos:login": (_, pin) => store.loginByPin(pin),
+    "users:login": (_, username, password) => store.loginUser(username, password),
+    "users:list": () => store.listUsers(),
+    "users:list-active": () => store.listActiveUsers(),
+    "users:save": (_, user) => store.saveUser(user),
+    "users:change-password": (_, userId, oldPassword, newPassword) => store.changePassword(userId, oldPassword, newPassword),
     "pos:dashboard": () => store.getDashboardSummary(),
-    "pos:products:list": (_, args) => store.listProducts(args || {}),
-    "pos:products:save": (_, payload) => store.saveProduct(payload),
-    "pos:batches:list": (_, args) => store.listBatches(args || {}),
-    "pos:batches:save": (_, payload) => store.saveBatch(payload),
-    "pos:batches:update": (_, id, payload) => store.updateBatch(id, payload),
-    "pos:batches:delete": (_, id) => store.deleteBatch(id),
-    "pos:sales:list": (_, args) => store.listSales(args || {}),
-    "pos:sales:create": (_, payload) => store.createSale(payload),
-    "pos:sales:next-invoice": (_, date) => store.getNextInvoiceNo(date),
-    "pos:sales:get": (_, id) => store.getSaleById(id),
-    "pos:sales:void": (_, id) => store.voidSale(id),
-    "pos:sales:return": (_, id, payload) => store.returnSaleItems(id, payload.items),
-    "pos:suppliers:list": (_, search) => store.listSuppliers(search || ""),
-    "pos:suppliers:save": (_, payload) => store.saveSupplier(payload),
-    "pos:suppliers:delete": (_, id) => store.softDeleteSupplier(id),
-    "pos:suppliers:history": (_, id) => store.getSupplierHistory(id),
-    "pos:suppliers:payment": (_, payload) => store.saveSupplierPayment(payload),
-    "pos:customers:list": (_, search) => store.listCustomers(search || ""),
-    "pos:customers:save": (_, payload) => store.saveCustomer(payload),
-    "pos:customers:delete": (_, id) => store.softDeleteCustomer(id),
-    "pos:customers:history": (_, id) => store.getCustomerHistory(id),
-    "pos:customers:payment": (_, payload) => store.saveCustomerPayment(payload),
-    "pos:customers:withdrawal": (_, payload) => store.saveWithdrawal(payload),
-    "pos:purchases:create": (_, payload) => store.createPurchase(payload),
-    "pos:purchases:items": (_, id) => store.getPurchaseItems(id),
-    "pos:purchases:list": (_, args) => store.listPurchases(args || {}),
-    "pos:purchases:update": (_, id, payload) => store.updatePurchase(id, payload),
-    "pos:purchases:delete": (_, id) => store.deletePurchase(id),
-    "pos:settings:list": () => store.getSettings(),
-    "pos:settings:save": (_, payload) => store.updateSetting(payload.key, payload.value),
-    "pos:backup:export": (_, targetPath) => store.exportBackup(targetPath),
-    "pos:backup:import": (_, sourcePath) => store.importBackup(sourcePath),
+    "pos:products:list": async (_, args) => ({ products: await store.listProducts(args || {}) }),
+    "pos:products:save": async (_, payload) => ({ product: await store.saveProduct(payload) }),
+    "pos:batches:list": async (_, args) => ({ batches: await store.listBatches(args || {}) }),
+    "pos:batches:save": async (_, payload) => ({ batch: await store.saveBatch(payload) }),
+    "pos:batches:update": async (_, id, payload) => ({ batch: await store.updateBatch(id, payload) }),
+    "pos:batches:delete": async (_, id) => { await store.deleteBatch(id); return { message: "Batch deleted successfully" }; },
+    "pos:sales:list": async (_, args) => ({ sales: await store.listSales(args || {}) }),
+    "pos:sales:create": async (_, payload) => ({ sale: await store.createSale(payload) }),
+    "pos:sales:next-invoice": async (_, date) => ({ invoiceNo: await store.getNextInvoiceNo(date) }),
+    "pos:sales:get": async (_, id) => ({ sale: await store.getSaleById(id) }),
+    "pos:sales:void": async (_, id) => ({ sale: await store.voidSale(id) }),
+    "pos:sales:return": async (_, id, payload) => ({ sale: await store.returnSaleItems(id, payload.items) }),
+    "pos:suppliers:list": async (_, search) => ({ suppliers: await store.listSuppliers(search || "") }),
+    "pos:suppliers:save": async (_, payload) => ({ supplier: await store.saveSupplier(payload) }),
+    "pos:suppliers:delete": async (_, id) => { await store.softDeleteSupplier(id); return { message: "Supplier deleted successfully" }; },
+    "pos:suppliers:history": async (_, id) => ({ history: await store.getSupplierHistory(id) }),
+    "pos:suppliers:payment": async (_, payload) => ({ payment: await store.saveSupplierPayment(payload) }),
+    "pos:customers:list": async (_, search) => ({ customers: await store.listCustomers(search || "") }),
+    "pos:customers:save": async (_, payload) => ({ customer: await store.saveCustomer(payload) }),
+    "pos:customers:delete": async (_, id) => { await store.softDeleteCustomer(id); return { message: "Customer deleted successfully" }; },
+    "pos:customers:history": async (_, id) => ({ history: await store.getCustomerHistory(id) }),
+    "pos:customers:payment": async (_, payload) => ({ payment: await store.saveCustomerPayment(payload) }),
+    "pos:customers:withdrawal": async (_, payload) => ({ withdrawal: await store.saveWithdrawal(payload) }),
+    "pos:purchases:create": async (_, payload) => ({ purchase: await store.createPurchase(payload) }),
+    "pos:purchases:items": async (_, id) => ({ items: await store.getPurchaseItems(id) }),
+    "pos:purchases:list": async (_, args) => ({ purchases: await store.listPurchases(args || {}) }),
+    "pos:purchases:update": async (_, id, payload) => ({ purchase: await store.updatePurchase(id, payload) }),
+    "pos:purchases:delete": async (_, id) => { await store.deletePurchase(id); return { message: "Purchase deleted successfully" }; },
+    "pos:settings:list": async () => ({ settings: await store.getSettings() }),
+    "pos:settings:save": async (_, payload) => ({ setting: await store.updateSetting(payload.key, payload.value) }),
+    "pos:backup:export": async (_, targetPath) => ({ backupPath: await store.exportBackup(targetPath) }),
+    "pos:backup:import": async (_, sourcePath) => ({ dbPath: await store.importBackup(sourcePath) }),
     "coa:list": () => store.listCoaAccounts(),
     "coa:create": (_, payload) => store.createCoaAccount(payload),
     "coa:update": (_, payload) => store.updateCoaAccount(payload),
@@ -71,6 +98,23 @@ function registerIpc() {
     "journal:ledger": (_, args) => store.getGeneralLedger(args),
     "pos:expenses:list": (_, args) => store.listExpenses(args || {}),
     "pos:expenses:save": (_, payload) => store.saveExpense(payload),
+    "pos:banks:list": async (_, search) => ({ banks: await store.listBanks(search || "") }),
+    "pos:banks:save": async (_, payload) => ({ bank: await store.saveBank(payload) }),
+    "pos:banks:history": async (_, id) => ({ history: await store.getBankHistory(id) }),
+    "pos:banks:transfer": async (_, payload) => ({ transfer: await store.saveBankTransfer(payload) }),
+    "pos:banks:cashbook": (_, args) => store.getCashBook(args || {}),
+    "db:get-receivables": (_, args) => store.getReceivablesReport(args || {}),
+    "db:get-payables": (_, args) => store.getPayablesReport(args || {}),
+    "db:get-cashflow": (_, args) => store.getCashFlowReport(args || {}),
+    "analysis:overview": () => store.getAnalysisOverview(),
+    "analysis:revenue-trend": () => store.getRevenueTrend(),
+    "analysis:category-sales": () => store.getCategorySalesMtd(),
+    "analysis:sales-summary": () => store.getSalesSummaryMtd(),
+    "analysis:product-movement": () => store.getProductMovementMtd(),
+    "analysis:weekly-sales": () => store.getWeeklySalesActual(),
+    "analysis:inventory": () => store.getInventoryAnalysis(),
+    "analysis:customer-dues": () => store.getCustomerDuesAnalysis(),
+    "analysis:supplier": () => store.getSupplierAnalysis(),
     "db:print-html-report": async (_, html) => {
       let printWindow = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: false, contextIsolation: true } });
       printWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
@@ -80,6 +124,28 @@ function registerIpc() {
         });
       });
       return true;
+    },
+    "system:versions": () => ({
+      electron: process.versions.electron,
+      node: process.versions.node,
+      chrome: process.versions.chrome,
+      appVersion: app.getVersion()
+    }),
+    "system:show-save-dialog": async (_, options) => {
+      const { dialog } = require("electron");
+      return dialog.showSaveDialog(mainWindow, options);
+    },
+    "system:show-open-dialog": async (_, options) => {
+      const { dialog } = require("electron");
+      return dialog.showOpenDialog(mainWindow, options);
+    },
+    "db:info": async () => {
+      const fs = require("fs/promises");
+      const stat = await fs.stat(store.dbPath);
+      return {
+        path: store.dbPath,
+        size: stat.size,
+      };
     },
   };
 

@@ -1,20 +1,34 @@
+import { useEffect, useState } from "react";
 import { st } from "./shared/analysisStyles";
+import { getInventoryAnalysis } from "../../lib/posApi";
 
 export default function InventoryWorkspace() {
-  const stockAlerts = [
-    { product: "Roundup", issue: "Expiry Risk", detail: "Expires in 18 days", status: "warning" },
-    { product: "Mospilan", issue: "Low Stock", detail: "Only 8 bottles left", status: "danger" },
-    { product: "Coragen", issue: "Slow Movement", detail: "No sales in 22 days", status: "neutral" },
-  ];
+  const [alerts, setAlerts] = useState([]);
+  const [inventoryData, setInventoryData] = useState([]);
 
-  const inventoryData = [
-    { product: "Roundup", category: "Herbicide", stock: 88, value: "Rs 124,000", expiry: "12 Aug 2026", trend: "Fast" },
-    { product: "Mospilan", category: "Insecticide", stock: 14, value: "Rs 45,000", expiry: "08 Jul 2026", trend: "Low Stock" },
-    { product: "Coragen", category: "Pesticide", stock: 42, value: "Rs 210,000", expiry: "18 Sep 2026", trend: "Stable" },
-    { product: "Confidor", category: "Insecticide", stock: 20, value: "Rs 60,000", expiry: "22 Nov 2026", trend: "Normal" },
-    { product: "Nativo", category: "Fungicide", stock: 5, value: "Rs 15,000", expiry: "01 Dec 2026", trend: "Low Stock" },
-    { product: "Belt", category: "Insecticide", stock: 0, value: "Rs 0", expiry: "-", trend: "Out of Stock" },
-  ];
+  useEffect(() => {
+    getInventoryAnalysis()
+      .then((data) => {
+        if (data) {
+          setAlerts(data.alerts || []);
+          if (data.valuation) {
+            const mapped = data.valuation.map((v) => {
+              const s = v.stock || 0;
+              return {
+                product: v.product,
+                category: v.category,
+                stock: s,
+                value: `Rs ${v.value.toLocaleString()}`,
+                expiry: v.expiry,
+                trend: s <= 0 ? "Out of Stock" : s <= 10 ? "Low Stock" : "Normal"
+              };
+            });
+            setInventoryData(mapped);
+          }
+        }
+      })
+      .catch(console.error);
+  }, []);
 
   return (
     <>
@@ -34,7 +48,7 @@ export default function InventoryWorkspace() {
             <span style={{ width: 90 }}>Status</span>
           </div>
 
-          {stockAlerts.map((item, index) => (
+          {alerts.map((item, index) => (
             <div key={index} style={st.tableRow}>
               <span style={{ flex: 2, ...st.cellBold }}>{item.product}</span>
               <span style={{ flex: 1.2 }}>{item.issue}</span>

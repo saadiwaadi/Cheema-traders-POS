@@ -17,45 +17,12 @@ import JournalPage from "./Journal";
 import CashBookPage from "./CashBook";
 import BanksPage from "./banks";
 import AnalysisPage from "./analysis/AnalysisShell";
-import { getDashboardSummary } from "../lib/posApi";
+import { getDashboardSummary, getMonthlyReport, getTopDebtors } from "../lib/posApi";
 import OverviewWorkspace from "./analysis/OverviewWorkspace";
 import SettingsPage from "./settings";
 import ChartOfAccountsPage from "./ChartOfAccounts";
 import ReportsPage from "./reports";
-import TrialBalancePage from "./TrialBalance";
-
-// ─────────────────────────────────────────────────────────────
-//  IMPORTANT: You need to add these two API functions to posApi.js
-//  and wire them to IPC handlers that query your SQLite database.
-//  See the Antigravity prompt at the bottom of this file.
-// ─────────────────────────────────────────────────────────────
-//  import { getMonthlyReport, getTopDebtors } from "../lib/posApi";
-// ─────────────────────────────────────────────────────────────
-
-// Temporary inline stubs — remove these once posApi functions exist
-async function getMonthlyReport() {
-  // Returns last 12 months of revenue, cost, expenses, profit
-  // Replace with: return await window.ipc.invoke("db:get-monthly-report");
-  if (window.ipc) {
-    try { return await window.ipc.invoke("db:get-monthly-report"); } catch { /* fall through */ }
-  }
-  // Fallback: empty data so the chart renders gracefully
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const now = new Date();
-  return months.map((m, i) => ({
-    month: m, year: now.getFullYear(),
-    revenue: 0, cost: 0, expenses: 0, profit: 0,
-  }));
-}
-
-async function getTopDebtors() {
-  // Returns top 10 customers by outstanding balance (positive = owes us)
-  // Replace with: return await window.ipc.invoke("db:get-top-debtors");
-  if (window.ipc) {
-    try { return await window.ipc.invoke("db:get-top-debtors"); } catch { /* fall through */ }
-  }
-  return [];
-}
+import TrialBalancePage from "./TrialBalance";import { useThemeLanguage } from "../context/ThemeLanguageContext";
 
 
 const NAV_ITEMS = [
@@ -89,7 +56,32 @@ export default function Dashboard() {
   const [topDebtors, setTopDebtors] = useState([]);
   const [hideFinancials, setHideFinancials] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  
+  // Theme, language & zoom level from centralized context
+  const {
+    theme,
+    toggleTheme,
+    language,
+    changeLanguage,
+    zoom,
+    handleZoomIn,
+    handleZoomOut,
+    handleZoomReset,
+    t,
+  } = useThemeLanguage();
+
   const navigate = useNavigate();
+  const [electronVersion, setElectronVersion] = useState("");
+
+  useEffect(() => {
+    if (window.pos && typeof window.pos.getVersions === "function") {
+      window.pos.getVersions().then(v => {
+        if (v && v.electron) {
+          setElectronVersion(`v${v.electron}`);
+        }
+      }).catch(() => {});
+    }
+  }, []);
 
   let user;
   try { user = JSON.parse(localStorage.getItem("user")) || {}; } catch { user = {}; }
@@ -112,12 +104,28 @@ export default function Dashboard() {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
   });
 
+  const allowedModules = useMemo(() => {
+    if (user?.permissions && Array.isArray(user.permissions)) {
+      return user.permissions;
+    }
+    if (userRole === "admin") {
+      return NAV_ITEMS.map(i => i.id);
+    }
+    return STAFF_VISIBLE;
+  }, [user, userRole]);
+
+  useEffect(() => {
+    if (allowedModules.length > 0 && !allowedModules.includes(active)) {
+      setActive(allowedModules[0]);
+    }
+  }, [active, allowedModules]);
+
   const visibleNav = useMemo(() => {
-    const items = userRole === "admin" ? NAV_ITEMS : NAV_ITEMS.filter(i => STAFF_VISIBLE.includes(i.id));
+    const items = NAV_ITEMS.filter(i => allowedModules.includes(i.id));
     const grouped = {};
     items.forEach(i => { (grouped[i.section] ??= []).push(i); });
     return grouped;
-  }, [userRole]);
+  }, [allowedModules]);
 
   return (
     <div style={s.app}>
@@ -143,7 +151,7 @@ export default function Dashboard() {
         <nav style={s.nav}>
           {Object.entries(visibleNav).map(([section, items]) => (
             <div key={section} style={{ marginBottom: 6 }}>
-              {!sidebarCollapsed && <div style={s.navSection}>{SECTION_LABELS[section]}</div>}
+              {!sidebarCollapsed && <div style={s.navSection}>{t(`sections.${section}`, SECTION_LABELS[section])}</div>}
               {items.map(item => {
                 const isActive = active === item.id;
                 return (
@@ -156,12 +164,12 @@ export default function Dashboard() {
                       justifyContent: sidebarCollapsed ? "center" : "flex-start",
                       padding: sidebarCollapsed ? "9px 0" : "8px 10px",
                     }}
-                    title={sidebarCollapsed ? item.label : undefined}
+                    title={sidebarCollapsed ? t(`nav.${item.id}`, item.label) : undefined}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0, opacity: isActive ? 1 : 0.7 }}>
                       <path d={item.icon} />
                     </svg>
-                    {!sidebarCollapsed && <span>{item.label}</span>}
+                    {!sidebarCollapsed && <span>{t(`nav.${item.id}`, item.label)}</span>}
                   </div>
                 );
               })}
@@ -183,11 +191,12 @@ export default function Dashboard() {
             <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
               <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z" />
             </svg>
-            {!sidebarCollapsed && "Logout"}
+            {!sidebarCollapsed && t("nav.logout", "Logout")}
           </button>
           {!sidebarCollapsed && (
             <div style={s.poweredBy}>
-              Powered by <strong style={{ color: "#537a55" }}>BitLogic</strong> · 0317-8440437
+              <div>Powered by <strong style={{ color: "#537a55" }}>BitLogic</strong> · 0317-8440437</div>
+              {electronVersion && <div style={{ fontSize: 9, opacity: 0.6, marginTop: 2 }}>Electron {electronVersion}</div>}
             </div>
           )}
         </div>
@@ -214,10 +223,58 @@ export default function Dashboard() {
               {/* Top bar */}
               <div style={s.topbar}>
                 <div>
-                  <h1 style={s.topTitle}>{NAV_ITEMS.find(i => i.id === active)?.label || "Dashboard"}</h1>
+                  <h1 style={s.topTitle}>{t(`nav.${active}`, NAV_ITEMS.find(i => i.id === active)?.label || "Dashboard")}</h1>
                   <div style={s.topDate}>{today}</div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  {/* Zoom controls */}
+                  <div style={{ display: "flex", alignItems: "center", background: "var(--surface-secondary)", border: "1px solid var(--border)", borderRadius: 16, padding: "2px 6px" }}>
+                    <button onClick={handleZoomOut} style={{ background: "none", border: "none", color: "var(--accent)", cursor: "pointer", padding: "2px 6px", fontWeight: "bold", fontSize: 13 }} title={t("topbar.zoom_out", "Zoom Out")}>-</button>
+                    <span onClick={handleZoomReset} style={{ fontSize: 11, color: "var(--text-secondary)", fontWeight: 600, padding: "0 4px", cursor: "pointer", userSelect: "none" }} title={t("topbar.reset_zoom", "Reset Zoom")}>{zoom}</span>
+                    <button onClick={handleZoomIn} style={{ background: "none", border: "none", color: "var(--accent)", cursor: "pointer", padding: "2px 6px", fontWeight: "bold", fontSize: 13 }} title={t("topbar.zoom_in", "Zoom In")}>+</button>
+                  </div>
+
+                  {/* Dark Mode toggle button */}
+                  <button onClick={toggleTheme} style={s.toggleBtn} title="Toggle Dark/Light Mode">
+                    {theme === "light" ? (
+                      <>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                        </svg>
+                        {t("topbar.dark_mode", "Dark Mode")}
+                      </>
+                    ) : (
+                      <>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="5" />
+                          <line x1="12" y1="1" x2="12" y2="3" />
+                          <line x1="12" y1="21" x2="12" y2="23" />
+                          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                          <line x1="1" y1="12" x2="3" y2="12" />
+                          <line x1="21" y1="12" x2="23" y2="12" />
+                          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                        </svg>
+                        {t("topbar.light_mode", "Light Mode")}
+                      </>
+                    )}
+                  </button>
+
+                  {/* Language Toggle switch */}
+                  <button
+                    onClick={() => changeLanguage(language === "en" ? "ur" : "en")}
+                    style={s.toggleBtn}
+                    title="Switch Language"
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="2" y1="12" x2="22" y2="12" />
+                      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                    </svg>
+                    {language === "en" ? "اردو" : "English"}
+                  </button>
+
                   <button onClick={() => setHideFinancials(!hideFinancials)} style={s.toggleBtn}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
                       {hideFinancials
@@ -225,15 +282,15 @@ export default function Dashboard() {
                         : <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
                       }
                     </svg>
-                    {hideFinancials ? "Show" : "Hide"}
+                    {hideFinancials ? t("topbar.show", "Show") : t("topbar.hide", "Hide")}
                   </button>
-                  <div style={s.offlineBadge}><span style={s.onlineDot} /> Offline ready</div>
+                  <div style={s.offlineBadge}><span style={s.onlineDot} /> {t("topbar.offline_ready", "Offline ready")}</div>
                 </div>
               </div>
 
               {/* Page content */}
               <div style={s.content}>
-                {active === "home" && (
+                {active === "home" && allowedModules.includes("home") && (
                   <HomeView
                     user={user}
                     summary={summary}
@@ -243,22 +300,22 @@ export default function Dashboard() {
                     onNavigate={setActive}
                   />
                 )}
-                {active === "sales" && <BillingPage />}
-                {active === "invoices" && <InvoiceHistory />}
-                {active === "products" && <InventoryManagementPage />}
-                {active === "customers" && <CustomersPage />}
-                {active === "payments" && <PaymentsPage />}
-                {active === "settings" && <SettingsPage />}
-                {userRole === "admin" && active === "expenses" && <ExpensesPage />}
-                {userRole === "admin" && active === "banks" && <BanksPage />}
-                {userRole === "admin" && active === "cashbook" && <CashBookPage />}
-                {userRole === "admin" && active === "ledger" && <LedgerPage />}
-                {userRole === "admin" && active === "journal" && <JournalPage />}
-                {userRole === "admin" && active === "coa" && <ChartOfAccountsPage />}
-                {userRole === "admin" && active === "trialbalance" && <TrialBalancePage />}
-                {userRole === "admin" && active === "analysis" && <AnalysisPage />}
-                {userRole === "admin" && active === "reports" && <ReportsPage />}
-                {userRole === "admin" && active === "addCompany" && <SuppliersPage />}
+                {active === "sales" && allowedModules.includes("sales") && <BillingPage />}
+                {active === "invoices" && allowedModules.includes("invoices") && <InvoiceHistory />}
+                {active === "products" && allowedModules.includes("products") && <InventoryManagementPage />}
+                {active === "customers" && allowedModules.includes("customers") && <CustomersPage />}
+                {active === "payments" && allowedModules.includes("payments") && <PaymentsPage />}
+                {active === "settings" && allowedModules.includes("settings") && <SettingsPage user={user} />}
+                {active === "expenses" && allowedModules.includes("expenses") && <ExpensesPage />}
+                {active === "banks" && allowedModules.includes("banks") && <BanksPage />}
+                {active === "cashbook" && allowedModules.includes("cashbook") && <CashBookPage />}
+                {active === "ledger" && allowedModules.includes("ledger") && <LedgerPage />}
+                {active === "journal" && allowedModules.includes("journal") && <JournalPage />}
+                {active === "coa" && allowedModules.includes("coa") && <ChartOfAccountsPage />}
+                {active === "trialbalance" && allowedModules.includes("trialbalance") && <TrialBalancePage />}
+                {active === "analysis" && allowedModules.includes("analysis") && <AnalysisPage />}
+                {active === "reports" && allowedModules.includes("reports") && <ReportsPage />}
+                {active === "addCompany" && allowedModules.includes("addCompany") && <SuppliersPage />}
               </div>
             </motion.div>
           )}
@@ -284,6 +341,11 @@ function HomeView({ user, summary, monthlyData, topDebtors, hideFinancials, onNa
   const todayCredit = summary?.todayCreditSales || 0;
   const todayTxCount = summary?.todayTransactionCount || 0;
   const recentSales = summary?.recentSales || [];
+
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const mask = (v) => hideFinancials ? "• • • •" : v;
 
@@ -364,24 +426,26 @@ function HomeView({ user, summary, monthlyData, topDebtors, hideFinancials, onNa
           </div>
           {chartData.length > 0 && !hideFinancials ? (
             <div style={{ width: "100%", height: 280 }}>
-              <ResponsiveContainer>
-                <BarChart data={chartData} barGap={2} barCategoryGap="18%">
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e8f0e8" vertical={false} />
-                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#6a8f6c" }} axisLine={{ stroke: "#c8d8c8" }} tickLine={false} />
-                  <YAxis
-                    tick={{ fontSize: 11, fill: "#6a8f6c" }}
-                    axisLine={false} tickLine={false}
-                    tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}
-                  />
-                  <Tooltip
-                    contentStyle={{ background: "#fff", border: "1px solid #c8d8c8", borderRadius: 6, fontSize: 12 }}
-                    formatter={(v) => [`Rs ${Number(v).toLocaleString()}`, undefined]}
-                  />
-                  <Bar dataKey="revenue" name="Revenue" fill="#66bb6a" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="expenses" name="Expenses" fill="#ef9a9a" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="profit" name="Profit" fill="#2e7d32" radius={[3, 3, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              {mounted && (
+                <ResponsiveContainer>
+                  <BarChart data={chartData} barGap={2} barCategoryGap="18%">
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e8f0e8" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#6a8f6c" }} axisLine={{ stroke: "#c8d8c8" }} tickLine={false} />
+                    <YAxis
+                      tick={{ fontSize: 11, fill: "#6a8f6c" }}
+                      axisLine={false} tickLine={false}
+                      tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}
+                    />
+                    <Tooltip
+                      contentStyle={{ background: "#fff", border: "1px solid #c8d8c8", borderRadius: 6, fontSize: 12 }}
+                      formatter={(v) => [`Rs ${Number(v).toLocaleString()}`, undefined]}
+                    />
+                    <Bar dataKey="revenue" name="Revenue" fill="#66bb6a" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="expenses" name="Expenses" fill="#ef9a9a" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="profit" name="Profit" fill="#2e7d32" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </div>
           ) : (
             <div style={{ height: 280, display: "flex", alignItems: "center", justifyContent: "center", color: "#999", fontSize: 13 }}>
@@ -399,21 +463,23 @@ function HomeView({ user, summary, monthlyData, topDebtors, hideFinancials, onNa
           {!hideFinancials ? (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
               <div style={{ width: "100%", height: 170 }}>
-                <ResponsiveContainer>
-                  <PieChart>
-                    <Pie
-                      data={cashCreditData}
-                      innerRadius={48} outerRadius={72}
-                      dataKey="value" paddingAngle={3}
-                      stroke="none"
-                    >
-                      {cashCreditData.map((_, i) => (
-                        <Cell key={i} fill={["#2e7d32", "#ef5350", "#e0e0e0"][i] || "#e0e0e0"} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(v) => `Rs ${Number(v).toLocaleString()}`} />
-                  </PieChart>
-                </ResponsiveContainer>
+                {mounted && (
+                  <ResponsiveContainer>
+                    <PieChart>
+                      <Pie
+                        data={cashCreditData}
+                        innerRadius={48} outerRadius={72}
+                        dataKey="value" paddingAngle={3}
+                        stroke="none"
+                      >
+                        {cashCreditData.map((_, i) => (
+                          <Cell key={i} fill={["#2e7d32", "#ef5350", "#e0e0e0"][i] || "#e0e0e0"} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(v) => `Rs ${Number(v).toLocaleString()}`} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
               </div>
               <div style={{ display: "flex", gap: 20, fontSize: 12, marginTop: 4 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -661,18 +727,18 @@ function ReportsView({ summary, hideFinancials }) {
    ═══════════════════════════════════════════════════════════════ */
 
 const s = {
-  app: { display: "flex", height: "100vh", fontFamily: "'Segoe UI', system-ui, sans-serif", overflow: "hidden", background: "#f0f4f0" },
+  app: { display: "flex", height: "100vh", fontFamily: "'Segoe UI', system-ui, sans-serif", overflow: "hidden", background: "var(--background, #f0f4f0)" },
 
   // Sidebar
   sidebar: {
-    background: "linear-gradient(180deg, #f7fbf7 0%, #edf5ed 100%)",
-    borderRight: "1px solid #c8d8c8",
+    background: "var(--sidebar-bg, linear-gradient(180deg, #f7fbf7 0%, #edf5ed 100%))",
+    borderRight: "1px solid var(--border, #c8d8c8)",
     display: "flex", flexDirection: "column", height: "100vh", transition: "width 0.2s ease",
     overflow: "hidden", flexShrink: 0,
   },
   sidebarTop: {
     padding: "12px 10px",
-    borderBottom: "1px solid #c8d8c8",
+    borderBottom: "1px solid var(--border, #c8d8c8)",
     display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6,
   },
   logoMark: {
@@ -681,33 +747,33 @@ const s = {
     display: "flex", alignItems: "center", justifyContent: "center",
     fontSize: 13, fontWeight: 800, color: "#fff", letterSpacing: 0.5, flexShrink: 0,
   },
-  brandName: { fontSize: 14, fontWeight: 700, color: "#1b3a1d", lineHeight: 1.2 },
-  brandTag: { fontSize: 9, color: "#6a8f6c", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em" },
+  brandName: { fontSize: 14, fontWeight: 700, color: "var(--text-primary, #1b3a1d)", lineHeight: 1.2 },
+  brandTag: { fontSize: 9, color: "var(--text-secondary, #6a8f6c)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em" },
   collapseBtn: {
-    background: "none", border: "none", color: "#6a8f6c", cursor: "pointer",
+    background: "none", border: "none", color: "var(--text-secondary, #6a8f6c)", cursor: "pointer",
     padding: 4, borderRadius: 4, display: "flex",
   },
 
   nav: { flex: 1, padding: "8px 6px", display: "flex", flexDirection: "column", overflowY: "auto", overflowX: "hidden" },
   navSection: {
-    fontSize: 9, fontWeight: 700, color: "#8aab8c",
+    fontSize: 9, fontWeight: 700, color: "var(--text-secondary, #8aab8c)",
     textTransform: "uppercase", letterSpacing: "0.1em",
     padding: "10px 10px 3px", userSelect: "none",
   },
   navItem: {
     display: "flex", alignItems: "center", gap: 8,
     padding: "8px 10px", borderRadius: 6, cursor: "pointer",
-    fontSize: 12.5, fontWeight: 500, color: "#3a5d3c",
+    fontSize: 12.5, fontWeight: 500, color: "var(--text-secondary, #3a5d3c)",
     transition: "all 0.12s", userSelect: "none",
   },
   navItemActive: {
-    background: "#2e7d32", color: "#fff",
+    background: "var(--accent, #2e7d32)", color: "#fff",
     boxShadow: "0 2px 8px rgba(46,125,50,0.25)",
   },
 
-  sidebarFooter: { padding: "8px 8px 4px", borderTop: "1px solid #c8d8c8" },
+  sidebarFooter: { padding: "8px 8px 4px", borderTop: "1px solid var(--border, #c8d8c8)" },
   userCard: {
-    background: "#fff", border: "1px solid #c8e6c9", borderRadius: 6,
+    background: "var(--surface, #fff)", border: "1px solid var(--border, #c8e6c9)", borderRadius: 6,
     padding: "6px 8px", display: "flex", alignItems: "center", gap: 8, marginBottom: 6,
   },
   avatar: {
@@ -716,42 +782,42 @@ const s = {
     display: "flex", alignItems: "center", justifyContent: "center",
     fontSize: 10, fontWeight: 700, color: "#fff", flexShrink: 0,
   },
-  userName: { fontSize: 12, fontWeight: 600, color: "#1b3a1d" },
+  userName: { fontSize: 12, fontWeight: 600, color: "var(--text-primary, #1b3a1d)" },
   userOnline: { display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "#43a047" },
   onlineDot: { display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: "#4caf50", flexShrink: 0 },
   logoutBtn: {
     width: "100%", padding: "7px 0", borderRadius: 6,
-    background: "transparent", border: "1px solid #c8d8c8",
-    color: "#5a755c", fontSize: 11.5, fontWeight: 500, cursor: "pointer",
+    background: "transparent", border: "1px solid var(--border, #c8d8c8)",
+    color: "var(--text-secondary, #5a755c)", fontSize: 11.5, fontWeight: 500, cursor: "pointer",
     display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
   },
   poweredBy: {
     textAlign: "center", padding: "8px 0 6px", fontSize: 9.5,
-    color: "#8aab8c", letterSpacing: "0.03em", userSelect: "none",
+    color: "var(--text-secondary, #8aab8c)", letterSpacing: "0.03em", userSelect: "none",
   },
 
   // Main
   main: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 },
   welcome: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" },
-  loader: { width: 32, height: 32, border: "3px solid #c8e6c9", borderTop: "3px solid #2e7d32", borderRadius: "50%" },
+  loader: { width: 32, height: 32, border: "3px solid var(--border, #c8e6c9)", borderTop: "3px solid var(--accent, #2e7d32)", borderRadius: "50%" },
   contentFrame: { flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" },
 
   topbar: {
-    padding: "10px 22px", borderBottom: "1px solid #d4ddd4",
-    background: "#fff", display: "flex", alignItems: "center",
+    padding: "10px 22px", borderBottom: "1px solid var(--border, #d4ddd4)",
+    background: "var(--surface, #fff)", display: "flex", alignItems: "center",
     justifyContent: "space-between", flexShrink: 0,
   },
-  topTitle: { fontSize: 16, fontWeight: 700, color: "#1b3a1d", margin: 0 },
-  topDate: { fontSize: 11, color: "#6a8f6c", marginTop: 1 },
+  topTitle: { fontSize: 16, fontWeight: 700, color: "var(--text-primary, #1b3a1d)", margin: 0 },
+  topDate: { fontSize: 11, color: "var(--text-secondary, #6a8f6c)", marginTop: 1 },
   toggleBtn: {
     display: "flex", alignItems: "center", gap: 5,
-    background: "#f5f8f5", border: "1px solid #c8d8c8", borderRadius: 16,
-    padding: "4px 12px", fontSize: 11, color: "#3a5d3c", fontWeight: 600, cursor: "pointer",
+    background: "var(--sidebar-bg, #f5f8f5)", border: "1px solid var(--border, #c8d8c8)", borderRadius: 16,
+    padding: "4px 12px", fontSize: 11, color: "var(--text-primary, #3a5d3c)", fontWeight: 600, cursor: "pointer",
   },
   offlineBadge: {
     display: "flex", alignItems: "center", gap: 5,
-    background: "#f5f8f5", border: "1px solid #c8d8c8",
-    borderRadius: 16, padding: "4px 12px", fontSize: 11, color: "#3a5d3c", fontWeight: 500,
+    background: "var(--sidebar-bg, #f5f8f5)", border: "1px solid var(--border, #c8d8c8)",
+    borderRadius: 16, padding: "4px 12px", fontSize: 11, color: "var(--text-primary, #3a5d3c)", fontWeight: 500,
   },
 
   content: { flex: 1, overflowY: "auto", overflowX: "hidden", minHeight: 0, padding: "18px 22px" },
@@ -759,12 +825,12 @@ const s = {
 
 // Home view styles
 const h = {
-  greeting: { fontSize: 22, fontWeight: 700, color: "#1b3a1d", margin: 0 },
-  sub: { fontSize: 13, color: "#6a8f6c", margin: "3px 0 0" },
+  greeting: { fontSize: 22, fontWeight: 700, color: "var(--text-primary, #1b3a1d)", margin: 0 },
+  sub: { fontSize: 13, color: "var(--text-secondary, #6a8f6c)", margin: "3px 0 0" },
 
   statsRow: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginBottom: 16 },
   statCard: {
-    background: "#fff", border: "1px solid #d4ddd4", borderRadius: 6,
+    background: "var(--surface, #fff)", border: "1px solid var(--border, #d4ddd4)", borderRadius: 6,
     padding: "14px 16px", position: "relative", overflow: "hidden",
   },
   statAccent: { position: "absolute", top: 0, left: 0, right: 0, height: 3 },
@@ -772,54 +838,54 @@ const h = {
     width: 36, height: 36, borderRadius: 8,
     display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
   },
-  statLabel: { fontSize: 10, fontWeight: 700, color: "#6a8f6c", textTransform: "uppercase", letterSpacing: "0.06em" },
-  statValue: { fontSize: 20, fontWeight: 800, fontFamily: "'Segoe UI', monospace", color: "#1b3a1d", margin: "2px 0 1px", lineHeight: 1.2 },
-  statNote: { fontSize: 10.5, color: "#8aab8c" },
+  statLabel: { fontSize: 10, fontWeight: 700, color: "var(--text-secondary, #6a8f6c)", textTransform: "uppercase", letterSpacing: "0.06em" },
+  statValue: { fontSize: 20, fontWeight: 800, fontFamily: "'Segoe UI', monospace", color: "var(--text-primary, #1b3a1d)", margin: "2px 0 1px", lineHeight: 1.2 },
+  statNote: { fontSize: 10.5, color: "var(--text-secondary, #8aab8c)" },
 
   row2: { display: "flex", gap: 14, marginBottom: 16, flexWrap: "wrap" },
   row3: { display: "flex", gap: 14, flexWrap: "wrap" },
 
   card: {
-    background: "#fff", border: "1px solid #d4ddd4", borderRadius: 6,
+    background: "var(--surface, #fff)", border: "1px solid var(--border, #d4ddd4)", borderRadius: 6,
     padding: "16px 18px", minWidth: 0,
   },
   cardHead: { display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 },
-  cardTitle: { margin: 0, fontSize: 14, fontWeight: 700, color: "#1b3a1d" },
-  cardSub: { fontSize: 11, color: "#8aab8c", fontWeight: 500 },
+  cardTitle: { margin: 0, fontSize: 14, fontWeight: 700, color: "var(--text-primary, #1b3a1d)" },
+  cardSub: { fontSize: 11, color: "var(--text-secondary, #8aab8c)", fontWeight: 500 },
   linkBtn: {
-    background: "none", border: "none", color: "#2e7d32", fontSize: 11,
+    background: "none", border: "none", color: "var(--accent, #2e7d32)", fontSize: 11,
     fontWeight: 600, cursor: "pointer", padding: 0,
   },
 
   quickBtn: {
     display: "flex", alignItems: "center", gap: 10,
     padding: "10px 12px", borderRadius: 6,
-    border: "1px solid #e8f0e8", background: "#fafff9",
-    cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#1b3a1d",
+    border: "1px solid var(--border, #e8f0e8)", background: "var(--surface-secondary, #fafff9)",
+    cursor: "pointer", fontSize: 13, fontWeight: 600, color: "var(--text-primary, #1b3a1d)",
     transition: "all 0.1s", textAlign: "left",
   },
 
   debtorRow: {
     display: "flex", justifyContent: "space-between", alignItems: "center",
-    padding: "9px 0", borderBottom: "1px solid #f2f7f2",
+    padding: "9px 0", borderBottom: "1px solid var(--border, #f2f7f2)",
   },
   debtorRank: {
     width: 22, height: 22, borderRadius: "50%",
-    background: "#f5f8f5", border: "1px solid #d4ddd4",
+    background: "var(--sidebar-bg, #f5f8f5)", border: "1px solid var(--border, #d4ddd4)",
     display: "flex", alignItems: "center", justifyContent: "center",
-    fontSize: 10, fontWeight: 700, color: "#6a8f6c", flexShrink: 0,
+    fontSize: 10, fontWeight: 700, color: "var(--text-secondary, #6a8f6c)", flexShrink: 0,
   },
 
   alertRow: {
     display: "flex", justifyContent: "space-between", alignItems: "center",
-    padding: "12px 14px", borderRadius: 6, border: "1px solid #e8e8e8",
+    padding: "12px 14px", borderRadius: 6, border: "1px solid var(--border, #e8e8e8)",
   },
 
   table: { width: "100%", borderCollapse: "collapse" },
   th: {
     padding: "10px 14px", fontSize: 10.5, fontWeight: 700,
-    color: "#6a8f6c", textTransform: "uppercase", letterSpacing: "0.05em",
-    borderBottom: "2px solid #d4ddd4", textAlign: "left",
+    color: "var(--text-secondary, #6a8f6c)", textTransform: "uppercase", letterSpacing: "0.05em",
+    borderBottom: "2px solid var(--border, #d4ddd4)", textAlign: "left",
   },
-  td: { padding: "10px 14px", fontSize: 13, color: "#333" },
+  td: { padding: "10px 14px", fontSize: 13, color: "var(--text-primary, #333)" },
 };

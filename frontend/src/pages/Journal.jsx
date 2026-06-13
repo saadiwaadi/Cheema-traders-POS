@@ -8,6 +8,8 @@ export default function JournalPage() {
 
   // Master Data
   const [accounts, setAccounts] = useState([]);
+  const [customers, setCustomers] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
   
   // Ledger Tab State
   
@@ -24,8 +26,8 @@ export default function JournalPage() {
   const [jvNarration, setJvNarration] = useState("");
   const [jvEntryNoPreview, setJvEntryNoPreview] = useState("");
   const [jvLines, setJvLines] = useState([
-    { accountId: "", debit: "", credit: "", memo: "" },
-    { accountId: "", debit: "", credit: "", memo: "" }
+    { accountId: "", debit: "", credit: "", memo: "", customerId: "", supplierId: "" },
+    { accountId: "", debit: "", credit: "", memo: "", customerId: "", supplierId: "" }
   ]);
   const [formError, setFormError] = useState("");
   const [formSuccess, setFormSuccess] = useState("");
@@ -42,6 +44,7 @@ export default function JournalPage() {
   // Fetch accounts list on mount
   useEffect(() => {
     loadAccounts();
+    loadSubledgers();
   }, []);
 
   // Reload data when active tab changes
@@ -67,6 +70,18 @@ export default function JournalPage() {
       setAccounts(list || []);
     } catch (err) {
       console.error("Failed to load accounts:", err);
+    }
+  };
+
+  const loadSubledgers = async () => {
+    if (!ipc) return;
+    try {
+      const custRes = await ipc.invoke("pos:customers:list", "");
+      setCustomers(custRes.customers || []);
+      const suppRes = await ipc.invoke("pos:suppliers:list", "");
+      setSuppliers(suppRes.suppliers || []);
+    } catch (err) {
+      console.error("Failed to load subledgers:", err);
     }
   };
 
@@ -159,7 +174,7 @@ export default function JournalPage() {
   };
 
   const addLine = () => {
-    setJvLines([...jvLines, { accountId: "", debit: "", credit: "", memo: "" }]);
+    setJvLines([...jvLines, { accountId: "", debit: "", credit: "", memo: "", customerId: "", supplierId: "" }]);
   };
 
   const removeLine = (index) => {
@@ -189,10 +204,21 @@ export default function JournalPage() {
         if (db === 0 && cr === 0) {
           throw new Error("Each line must have either a debit or credit amount.");
         }
+
+        const acc = accounts.find(a => String(a.id) === String(l.accountId));
+        if (acc?.code === "1100" && !l.customerId) {
+          throw new Error(`Customer selection is required for Accounts Receivable line.`);
+        }
+        if (acc?.code === "2000" && !l.supplierId) {
+          throw new Error(`Supplier selection is required for Accounts Payable line.`);
+        }
+
         return {
           accountId: Number(l.accountId),
           debit: db,
           credit: cr,
+          customerId: l.customerId ? Number(l.customerId) : null,
+          supplierId: l.supplierId ? Number(l.supplierId) : null,
           memo: l.memo || null
         };
       });
@@ -211,8 +237,8 @@ export default function JournalPage() {
       // Reset form
       setJvNarration("");
       setJvLines([
-        { accountId: "", debit: "", credit: "", memo: "" },
-        { accountId: "", debit: "", credit: "", memo: "" }
+        { accountId: "", debit: "", credit: "", memo: "", customerId: "", supplierId: "" },
+        { accountId: "", debit: "", credit: "", memo: "", customerId: "", supplierId: "" }
       ]);
       loadNextJVNo();
       
@@ -387,8 +413,8 @@ export default function JournalPage() {
                           <td style={st.td}>
                             <span style={{
                               ...st.sourceBadge,
-                              background: v.source_type === "manual" ? "#eef7ee" : "#f0f0f5",
-                              color: v.source_type === "manual" ? "#2e7d32" : "#555"
+                              background: v.source_type === "manual" ? "rgba(46, 125, 50, 0.15)" : "var(--sidebar-bg)",
+                              color: v.source_type === "manual" ? "var(--success)" : "var(--text-secondary)"
                             }}>
                               {v.source_type.toUpperCase()}
                             </span>
@@ -396,12 +422,12 @@ export default function JournalPage() {
                           <td style={st.td}>
                             <div>{v.narration || "No Narration"}</div>
                             {v.reversed_by && (
-                              <div style={{ color: "#c62828", fontSize: 11, marginTop: 4 }}>
+                              <div style={{ color: "var(--danger)", fontSize: 11, marginTop: 4 }}>
                                 Reversed by {v.reversed_by}
                               </div>
                             )}
                             {v.reverses && (
-                              <div style={{ color: "#777", fontSize: 11, marginTop: 4 }}>
+                              <div style={{ color: "var(--text-secondary)", fontSize: 11, marginTop: 4 }}>
                                 Reverses {v.reverses}
                               </div>
                             )}
@@ -442,7 +468,7 @@ export default function JournalPage() {
                   <label style={st.label}>Voucher No (Auto-Preview)</label>
                   <input
                     type="text"
-                    style={{ ...st.input, background: "#f5f5f5", color: "#666", fontWeight: "bold" }}
+                    style={{ ...st.input, background: "var(--sidebar-bg)", color: "var(--text-secondary)", fontWeight: "bold" }}
                     value={jvEntryNoPreview}
                     readOnly
                   />
@@ -486,11 +512,18 @@ export default function JournalPage() {
                 {jvLines.map((line, idx) => (
                   <div key={idx} style={st.gridRow}>
                     {/* Account Select with unique TabIndex */}
-                    <div style={{ width: "35%" }}>
+                    <div style={{ width: "35%", display: "flex", flexDirection: "column", gap: 4 }}>
                       <select
                         style={{ ...st.select, width: "100%" }}
                         value={line.accountId}
-                        onChange={(e) => handleLineChange(idx, "accountId", e.target.value)}
+                        onChange={(e) => {
+                          const newAccountId = e.target.value;
+                          handleLineChange(idx, "accountId", newAccountId);
+                          // Clear subledger values if account changes
+                          const acc = accounts.find(a => String(a.id) === String(newAccountId));
+                          if (acc?.code !== "1100") handleLineChange(idx, "customerId", "");
+                          if (acc?.code !== "2000") handleLineChange(idx, "supplierId", "");
+                        }}
                         required
                         ref={(el) => (inputRefs.current[idx * 3] = el)}
                       >
@@ -501,6 +534,40 @@ export default function JournalPage() {
                           </option>
                         ))}
                       </select>
+
+                      {/* Customer Selector */}
+                      {accounts.find(a => String(a.id) === String(line.accountId))?.code === "1100" && (
+                        <select
+                          style={{ ...st.select, width: "100%", borderColor: "var(--success)", background: "rgba(46, 125, 50, 0.1)", padding: "6px 10px" }}
+                          value={line.customerId || ""}
+                          onChange={(e) => handleLineChange(idx, "customerId", e.target.value)}
+                          required
+                        >
+                          <option value="">-- Select Customer --</option>
+                          {customers.map(c => (
+                            <option key={c.id} value={c.id}>
+                              {c.name} {c.phone ? `(${c.phone})` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+
+                      {/* Supplier Selector */}
+                      {accounts.find(a => String(a.id) === String(line.accountId))?.code === "2000" && (
+                        <select
+                          style={{ ...st.select, width: "100%", borderColor: "var(--danger)", background: "rgba(239, 68, 68, 0.1)", padding: "6px 10px" }}
+                          value={line.supplierId || ""}
+                          onChange={(e) => handleLineChange(idx, "supplierId", e.target.value)}
+                          required
+                        >
+                          <option value="">-- Select Supplier --</option>
+                          {suppliers.map(s => (
+                            <option key={s.id} value={s.id}>
+                              {s.name} {s.phone ? `(${s.phone})` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                     </div>
 
                     {/* Debit Input */}
@@ -670,7 +737,15 @@ export default function JournalPage() {
                     {viewingVoucher.lines.map((line, idx) => (
                       <tr key={line.id || idx} style={st.tableRow}>
                         <td style={{ ...st.td, fontFamily: "monospace" }}>{line.account_code}</td>
-                        <td style={st.td}>{line.account_name}</td>
+                        <td style={st.td}>
+                          {line.account_name}
+                          {line.customer_name && (
+                            <span style={st.subledgerBadge}> (Cust: {line.customer_name})</span>
+                          )}
+                          {line.supplier_name && (
+                            <span style={st.subledgerBadge}> (Supp: {line.supplier_name})</span>
+                          )}
+                        </td>
                         <td style={st.td}>{line.line_memo || "—"}</td>
                         <td style={{ ...st.td, ...st.num, color: "#2e7d32" }}>
                           {line.debit > 0 ? fmtPKR(line.debit) : "—"}
@@ -763,99 +838,100 @@ export default function JournalPage() {
 }
 
 const st = {
-  page: { display: "flex", flexDirection: "column", minHeight: "100%", background: "#f4faf4", fontFamily: "system-ui, sans-serif" },
+  page: { display: "flex", flexDirection: "column", minHeight: "100%", background: "var(--surface-secondary)", fontFamily: "system-ui, sans-serif" },
   main: { flex: 1, padding: 24, overflowY: "auto", display: "flex", flexDirection: "column", gap: 24, paddingBottom: 100 },
   
   toolbar: { display: "flex", justifyContent: "space-between", alignItems: "center" },
   toolbarLeft: { display: "flex", alignItems: "center", gap: 12 },
-  pageTitle: { margin: 0, fontSize: 24, fontWeight: "bold", color: "#1b3a1d" },
-  badge: { background: "#dcf5dc", color: "#2e7d32", padding: "4px 10px", borderRadius: 20, fontSize: 13, fontWeight: 600 },
+  pageTitle: { margin: 0, fontSize: 24, fontWeight: "bold", color: "var(--text-primary)" },
+  badge: { background: "rgba(46, 125, 50, 0.15)", color: "var(--success)", padding: "4px 10px", borderRadius: 20, fontSize: 13, fontWeight: 600 },
   
-  tabBar: { display: "flex", gap: 8, background: "#e8f2e8", padding: 4, borderRadius: 6 },
-  tabBtn: { padding: "8px 16px", border: "none", background: "none", borderRadius: 4, cursor: "pointer", fontWeight: 600, color: "#555", fontSize: 14 },
-  activeTabBtn: { padding: "8px 16px", border: "none", background: "#2e7d32", color: "#fff", borderRadius: 4, cursor: "pointer", fontWeight: 600, fontSize: 14 },
+  tabBar: { display: "flex", gap: 8, background: "var(--sidebar-bg)", padding: 4, borderRadius: 6 },
+  tabBtn: { padding: "8px 16px", border: "none", background: "none", borderRadius: 4, cursor: "pointer", fontWeight: 600, color: "var(--text-secondary)", fontSize: 14 },
+  activeTabBtn: { padding: "8px 16px", border: "none", background: "var(--success)", color: "#fff", borderRadius: 4, cursor: "pointer", fontWeight: 600, fontSize: 14 },
 
-  filterBar: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 16, background: "#fff", border: "1px solid #dbe8db", borderRadius: 8, padding: 16 },
+  filterBar: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 16, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, padding: 16 },
   filterGroup: { display: "flex", flexDirection: "column", gap: 6 },
-  label: { fontSize: 12, fontWeight: 600, color: "#6a8f6c", textTransform: "uppercase" },
-  select: { padding: "10px 12px", border: "1.5px solid #cde0cd", borderRadius: 4, outline: "none", fontSize: 14, color: "#1b3a1d", background: "#fff" },
-  input: { padding: "10px 12px", border: "1.5px solid #cde0cd", borderRadius: 4, outline: "none", fontSize: 14, color: "#1b3a1d" },
+  label: { fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase" },
+  select: { padding: "10px 12px", border: "1.5px solid var(--border)", borderRadius: 4, outline: "none", fontSize: 14, color: "var(--text-primary)", background: "var(--input-bg)" },
+  input: { padding: "10px 12px", border: "1.5px solid var(--border)", borderRadius: 4, outline: "none", fontSize: 14, color: "var(--text-primary)", background: "var(--input-bg)" },
 
   metricsRow: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 },
-  metricCard: { background: "#fff", border: "1px solid #dbe8db", borderRadius: 8, padding: 20 },
-  metricLabel: { fontSize: 12, fontWeight: 600, color: "#6a8f6c", textTransform: "uppercase", marginBottom: 6 },
+  metricCard: { background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, padding: 20 },
+  metricLabel: { fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: 6 },
   metricValue: { fontSize: 22, fontWeight: 700, fontFamily: "monospace" },
 
-  card: { background: "#fff", borderRadius: 8, padding: 24, border: "1px solid #d5e8d5", display: "flex", flexDirection: "column" },
+  card: { background: "var(--surface)", borderRadius: 8, padding: 24, border: "1px solid var(--border)", display: "flex", flexDirection: "column" },
   cardHeader: { marginBottom: 20 },
-  cardTitle: { margin: 0, fontSize: 18, fontWeight: "bold", color: "#1b3a1d" },
-  subText: { margin: "4px 0 0 0", fontSize: 13, color: "#666" },
+  cardTitle: { margin: 0, fontSize: 18, fontWeight: "bold", color: "var(--text-primary)" },
+  subText: { margin: "4px 0 0 0", fontSize: 13, color: "var(--text-secondary)" },
 
   tableWrap: { overflowX: "auto" },
   table: { width: "100%", borderCollapse: "collapse", textAlign: "left" },
-  tableHeadRow: { borderBottom: "2px solid #e8f0e8" },
-  th: { padding: "12px 8px", fontSize: 12, fontWeight: 700, color: "#6a8f6c", textTransform: "uppercase" },
-  tableRow: { borderBottom: "1px solid #f2f7f2", transition: "background 0.15s" },
-  td: { padding: "14px 8px", fontSize: 14, color: "#1b3a1d", verticalAlign: "middle" },
+  tableHeadRow: { borderBottom: "2px solid var(--border)" },
+  th: { padding: "12px 8px", fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" },
+  tableRow: { borderBottom: "1px solid var(--border)", transition: "background 0.15s" },
+  td: { padding: "14px 8px", fontSize: 14, color: "var(--text-primary)", verticalAlign: "middle" },
   num: { textAlign: "right", fontFamily: "monospace", fontWeight: 500 },
-  emptyCell: { padding: 40, textAlign: "center", color: "#999", fontStyle: "italic", fontSize: 14 },
+  emptyCell: { padding: 40, textAlign: "center", color: "var(--text-secondary)", fontStyle: "italic", fontSize: 14 },
 
   sourceBadge: { padding: "4px 8px", borderRadius: 4, fontSize: 11, fontWeight: "bold" },
-  viewBtn: { padding: "6px 12px", background: "#fff", border: "1px solid #2e7d32", color: "#2e7d32", borderRadius: 4, cursor: "pointer", fontWeight: 600, fontSize: 12 },
+  viewBtn: { padding: "6px 12px", background: "var(--surface)", border: "1px solid var(--success)", color: "var(--success)", borderRadius: 4, cursor: "pointer", fontWeight: 600, fontSize: 12 },
   
   // Voucher Form Grid
   voucherForm: { display: "flex", flexDirection: "column", gap: 24 },
   formHeaderRow: { display: "flex", gap: 16, width: "100%" },
   formHeaderField: { display: "flex", flexDirection: "column", gap: 6, flex: 1 },
   
-  gridHeader: { display: "flex", background: "#e8f2e8", padding: "12px 0", fontSize: 12, fontWeight: 700, color: "#6a8f6c", textTransform: "uppercase", borderBottom: "1px solid #d5e8d5" },
+  gridHeader: { display: "flex", background: "var(--sidebar-bg)", padding: "12px 0", fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", borderBottom: "1px solid var(--border)" },
   gridBody: { display: "flex", flexDirection: "column" },
-  gridRow: { display: "flex", alignItems: "center", padding: "12px 0", borderBottom: "1px solid #eee", gap: 8, paddingLeft: 12, paddingRight: 12 },
-  removeBtn: { padding: "8px 12px", border: "none", background: "#ffebee", color: "#c62828", borderRadius: 4, cursor: "pointer", fontWeight: "bold", fontSize: 14 },
+  gridRow: { display: "flex", alignItems: "center", padding: "12px 0", borderBottom: "1px solid var(--border)", gap: 8, paddingLeft: 12, paddingRight: 12 },
+  removeBtn: { padding: "8px 12px", border: "none", background: "rgba(239, 68, 68, 0.15)", color: "var(--danger)", borderRadius: 4, cursor: "pointer", fontWeight: "bold", fontSize: 14 },
   
   gridFooterActions: { padding: 16, display: "flex" },
-  addBtn: { padding: "8px 16px", border: "1.5px dashed #2e7d32", background: "#fff", color: "#2e7d32", borderRadius: 4, cursor: "pointer", fontWeight: 600, fontSize: 13 },
+  addBtn: { padding: "8px 16px", border: "1.5px dashed var(--success)", background: "var(--surface)", color: "var(--success)", borderRadius: 4, cursor: "pointer", fontWeight: 600, fontSize: 13 },
   
   // Sticky Footer
   stickyFooter: {
     position: "fixed", bottom: 0, left: 0, right: 0,
-    background: "#fff", borderTop: "2px solid #2e7d32",
+    background: "var(--surface)", borderTop: "2px solid var(--success)",
     padding: "16px 40px", display: "flex", justifyContent: "space-between",
-    alignItems: "center", boxShadow: "0 -4px 12px rgba(0,0,0,0.05)", zIndex: 10
+    alignItems: "center", boxShadow: "0 -4px 12px rgba(0,0,0,0.15)", zIndex: 10
   },
   stickyFooterInfo: { display: "flex", gap: 40 },
   footerMetric: { display: "flex", flexDirection: "column" },
-  footerLabel: { fontSize: 11, color: "#666", fontWeight: 600 },
+  footerLabel: { fontSize: 11, color: "var(--text-secondary)", fontWeight: 600 },
   footerValue: { fontSize: 18, fontWeight: "bold", fontFamily: "monospace" },
   stickyFooterActions: { display: "flex", gap: 12 },
-  balanceBtn: { padding: "12px 20px", background: "#f0f7f0", color: "#2e7d32", border: "1.5px solid #2e7d32", borderRadius: 4, cursor: "pointer", fontWeight: 600 },
-  saveBtn: { padding: "12px 24px", background: "#2e7d32", color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 15 },
+  balanceBtn: { padding: "12px 20px", background: "var(--sidebar-bg)", color: "var(--success)", border: "1.5px solid var(--success)", borderRadius: 4, cursor: "pointer", fontWeight: 600 },
+  saveBtn: { padding: "12px 24px", background: "var(--success)", color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 15 },
 
   // Modal / Drawer Styling
-  modalOverlay: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(27,58,29,0.5)", zIndex: 1000, display: "flex", justifyContent: "center", alignItems: "center" },
-  modalContent: { background: "#fff", borderRadius: 8, width: "70%", maxWidth: 900, maxHeight: "85vh", overflowY: "auto", boxShadow: "0 10px 30px rgba(0,0,0,0.15)", display: "flex", flexDirection: "column" },
-  modalHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 24px", borderBottom: "1px solid #eee" },
-  modalTitle: { margin: 0, fontSize: 18, color: "#1b3a1d", fontWeight: "bold" },
-  modalSubText: { fontSize: 12, color: "#666" },
-  closeModalBtn: { border: "none", background: "none", fontSize: 20, color: "#999", cursor: "pointer" },
+  modalOverlay: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", justifyContent: "center", alignItems: "center" },
+  modalContent: { background: "var(--surface)", borderRadius: 8, width: "70%", maxWidth: 900, maxHeight: "85vh", overflowY: "auto", boxShadow: "0 10px 30px rgba(0,0,0,0.3)", display: "flex", flexDirection: "column" },
+  modalHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 24px", borderBottom: "1px solid var(--border)" },
+  modalTitle: { margin: 0, fontSize: 18, color: "var(--text-primary)", fontWeight: "bold" },
+  modalSubText: { fontSize: 12, color: "var(--text-secondary)" },
+  closeModalBtn: { border: "none", background: "none", fontSize: 20, color: "var(--text-secondary)", cursor: "pointer" },
   modalBody: { padding: 24 },
-  modalTableWrap: { border: "1px solid #eee", borderRadius: 6, overflow: "hidden", marginBottom: 20 },
-  sectionLabel: { fontSize: 13, fontWeight: 700, color: "#6a8f6c", textTransform: "uppercase", marginBottom: 8 },
-  miniCard: { background: "#f9faf9", border: "1px solid #eef2ee", borderRadius: 6, padding: "12px 16px" },
-  miniLabel: { fontSize: 11, color: "#888", textTransform: "uppercase", fontWeight: 600, marginBottom: 4 },
-  miniValue: { fontSize: 14, color: "#1b3a1d", fontWeight: 500 },
+  modalTableWrap: { border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden", marginBottom: 20 },
+  sectionLabel: { fontSize: 13, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: 8 },
+  miniCard: { background: "var(--surface-secondary)", border: "1px solid var(--border)", borderRadius: 6, padding: "12px 16px" },
+  miniLabel: { fontSize: 11, color: "var(--text-secondary)", textTransform: "uppercase", fontWeight: 600, marginBottom: 4 },
+  miniValue: { fontSize: 14, color: "var(--text-primary)", fontWeight: 500 },
 
-  alertBoxWarning: { background: "#fff8e1", borderLeft: "4px solid #ffb300", color: "#b78103", padding: 14, borderRadius: 4, fontSize: 13, marginTop: 16 },
-  alertBoxInfo: { background: "#e8f0fe", borderLeft: "4px solid #1a73e8", color: "#185abc", padding: 14, borderRadius: 4, fontSize: 13, marginTop: 16 },
-  reverseActionBtn: { padding: "10px 18px", background: "#ffebee", border: "1px solid #c62828", color: "#c62828", borderRadius: 4, cursor: "pointer", fontWeight: 600, fontSize: 13 },
+  alertBoxWarning: { background: "rgba(245, 158, 11, 0.15)", borderLeft: "4px solid var(--warning)", color: "var(--warning)", padding: 14, borderRadius: 4, fontSize: 13, marginTop: 16 },
+  alertBoxInfo: { background: "rgba(30, 144, 255, 0.15)", borderLeft: "4px solid #1e90ff", color: "#1e90ff", padding: 14, borderRadius: 4, fontSize: 13, marginTop: 16 },
+  reverseActionBtn: { padding: "10px 18px", background: "rgba(239, 68, 68, 0.15)", border: "1px solid var(--danger)", color: "var(--danger)", borderRadius: 4, cursor: "pointer", fontWeight: 600, fontSize: 13 },
 
-  reversalForm: { border: "1px solid #ffebeb", background: "#fffbfb", borderRadius: 6, padding: 16, marginTop: 24 },
-  reversalFormTitle: { margin: "0 0 16px 0", color: "#c62828", fontSize: 14, fontWeight: "bold" },
+  reversalForm: { border: "1px solid var(--border)", background: "var(--surface-secondary)", borderRadius: 6, padding: 16, marginTop: 24 },
+  reversalFormTitle: { margin: "0 0 16px 0", color: "var(--danger)", fontSize: 14, fontWeight: "bold" },
   reversalFormRow: { display: "flex", gap: 16, marginBottom: 16 },
   reversalFormActions: { display: "flex", justifyContent: "flex-end", gap: 12 },
-  cancelBtn: { padding: "8px 16px", border: "1px solid #ccc", background: "#fff", borderRadius: 4, cursor: "pointer", fontSize: 13, color: "#555" },
-  postReversalBtn: { padding: "8px 16px", border: "none", background: "#c62828", color: "#fff", borderRadius: 4, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  cancelBtn: { padding: "8px 16px", border: "1px solid var(--border)", background: "var(--surface)", borderRadius: 4, cursor: "pointer", fontSize: 13, color: "var(--text-primary)" },
+  postReversalBtn: { padding: "8px 16px", border: "none", background: "var(--danger)", color: "#fff", borderRadius: 4, cursor: "pointer", fontSize: 13, fontWeight: 600 },
 
-  errorBanner: { background: "#ffebee", borderLeft: "4px solid #c62828", color: "#c62828", padding: 12, borderRadius: 4, fontSize: 14, marginBottom: 16 },
-  successBanner: { background: "#e8f5e9", borderLeft: "4px solid #2e7d32", color: "#2e7d32", padding: 12, borderRadius: 4, fontSize: 14, marginBottom: 16 }
+  errorBanner: { background: "rgba(239, 68, 68, 0.15)", borderLeft: "4px solid var(--danger)", color: "var(--danger)", padding: 12, borderRadius: 4, fontSize: 14, marginBottom: 16 },
+  successBanner: { background: "rgba(46, 125, 50, 0.15)", borderLeft: "4px solid var(--success)", color: "var(--success)", padding: 12, borderRadius: 4, fontSize: 14, marginBottom: 16 },
+  subledgerBadge: { fontSize: 11, color: "var(--text-secondary)", fontStyle: "italic", background: "var(--sidebar-bg)", padding: "2px 6px", borderRadius: 4, marginLeft: 6 }
 };

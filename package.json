@@ -1,6 +1,6 @@
 {
   "name": "pos-system",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "electron/main.js",
   "scripts": {
     "backend": "cd backend && npm run dev",
@@ -8,10 +8,9 @@
     "electron": "wait-on http://localhost:5173 && electron .",
     "dev": "concurrently \"npm run backend\" \"npm run frontend\" \"npm run electron\"",
     "desktop": "concurrently \"npm run frontend\" \"npm run electron\"",
-    "build": "cd frontend && npm run build",
-    "rebuild": "electron-rebuild -f -w sqlite3 -w better-sqlite3",
-    "dist": "npm run build && npm run rebuild && electron-builder --win",
-    "package": "npm run build && electron-packager . CheemaTradersPOS --platform=win32 --arch=x64 --out=dist-package --overwrite --ignore=\"(frontend/src|frontend/node_modules|frontend/public|dist-package|\\\\.git|\\\\.gitignore|requirements|diff\\\\.txt)\""
+    "build:frontend": "cd frontend && npm run build",
+    "rebuild:native": "electron-rebuild -f -w better-sqlite3,sqlite3",
+    "package": "npm run build:frontend && npm run rebuild:native && electron-builder build --win"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",
@@ -37,11 +36,14 @@
   },
   "build": {
     "appId": "com.cheematraders.pos",
-    "productName": "CheemaTradersPOS",
-    "directories": {
-      "output": "release"
-    },
+    "productName": "Cheema Traders POS",
     "npmRebuild": false,
+    "directories": {
+      "output": "dist"
+    },
+    "asarUnpack": [
+      "**/*.node"
+    ],
     "win": {
       "target": "nsis",
       "icon": "build/icon.ico"
@@ -50,17 +52,16 @@
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
     },
     "files": [
       "electron/**/*",
       "backend/**/*",
+      "database/**/*",
       "frontend/dist/**/*",
+      "node_modules/**/*",
       "package.json"
-    ],
-    "asar": true,
-    "asarUnpack": [
-      "**/*.node"
     ]
   }
 }

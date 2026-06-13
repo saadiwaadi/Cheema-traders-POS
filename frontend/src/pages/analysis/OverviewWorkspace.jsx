@@ -1,30 +1,18 @@
+import { useEffect, useState } from "react";
 import { st } from "./shared/analysisStyles";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend } from "recharts";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
+import { getRevenueTrend, getCategorySalesMtd } from "../../lib/posApi";
 
 export default function OverviewWorkspace() {
-  const revenueData = [
-    { day: "Mon", revenue: 84000 },
-    { day: "Tue", revenue: 92000 },
-    { day: "Wed", revenue: 78000 },
-    { day: "Thu", revenue: 110500 },
-    { day: "Fri", revenue: 125000 },
-    { day: "Sat", revenue: 148200 },
-    { day: "Sun", revenue: 65000 },
-  ];
+  const [revenueData, setRevenueData] = useState([]);
+  const [categoryData, setCategoryData] = useState([]);
+  const [mounted, setMounted] = useState(false);
 
-  const categoryData = [
-    { name: "Insecticides", sales: 450000 },
-    { name: "Herbicides", sales: 320000 },
-    { name: "Fungicides", sales: 210000 },
-    { name: "Fertilizers", sales: 180000 },
-    { name: "Seeds", sales: 95000 },
-  ];
-
-  const stockAlerts = [
-    { product: "Roundup (1L)", issue: "Expiry Risk", detail: "Expires in 18 days", status: "warning" },
-    { product: "Mospilan (50g)", issue: "Low Stock", detail: "Only 8 bottles left", status: "danger" },
-    { product: "Coragen (50ml)", issue: "Low Stock", detail: "Only 2 bottles left", status: "danger" },
-  ];
+  useEffect(() => {
+    setMounted(true);
+    getRevenueTrend().then(setRevenueData).catch(console.error);
+    getCategorySalesMtd().then(setCategoryData).catch(console.error);
+  }, []);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -38,24 +26,28 @@ export default function OverviewWorkspace() {
             </div>
           </div>
           <div style={{ height: 260, width: "100%", marginTop: 10 }}>
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-              <AreaChart data={revenueData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#4caf50" stopOpacity={0.4} />
-                    <stop offset="95%" stopColor="#4caf50" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4eee4" />
-                <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: "#708571" }} dy={10} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: "#708571" }} tickFormatter={(val) => `Rs ${val / 1000}k`} />
-                <Tooltip
-                  contentStyle={{ borderRadius: 8, border: "1px solid #dbe8db", boxShadow: "0 4px 12px rgba(0,0,0,0.05)" }}
-                  formatter={(value) => [`Rs ${value.toLocaleString()}`, "Revenue"]}
-                />
-                <Area type="monotone" dataKey="revenue" stroke="#388e3c" strokeWidth={3} fillOpacity={1} fill="url(#colorRevenue)" />
-              </AreaChart>
-            </ResponsiveContainer>
+            {mounted && (
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                <AreaChart data={revenueData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#4caf50" stopOpacity={0.4} />
+                      <stop offset="95%" stopColor="#4caf50" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                  <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: "var(--text-secondary)" }} dy={10} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: "var(--text-secondary)" }} tickFormatter={(val) => `Rs ${val / 1000}k`} />
+                  <Tooltip
+                    contentStyle={{ borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", boxShadow: "0 4px 12px rgba(0,0,0,0.15)" }}
+                    itemStyle={{ color: "var(--text-primary)" }}
+                    labelStyle={{ color: "var(--text-secondary)", fontWeight: 600 }}
+                    formatter={(value) => [`Rs ${value.toLocaleString()}`, "Revenue"]}
+                  />
+                  <Area type="monotone" dataKey="revenue" stroke="#388e3c" strokeWidth={3} fillOpacity={1} fill="url(#colorRevenue)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
 
@@ -67,19 +59,23 @@ export default function OverviewWorkspace() {
             </div>
           </div>
           <div style={{ height: 260, width: "100%", marginTop: 10 }}>
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-              <BarChart data={categoryData} layout="vertical" margin={{ top: 0, right: 20, left: -10, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e4eee4" />
-                <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "#708571" }} tickFormatter={(val) => `${val / 1000}k`} />
-                <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: "#355437", fontWeight: 500 }} />
-                <Tooltip
-                  cursor={{ fill: "#f1f6f1" }}
-                  contentStyle={{ borderRadius: 8, border: "1px solid #dbe8db" }}
-                  formatter={(value) => [`Rs ${value.toLocaleString()}`, "Sales"]}
-                />
-                <Bar dataKey="sales" fill="#6da56f" radius={[0, 4, 4, 0]} barSize={24} />
-              </BarChart>
-            </ResponsiveContainer>
+            {mounted && (
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                <BarChart data={categoryData} layout="vertical" margin={{ top: 0, right: 20, left: -10, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--border)" />
+                  <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "var(--text-secondary)" }} tickFormatter={(val) => `${val / 1000}k`} />
+                  <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: "var(--text-primary)", fontWeight: 500 }} />
+                  <Tooltip
+                    cursor={{ fill: "var(--surface-secondary)" }}
+                    contentStyle={{ borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", boxShadow: "0 4px 12px rgba(0,0,0,0.15)" }}
+                    itemStyle={{ color: "var(--text-primary)" }}
+                    labelStyle={{ color: "var(--text-secondary)", fontWeight: 600 }}
+                    formatter={(value) => [`Rs ${value.toLocaleString()}`, "Sales"]}
+                  />
+                  <Bar dataKey="sales" fill="#6da56f" radius={[0, 4, 4, 0]} barSize={24} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
       </div>

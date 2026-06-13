@@ -7,7 +7,9 @@ import {
   saveCustomerPayment,
   saveWithdrawal,
   listSuppliers,
-  saveSupplierPayment
+  saveSupplierPayment,
+  getCustomerHistory,
+  getSupplierHistory
 } from "../lib/posApi";
 
 const st = {
@@ -199,7 +201,36 @@ const st = {
     color: "#6a8f6c",
     fontSize: 14,
     fontWeight: 600,
-  }
+  },
+  recentTable: {
+    width: "100%",
+    borderCollapse: "collapse",
+    marginTop: 16,
+  },
+  th: {
+    padding: "12px 16px",
+    fontSize: 11,
+    fontWeight: 700,
+    color: "#6a8f6c",
+    textTransform: "uppercase",
+    borderBottom: "2px solid #c8d8c8",
+    textAlign: "left",
+    background: "#fafdfa",
+  },
+  td: {
+    padding: "14px 16px",
+    borderBottom: "1px solid #f0f6f0",
+    fontSize: 14,
+    color: "#2e3d30",
+  },
+  badge: {
+    padding: "4px 8px",
+    borderRadius: 4,
+    fontSize: 11,
+    fontWeight: 700,
+    textTransform: "uppercase",
+    display: "inline-block",
+  },
 };
 
 const PAYMENT_METHODS = ["Cash", "HBL Bank", "UBL Bank", "Meezan Bank", "JazzCash", "EasyPaisa"];
@@ -212,6 +243,33 @@ export default function PaymentsPage() {
   const [successData, setSuccessData] = useState(null);
   const [warnData, setWarnData] = useState(null);
   const [selectedParty, setSelectedParty] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
+  const loadHistory = useCallback(async (party) => {
+    if (!party) {
+      setHistory([]);
+      return;
+    }
+    setLoadingHistory(true);
+    try {
+      if (party.partyType === "customer") {
+        const res = await getCustomerHistory(party.id);
+        setHistory(res?.history || []);
+      } else {
+        const res = await getSupplierHistory(party.id);
+        setHistory(res?.history || []);
+      }
+    } catch (err) {
+      console.error("Failed to load history:", err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadHistory(selectedParty);
+  }, [selectedParty, loadHistory]);
 
   const today = new Date().toISOString().split("T")[0];
 
@@ -321,7 +379,7 @@ export default function PaymentsPage() {
       } else {
         await saveSupplierPayment({
           supplierId: selectedParty.id,
-          amount: Number(payAmount),
+          amount: -Number(payAmount),
           method: payMethod,
           date: payDate,
           notes: payNotes,
@@ -331,6 +389,7 @@ export default function PaymentsPage() {
           lines: [
             { label: "Supplier", value: selectedParty.name },
             { label: "Amount", value: `Rs ${Number(payAmount).toLocaleString()}`, mono: true },
+            { label: "Type", value: "Received from Supplier" },
             { label: "Method", value: payMethod },
             { label: "Date", value: payDate },
           ]
@@ -363,17 +422,19 @@ export default function PaymentsPage() {
 
     const amount = Number(drawAmount);
 
-    // Check advance balance limit: customer/supplier balance is negative for credit (advance)
-    const available = selectedParty.current_balance < 0 ? Math.abs(selectedParty.current_balance) : 0;
-    if (amount > available) {
-      return setWarnData({
-        title: "Insufficient Advance",
-        lines: [
-          { label: "Requested", value: `Rs ${amount.toLocaleString()}`, mono: true },
-          { label: "Available Advance", value: `Rs ${available.toLocaleString()}`, mono: true },
-          { label: "Error", value: "Amount exceeds available advance balance." }
-        ]
-      });
+    // Check advance balance limit: customer balance is negative for credit (advance)
+    if (selectedParty.partyType === "customer") {
+      const available = selectedParty.current_balance < 0 ? Math.abs(selectedParty.current_balance) : 0;
+      if (amount > available) {
+        return setWarnData({
+          title: "Insufficient Advance",
+          lines: [
+            { label: "Requested", value: `Rs ${amount.toLocaleString()}`, mono: true },
+            { label: "Available Advance", value: `Rs ${available.toLocaleString()}`, mono: true },
+            { label: "Error", value: "Amount exceeds available advance balance." }
+          ]
+        });
+      }
     }
 
     setDrawing(true);
@@ -400,17 +461,17 @@ export default function PaymentsPage() {
       } else {
         await saveSupplierPayment({
           supplierId: selectedParty.id,
-          amount: -amount,
+          amount: amount,
           method: drawMethod,
           date: drawDate,
-          notes: drawNotes || "Advance Withdrawal",
+          notes: drawNotes || "Supplier Payment",
         });
         setSuccessData({
-          title: "Withdrawal Processed",
+          title: "Payment Recorded",
           lines: [
             { label: "Supplier", value: selectedParty.name },
             { label: "Amount", value: `Rs ${amount.toLocaleString()}`, mono: true },
-            { label: "Type", value: "Advance Draw" },
+            { label: "Type", value: "Payment to Supplier" },
             { label: "Method", value: drawMethod },
             { label: "Date", value: drawDate },
           ]
@@ -476,6 +537,69 @@ export default function PaymentsPage() {
     }
   };
 
+  const getTypeBadge = (type) => {
+    switch (type?.toLowerCase()) {
+      case "sale":
+        return { text: "Sale", bg: "#e8f5e9", color: "#2e7d32" };
+      case "purchase":
+        return { text: "Purchase", bg: "#e3f2fd", color: "#1565c0" };
+      case "payment":
+        return { text: "Payment", bg: "#f3e5f5", color: "#7b1fa2" };
+      case "refund":
+        return { text: "Refund", bg: "#fff3e0", color: "#e65100" };
+      case "withdrawal":
+        return { text: "Withdrawal", bg: "#ffebee", color: "#c62828" };
+      case "opening":
+        return { text: "Opening", bg: "#efebe9", color: "#5d4037" };
+      case "journal":
+        return { text: "Journal", bg: "#eceff1", color: "#37474f" };
+      default:
+        return { text: type || "Other", bg: "#f5f5f5", color: "#616161" };
+    }
+  };
+
+  const getLedgerAmounts = (row) => {
+    const change = Number(row.balance_change || 0);
+    if (selectedParty?.partyType === "customer") {
+      return {
+        debit: change > 0 ? change : 0,
+        credit: change < 0 ? Math.abs(change) : 0,
+      };
+    } else {
+      // Supplier
+      return {
+        debit: change < 0 ? Math.abs(change) : 0,
+        credit: change > 0 ? change : 0,
+      };
+    }
+  };
+
+  const formatDate = (dateStr) => {
+    if (!dateStr || dateStr === "0000-00-00") return "-";
+    try {
+      return new Date(dateStr + "T00:00:00").toLocaleDateString("en-PK", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric"
+      });
+    } catch {
+      return dateStr;
+    }
+  };
+
+  const getDisplayedHistory = () => {
+    const chronological = [...history].reverse();
+    let running = 0;
+    const withRunning = chronological.map(row => {
+      running += Number(row.balance_change || 0);
+      return {
+        ...row,
+        runningBalance: running
+      };
+    });
+    return [...withRunning].reverse();
+  };
+
   const combinedOptions = [
     ...customers.map(c => ({ ...c, partyType: "customer", uniqueId: `customer-${c.id}` })),
     ...suppliers.map(s => ({ ...s, partyType: "supplier", uniqueId: `supplier-${s.id}` }))
@@ -515,9 +639,9 @@ export default function PaymentsPage() {
           <div style={st.grid}>
             {/* CARD 1 */}
             <div style={{ ...st.card, ...st.card1 }}>
-              <h2 style={st.cardTitle}>Record Payment</h2>
+              <h2 style={st.cardTitle}>Receive</h2>
               <p style={st.cardSubtitle}>
-                {selectedParty.partyType === 'customer' ? "Apply customer payment to outstanding balance" : "Record payment made to supplier"}
+                {selectedParty.partyType === 'customer' ? "Apply customer payment to outstanding balance" : "Record refund or return payment received from supplier"}
               </p>
 
               <label style={st.fieldLabel}>Amount (Rs)</label>
@@ -556,15 +680,15 @@ export default function PaymentsPage() {
                 onClick={handleRecordPayment}
                 disabled={paying}
               >
-                {paying ? "Recording..." : "Record Payment"}
+                {paying ? "Processing..." : "Receive"}
               </button>
             </div>
 
             {/* CARD 2 */}
             <div style={{ ...st.card, ...st.card2 }}>
-              <h2 style={st.cardTitle}>Withdrawal</h2>
+              <h2 style={st.cardTitle}>Payment</h2>
               <p style={st.cardSubtitle}>
-                {selectedParty.partyType === 'customer' ? "Draw from customer advance balance" : "Record refund or withdrawal from supplier advance"}
+                {selectedParty.partyType === 'customer' ? "Draw from customer advance balance / return cash" : "Record payment made to supplier"}
               </p>
 
               <label style={st.fieldLabel}>Amount (Rs)</label>
@@ -603,7 +727,7 @@ export default function PaymentsPage() {
                 onClick={handleWithdrawal}
                 disabled={drawing}
               >
-                {drawing ? "Processing..." : "Withdraw"}
+                {drawing ? "Processing..." : "Payment"}
               </button>
             </div>
           </div>
@@ -612,9 +736,78 @@ export default function PaymentsPage() {
 
       <div style={st.recentSection}>
         <h2 style={st.cardTitle}>Recent Activity</h2>
-        <div style={st.recentEmpty}>
-          Coming Soon
-        </div>
+        {!selectedParty ? (
+          <div style={st.recentEmpty}>
+            Select a customer or supplier to view recent activity.
+          </div>
+        ) : loadingHistory ? (
+          <div style={st.recentEmpty}>
+            Loading transaction history...
+          </div>
+        ) : history.length === 0 ? (
+          <div style={st.recentEmpty}>
+            No recent activity found for this party.
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={st.recentTable}>
+              <thead>
+                <tr>
+                  <th style={st.th}>Date</th>
+                  <th style={st.th}>Type</th>
+                  <th style={st.th}>Reference/Description</th>
+                  <th style={{ ...st.th, textAlign: "right" }}>Debit (Dr)</th>
+                  <th style={{ ...st.th, textAlign: "right" }}>Credit (Cr)</th>
+                  <th style={{ ...st.th, textAlign: "right" }}>Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {getDisplayedHistory().map((row, idx) => {
+                  const badge = getTypeBadge(row.type);
+                  const { debit, credit } = getLedgerAmounts(row);
+                  const runBal = row.runningBalance || 0;
+                  const suffix = selectedParty.partyType === "customer"
+                    ? (runBal > 0 ? "Dr" : runBal < 0 ? "Cr" : "")
+                    : (runBal > 0 ? "Cr" : runBal < 0 ? "Dr" : "");
+
+                  return (
+                    <tr key={idx} style={{ transition: "background 0.15s" }}>
+                      <td style={st.td}>{formatDate(row.date)}</td>
+                      <td style={st.td}>
+                        <span style={{
+                          ...st.badge,
+                          background: badge.bg,
+                          color: badge.color
+                        }}>
+                          {badge.text}
+                        </span>
+                      </td>
+                      <td style={st.td}>
+                        <strong>{row.reference || "-"}</strong>
+                        {row.notes && <div style={{ fontSize: 12, color: "#6a8f6c", marginTop: 2 }}>{row.notes}</div>}
+                      </td>
+                      <td style={{ ...st.td, textAlign: "right", fontFamily: "monospace" }}>
+                        {debit > 0 ? `Rs ${debit.toLocaleString()}` : "-"}
+                      </td>
+                      <td style={{ ...st.td, textAlign: "right", fontFamily: "monospace", color: "#2e7d32" }}>
+                        {credit > 0 ? `Rs ${credit.toLocaleString()}` : "-"}
+                      </td>
+                      <td style={{
+                        ...st.td,
+                        textAlign: "right",
+                        fontFamily: "monospace",
+                        fontWeight: 700,
+                        color: runBal === 0 ? "#2e3d30" : (selectedParty.partyType === "customer" ? (runBal > 0 ? "#c62828" : "#2e7d32") : (runBal > 0 ? "#2e7d32" : "#c62828"))
+                      }}>
+                        Rs {Math.abs(runBal).toLocaleString()} {suffix}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <SuccessNotification

@@ -1,19 +1,34 @@
+import { useEffect, useState } from "react";
 import { st } from "./shared/analysisStyles";
+import { getSupplierAnalysis } from "../../lib/posApi";
 
 export default function SupplierWorkspace() {
-  const summaryData = [
-    { label: "Total Pending Liability", value: "Rs 245,000" },
-    { label: "Overdue Amount", value: "Rs 90,000" },
-    { label: "Partially Paid", value: "Rs 45,000" },
-    { label: "Settled This Month", value: "Rs 110,000" },
-  ];
+  const [summaryData, setSummaryData] = useState([]);
+  const [supplierData, setSupplierData] = useState([]);
 
-  const supplierData = [
-    { supplier: "Bayer CropScience", pending: "Rs 90,000", invoice: "INV-B-442", dueDate: "10 Aug 2026", status: "Overdue" },
-    { supplier: "Syngenta", pending: "Rs 45,000", invoice: "INV-S-102", dueDate: "25 Aug 2026", status: "Partially Paid" },
-    { supplier: "FMC Corporation", pending: "Rs 110,000", invoice: "INV-F-881", dueDate: "05 Sep 2026", status: "Unpaid" },
-    { supplier: "Corteva Agriscience", pending: "Rs 0", invoice: "INV-C-339", dueDate: "01 Aug 2026", status: "Settled" },
-  ];
+  useEffect(() => {
+    getSupplierAnalysis()
+      .then((data) => {
+        if (data) {
+          if (data.summary) {
+            setSummaryData(data.summary.map((s) => ({
+              label: s.label,
+              value: `Rs ${s.value.toLocaleString()}`,
+            })));
+          }
+          if (data.suppliers) {
+            setSupplierData(data.suppliers.map((s) => ({
+              supplier: s.supplier,
+              pending: `Rs ${s.pending.toLocaleString()}`,
+              invoice: s.invoice || "-",
+              dueDate: s.dueDate || "-",
+              status: s.status,
+            })));
+          }
+        }
+      })
+      .catch(console.error);
+  }, []);
 
   return (
     <>

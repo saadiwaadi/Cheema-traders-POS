@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useThemeLanguage } from "../context/ThemeLanguageContext";
 import {
   MoreVertical,
   Download,
@@ -49,6 +50,7 @@ const formatDate = (date) => {
 };
 
 export default function InvoiceHistoryModule() {
+  const { t, language } = useThemeLanguage();
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -114,7 +116,7 @@ export default function InvoiceHistoryModule() {
             id: s.id,
             invoiceNo: s.invoiceNo,
             customerId: s.customerId,
-            client: s.customerName || "Walk-in Customer",
+            client: s.customerName || t("invoices.walkin", "Walk-in Customer"),
             issueDate: s.saleDate,
             dueDate: s.saleDate,
             amount: s.subtotal,
@@ -276,7 +278,7 @@ export default function InvoiceHistoryModule() {
   // Payment triggers & execution
   const triggerOnePaid = (inv) => {
     if (inv.balanceDue <= 0) {
-      alert("Invoice is already paid.");
+      alert(t("invoices.alert_already_paid", "Invoice is already paid."));
       return;
     }
     setPayingInvoice(inv);
@@ -323,18 +325,18 @@ export default function InvoiceHistoryModule() {
       }
       loadInvoices();
     } catch (err) {
-      alert("Failed to save payment: " + err.message);
+      alert(t("invoices.alert_save_payment_failed", "Failed to save payment: ") + err.message);
     }
   };
 
   const deleteInvoice = async (id) => {
-    if (!window.confirm("Delete (void) this invoice? This cannot be undone.")) return;
+    if (!window.confirm(t("invoices.confirm_void_invoice", "Delete (void) this invoice? This cannot be undone."))) return;
     try {
       await voidSale(id);
       loadInvoices();
       if (drawerInvoice?.id === id) setDrawerInvoice(null);
     } catch (err) {
-      alert("Failed to void invoice: " + err.message);
+      alert(t("invoices.alert_void_failed", "Failed to void invoice: ") + err.message);
     }
   };
 
@@ -342,22 +344,22 @@ export default function InvoiceHistoryModule() {
   const printInvoice = (inv) => {
     const win = window.open("", "_blank", "width=800,height=600");
     if (!win) {
-      alert("Please allow popups to print/download invoice.");
+      alert(t("invoices.alert_popups_disabled", "Please allow popups to print/download invoice or report."));
       return;
     }
     const itemsHtml = (inv.items || []).map(item => `
       <tr>
         <td style="padding: 8px; border-bottom: 1px solid #ddd;">${item.name}</td>
-        <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right;">${item.qty}</td>
-        <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right;">₨ ${item.price.toFixed(2)}</td>
-        <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right; font-weight: bold;">₨ ${(item.lineTotal || (item.qty * item.price)).toFixed(2)}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: ${language === 'ur' ? 'left' : 'right'};">${item.qty}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: ${language === 'ur' ? 'left' : 'right'};">${t("billing.rs_amount", "Rs {amount}").replace("{amount}", item.price.toFixed(2))}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: ${language === 'ur' ? 'left' : 'right'}; font-weight: bold;">${t("billing.rs_amount", "Rs {amount}").replace("{amount}", (item.lineTotal || (item.qty * item.price)).toFixed(2))}</td>
       </tr>
     `).join("");
 
     win.document.write(`
-      <html>
+      <html dir="${language === 'ur' ? 'rtl' : 'ltr'}">
         <head>
-          <title>Invoice ${inv.invoiceNo || inv.id}</title>
+          <title>${t("invoices.invoice_caps", "INVOICE")} ${inv.invoiceNo || inv.id}</title>
           <style>
             body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif; padding: 40px; color: #1a1a1a; }
             .header { display: flex; justify-content: space-between; border-bottom: 2px solid #2e7d32; padding-bottom: 20px; margin-bottom: 30px; }
@@ -366,8 +368,8 @@ export default function InvoiceHistoryModule() {
             .meta-block h3 { margin: 0 0 8px 0; color: #2e7d32; font-size: 14px; text-transform: uppercase; }
             .meta-block p { margin: 0; font-size: 14px; color: #555; }
             table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
-            th { background: #f5f8f5; text-align: left; padding: 10px 8px; border-bottom: 2px solid #c8d8c8; color: #2e7d32; font-size: 12px; text-transform: uppercase; }
-            .totals { width: 250px; margin-left: auto; font-size: 14px; }
+            th { background: #f5f8f5; text-align: ${language === 'ur' ? 'right' : 'left'}; padding: 10px 8px; border-bottom: 2px solid #c8d8c8; color: #2e7d32; font-size: 12px; text-transform: uppercase; }
+            .totals { width: 250px; ${language === 'ur' ? 'margin-right: auto; margin-left: 0;' : 'margin-left: auto;'} font-size: 14px; }
             .totals-row { display: flex; justify-content: space-between; padding: 6px 0; }
             .grand-total { font-weight: bold; font-size: 16px; border-top: 2px solid #2e7d32; border-bottom: 2px solid #2e7d32; padding: 10px 0; color: #2e7d32; }
           </style>
@@ -378,29 +380,29 @@ export default function InvoiceHistoryModule() {
               <div class="title">${BUSINESS_NAME}</div>
               <p style="margin: 4px 0 0 0; font-size: 12px; color: #666;">Quality Agro Inputs & Products</p>
             </div>
-            <div style="text-align: right;">
-              <h1 style="margin: 0; font-size: 20px; color: #1b3a1d;">INVOICE</h1>
-              <p style="margin: 4px 0 0 0; font-size: 14px; font-weight: bold;">No: ${inv.invoiceNo || inv.id}</p>
+            <div style="text-align: ${language === 'ur' ? 'left' : 'right'};">
+              <h1 style="margin: 0; font-size: 20px; color: #1b3a1d;">${t("invoices.invoice_caps", "INVOICE")}</h1>
+              <p style="margin: 4px 0 0 0; font-size: 14px; font-weight: bold;">${t("invoices.no", "No:")} ${inv.invoiceNo || inv.id}</p>
             </div>
           </div>
           <div class="meta-info">
             <div class="meta-block">
-              <h3>Billed To:</h3>
+              <h3>${t("invoices.billed_to", "Billed To:")}</h3>
               <p><strong>${inv.client}</strong></p>
-              <p>Customer ID: ${inv.customerId || 'Walk-in'}</p>
+              <p>${t("invoices.customer_id", "Customer ID:")} ${inv.customerId || t("invoices.walkin", "Walk-in")}</p>
             </div>
-            <div class="meta-block" style="text-align: right;">
-              <p><strong>Issue Date:</strong> ${formatDate(inv.issueDate)}</p>
-              <p><strong>Status:</strong> ${inv.status}</p>
+            <div class="meta-block" style="text-align: ${language === 'ur' ? 'left' : 'right'};">
+              <p><strong>${t("invoices.issue_date", "Issue Date:")}</strong> ${formatDate(inv.issueDate)}</p>
+              <p><strong>${t("invoices.status", "Status:")}</strong> ${t("invoices.status_" + inv.status.toLowerCase(), inv.status)}</p>
             </div>
           </div>
           <table>
             <thead>
               <tr>
-                <th>Product Description</th>
-                <th style="text-align: right;">Qty</th>
-                <th style="text-align: right;">Price</th>
-                <th style="text-align: right;">Total</th>
+                <th>${t("invoices.product_description", "Product Description")}</th>
+                <th style="text-align: ${language === 'ur' ? 'left' : 'right'};">${t("invoices.qty", "Qty")}</th>
+                <th style="text-align: ${language === 'ur' ? 'left' : 'right'};">${t("invoices.price", "Price")}</th>
+                <th style="text-align: ${language === 'ur' ? 'left' : 'right'};">${t("invoices.total", "Total")}</th>
               </tr>
             </thead>
             <tbody>
@@ -409,23 +411,23 @@ export default function InvoiceHistoryModule() {
           </table>
           <div class="totals">
             <div class="totals-row">
-              <span>Subtotal</span>
-              <span>₨ ${inv.amount.toFixed(2)}</span>
+              <span>${t("invoices.subtotal", "Subtotal")}</span>
+              <span>${t("billing.rs_amount", "Rs {amount}").replace("{amount}", inv.amount.toFixed(2))}</span>
             </div>
             ${inv.discountTotal > 0 ? `
             <div class="totals-row" style="color: #c62828;">
-              <span>Discount</span>
-              <span>-₨ ${inv.discountTotal.toFixed(2)}</span>
+              <span>${t("invoices.discount", "Discount")}</span>
+              <span>-${t("billing.rs_amount", "Rs {amount}").replace("{amount}", inv.discountTotal.toFixed(2))}</span>
             </div>
             ` : ""}
             <div class="totals-row grand-total">
-              <span>Total</span>
-              <span>₨ ${inv.total.toFixed(2)}</span>
+              <span>${t("invoices.total", "Total")}</span>
+              <span>${t("billing.rs_amount", "Rs {amount}").replace("{amount}", inv.total.toFixed(2))}</span>
             </div>
             ${inv.balanceDue > 0 ? `
             <div class="totals-row" style="color: #c62828; font-weight: bold;">
-              <span>Outstanding</span>
-              <span>₨ ${inv.balanceDue.toFixed(2)}</span>
+              <span>${t("invoices.outstanding", "Outstanding")}</span>
+              <span>${t("billing.rs_amount", "Rs {amount}").replace("{amount}", inv.balanceDue.toFixed(2))}</span>
             </div>
             ` : ""}
           </div>
@@ -464,7 +466,7 @@ export default function InvoiceHistoryModule() {
   const exportFilteredInvoicesPDF = () => {
     const win = window.open("", "_blank", "width=800,height=600");
     if (!win) {
-      alert("Please allow popups to print/download the report.");
+      alert(t("invoices.alert_popups_disabled", "Please allow popups to print/download invoice or report."));
       return;
     }
     const rowsHtml = filteredInvoices.map((inv, idx) => `
@@ -473,38 +475,38 @@ export default function InvoiceHistoryModule() {
         <td style="padding: 8px; border-bottom: 1px solid #ddd;">${inv.invoiceNo || inv.id}</td>
         <td style="padding: 8px; border-bottom: 1px solid #ddd;">${inv.client}</td>
         <td style="padding: 8px; border-bottom: 1px solid #ddd;">${formatDate(inv.issueDate)}</td>
-        <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right;">${formatMoney(inv.total)}</td>
-        <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: center;">${inv.status}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: ${language === 'ur' ? 'left' : 'right'};">${formatMoney(inv.total)}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: center;">${t("invoices.status_" + inv.status.toLowerCase(), inv.status)}</td>
       </tr>
     `).join("");
 
     win.document.write(`
-      <html>
+      <html dir="${language === 'ur' ? 'rtl' : 'ltr'}">
         <head>
-          <title>Filtered Invoices Report</title>
+          <title>${t("invoices.filtered_report_title", "Filtered Invoices Report")}</title>
           <style>
             body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif; padding: 40px; color: #1a1a1a; }
             .header { border-bottom: 2px solid #2e7d32; padding-bottom: 10px; margin-bottom: 20px; }
             .title { font-size: 20px; font-weight: bold; color: #2e7d32; }
             table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 13px; }
-            th { background: #f5f8f5; padding: 10px 8px; border-bottom: 2px solid #c8d8c8; color: #2e7d32; text-align: left; }
+            th { background: #f5f8f5; padding: 10px 8px; border-bottom: 2px solid #c8d8c8; color: #2e7d32; text-align: ${language === 'ur' ? 'right' : 'left'}; }
             td { padding: 10px 8px; }
           </style>
         </head>
         <body>
           <div class="header">
-            <div class="title">${BUSINESS_NAME} - SALES REPORT</div>
-            <p style="margin: 4px 0 0 0; font-size: 12px; color: #666;">Generated: ${new Date().toLocaleDateString()}</p>
+            <div class="title">${BUSINESS_NAME} - ${t("invoices.sales_report", "SALES REPORT")}</div>
+            <p style="margin: 4px 0 0 0; font-size: 12px; color: #666;">${t("invoices.generated", "Generated:")} ${new Date().toLocaleDateString()}</p>
           </div>
           <table>
             <thead>
               <tr>
                 <th style="width: 40px;">#</th>
-                <th>Invoice No</th>
-                <th>Customer</th>
-                <th>Date</th>
-                <th style="text-align: right;">Total Amount</th>
-                <th style="text-align: center;">Status</th>
+                <th>${t("invoices.invoice_no_hdr", "Invoice No")}</th>
+                <th>${t("invoices.customer_hdr", "Customer")}</th>
+                <th>${t("invoices.date_hdr", "Date")}</th>
+                <th style="text-align: ${language === 'ur' ? 'left' : 'right'};">${t("invoices.total_amount_hdr", "Total Amount")}</th>
+                <th style="text-align: center;">${t("invoices.status_hdr", "Status")}</th>
               </tr>
             </thead>
             <tbody>
@@ -530,7 +532,7 @@ export default function InvoiceHistoryModule() {
         {/* PAGE TITLE HEADER */}
         <div className="flex justify-between items-center border-b border-[#c8d8c8] pb-3.5 mb-2">
           <h1 className="text-base font-bold text-[#1b3a1d] uppercase tracking-wider pl-3 border-l-[3px] border-[#2e7d32]">
-            Sales History & Invoices
+            {t("invoices.title", "Sales History & Invoices")}
           </h1>
         </div>
 
@@ -542,8 +544,8 @@ export default function InvoiceHistoryModule() {
           >
             <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">
               {(fromDate || toDate || selectedStatus !== "All" || search)
-                ? "Filtered Invoices"
-                : "Total Invoices"}
+                ? t("invoices.filtered_invoices", "Filtered Invoices")
+                : t("invoices.total_invoices", "Total Invoices")}
             </p>
             <h2 className="mt-2 text-3xl font-bold text-[#1b3a1d]" style={{ fontFamily: "IBM Plex Mono, monospace" }}>
               {totalInvoices}
@@ -552,7 +554,7 @@ export default function InvoiceHistoryModule() {
 
           <div className="p-5 text-left">
             <p className="text-[10px] font-bold text-[#3B6D11] uppercase tracking-wider">
-              Total Collected
+              {t("invoices.total_collected", "Total Collected")}
             </p>
             <h2 className="mt-2 text-3xl font-bold text-[#3B6D11]" style={{ fontFamily: "IBM Plex Mono, monospace" }}>
               {formatMoney(totalCollected)}
@@ -560,7 +562,7 @@ export default function InvoiceHistoryModule() {
           </div>
 
           <div className="p-5 text-left">
-            <p className="text-[10px] font-bold text-[#A32D2D] uppercase tracking-wider">Outstanding</p>
+            <p className="text-[10px] font-bold text-[#A32D2D] uppercase tracking-wider">{t("invoices.outstanding", "Outstanding")}</p>
             <h2 className="mt-2 text-3xl font-bold text-[#A32D2D]" style={{ fontFamily: "IBM Plex Mono, monospace" }}>
               {formatMoney(outstanding)}
             </h2>
@@ -586,7 +588,7 @@ export default function InvoiceHistoryModule() {
                   borderRadius: 0,
                 }}
               >
-                {status} ({getTabCount(status)})
+                {t("invoices.status_" + status.toLowerCase(), status)} ({getTabCount(status)})
               </button>
             ))}
           </div>
@@ -602,7 +604,7 @@ export default function InvoiceHistoryModule() {
                   className="bg-transparent text-sm outline-none font-mono"
                   aria-label="From date"
                 />
-                <span className="text-xs text-neutral-400">to</span>
+                <span className="text-xs text-neutral-400">{t("invoices.to", "to")}</span>
                 <input
                   type="date"
                   value={toDate}
@@ -616,7 +618,7 @@ export default function InvoiceHistoryModule() {
                 <Search size={15} className="text-[#6a8f6c]" />
                 <input
                   type="text"
-                  placeholder="Search client, invoice, or product..."
+                  placeholder={t("invoices.search_placeholder", "Search client, invoice, or product...")}
                   className="bg-transparent text-sm outline-none w-64"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
@@ -640,14 +642,14 @@ export default function InvoiceHistoryModule() {
                 }}
                 className="rounded-sm border border-[#cde0cd] bg-white px-4 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
               >
-                Export CSV
+                {t("invoices.export_csv", "Export CSV")}
               </button>
 
               <button 
                 onClick={exportFilteredInvoicesPDF}
                 className="rounded-sm bg-[#2e7d32] px-4 py-2 text-xs font-semibold text-white hover:opacity-90"
               >
-                Export PDF Report
+                {t("invoices.export_pdf", "Export PDF Report")}
               </button>
             </div>
           </div>
@@ -656,21 +658,21 @@ export default function InvoiceHistoryModule() {
         {/* BULK ACTION BAR */}
         {selectedRows.length > 0 && (
           <div className="flex items-center justify-between rounded-sm bg-[#2e7d32] border border-[#1b3a1d] px-5 py-3 text-white text-xs font-semibold">
-            <p>{selectedRows.length} invoices selected</p>
+            <p>{t("invoices.selected_invoices_count", "{count} invoices selected").replace("{count}", selectedRows.length)}</p>
 
             <div className="flex gap-2">
               <button
                 onClick={triggerSelectedPaid}
                 className="rounded-sm bg-white/20 px-3 py-1.5 hover:bg-white/30"
               >
-                Bulk Mark as Paid
+                {t("invoices.bulk_mark_paid", "Bulk Mark as Paid")}
               </button>
 
               <button 
                 onClick={exportSelectedInvoicesCSV}
                 className="rounded-sm bg-white/20 px-3 py-1.5 hover:bg-white/30"
               >
-                Bulk Export
+                {t("invoices.bulk_export", "Bulk Export")}
               </button>
             </div>
           </div>
@@ -688,7 +690,7 @@ export default function InvoiceHistoryModule() {
                       onChange={(e) => {
                         if (e.target.checked) {
                           setSelectedRows(
-                            paginated.map((i) => i.id)
+                             paginated.map((i) => i.id)
                           );
                         } else {
                           setSelectedRows([]);
@@ -696,10 +698,10 @@ export default function InvoiceHistoryModule() {
                       }}
                     />
                   </th>
-                  <th className="px-5 py-3">Invoice / Client</th>
-                  <th className="px-5 py-3">Issue Date</th>
-                  <th className="px-5 py-3 text-right">Amount</th>
-                  <th className="px-5 py-3">Status</th>
+                  <th className="px-5 py-3">{t("invoices.invoice_client", "Invoice / Client")}</th>
+                  <th className="px-5 py-3">{t("invoices.issue_date", "Issue Date")}</th>
+                  <th className="px-5 py-3 text-right">{t("invoices.amount", "Amount")}</th>
+                  <th className="px-5 py-3">{t("invoices.status", "Status")}</th>
                   <th className="px-5 py-3 w-12"></th>
                 </tr>
               </thead>
@@ -727,8 +729,8 @@ export default function InvoiceHistoryModule() {
                       <div className="flex flex-col items-center justify-center space-y-3">
                         <FileText size={36} className="text-neutral-300" />
                         <div>
-                          <p className="text-sm font-semibold text-neutral-500">No invoices found for this filter</p>
-                          <p className="text-xs text-neutral-400 mt-1">Try adjusting your filters or search query to find invoices.</p>
+                          <p className="text-sm font-semibold text-neutral-500">{t("invoices.no_invoices", "No invoices found for this filter")}</p>
+                          <p className="text-xs text-neutral-400 mt-1">{t("invoices.no_invoices_sub", "Try adjusting your filters or search query to find invoices.")}</p>
                         </div>
                         <button
                           onClick={() => {
@@ -739,7 +741,7 @@ export default function InvoiceHistoryModule() {
                           }}
                           className="mt-2 rounded-sm border border-[#cde0cd] bg-white px-4 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 cursor-pointer"
                         >
-                          Clear Filters
+                          {t("invoices.clear_filters", "Clear Filters")}
                         </button>
                       </div>
                     </td>
@@ -791,7 +793,7 @@ export default function InvoiceHistoryModule() {
 
                           <td className="px-5 py-3 text-xs">
                             <span className={`px-2 py-0.5 ${statusStyles[invoice.status] || ""}`}>
-                              {invoice.status}
+                              {t("invoices.status_" + invoice.status.toLowerCase(), invoice.status)}
                             </span>
                           </td>
 
@@ -806,14 +808,14 @@ export default function InvoiceHistoryModule() {
 
                               <div className="invisible absolute right-0 z-20 mt-1 w-52 rounded-sm border border-[#c8d8c8] bg-white p-1.5 opacity-0 shadow-lg transition-all group-hover:visible group-hover:opacity-100">
                                 {[
-                                  { label: "View Details", icon: FileText, action: (inv) => openDrawer(inv) },
-                                  { label: "Print Invoice", icon: Download, action: (inv) => handleDownloadPDF(inv) },
-                                  { label: "Mark as Paid", icon: CheckCircle2, action: (inv) => triggerOnePaid(inv) },
-                                  { label: "Return Items", icon: RotateCcw, action: (inv) => {
+                                  { key: "invoices.action_view_details", label: "View Details", icon: FileText, action: (inv) => openDrawer(inv) },
+                                  { key: "invoices.action_print", label: "Print Invoice", icon: Download, action: (inv) => handleDownloadPDF(inv) },
+                                  { key: "invoices.action_mark_paid", label: "Mark as Paid", icon: CheckCircle2, action: (inv) => triggerOnePaid(inv) },
+                                  { key: "invoices.action_return", label: "Return Items", icon: RotateCcw, action: (inv) => {
                                     setReturnInvoice(inv);
                                     fetchInvoiceDetails(inv.id);
                                   } },
-                                  { label: "Delete (Void)", icon: Trash2, action: (inv) => deleteInvoice(inv.id) },
+                                  { key: "invoices.action_delete", label: "Delete (Void)", icon: Trash2, action: (inv) => deleteInvoice(inv.id) },
                                 ].map((item) => (
                                   <button
                                     key={item.label}
@@ -821,7 +823,7 @@ export default function InvoiceHistoryModule() {
                                     className="flex w-full items-center gap-2.5 rounded-sm px-2.5 py-1.5 text-left text-xs hover:bg-[#f5f8f5] text-neutral-700 outline-none"
                                   >
                                     <item.icon size={14} className="text-[#6a8f6c]" />
-                                    {item.label}
+                                    {t(item.key, item.label)}
                                   </button>
                                 ))}
                               </div>
@@ -834,17 +836,17 @@ export default function InvoiceHistoryModule() {
                           <tr className="bg-[#f7fbf7] border-b border-[#c8d8c8]">
                             <td colSpan={6} className="px-12 py-3">
                               {!invoice.itemsLoaded ? (
-                                <div className="py-4 text-center text-xs text-[#2e7d32] font-semibold">Loading details...</div>
+                                <div className="py-4 text-center text-xs text-[#2e7d32] font-semibold">{t("invoices.loading_details", "Loading details...")}</div>
                               ) : (
                                 <div className="border border-[#c8d8c8] rounded-sm bg-white p-4">
-                                  <h4 className="font-bold text-[10px] uppercase text-[#1b3a1d] tracking-wider mb-2.5">Invoice Items</h4>
+                                  <h4 className="font-bold text-[10px] uppercase text-[#1b3a1d] tracking-wider mb-2.5">{t("invoices.invoice_items", "Invoice Items")}</h4>
                                   <table className="w-full text-xs text-left">
                                     <thead className="bg-[#f5f8f5] text-[10px] font-bold text-[#6a8f6c] uppercase tracking-wider border-b border-[#c8d8c8]">
                                       <tr>
-                                        <th className="px-4 py-2">Product Name</th>
-                                        <th className="px-4 py-2 text-right">Qty</th>
-                                        <th className="px-4 py-2 text-right">Unit Price</th>
-                                        <th className="px-4 py-2 text-right">Line Total</th>
+                                        <th className="px-4 py-2">{t("invoices.product_name", "Product Name")}</th>
+                                        <th className="px-4 py-2 text-right">{t("invoices.qty", "Qty")}</th>
+                                        <th className="px-4 py-2 text-right">{t("invoices.unit_price", "Unit Price")}</th>
+                                        <th className="px-4 py-2 text-right">{t("invoices.line_total", "Line Total")}</th>
                                       </tr>
                                     </thead>
                                     <tbody className="divide-y divide-neutral-100">
@@ -867,7 +869,7 @@ export default function InvoiceHistoryModule() {
                                       }}
                                       className="text-[11px] font-semibold px-3 py-1.5 rounded-sm border border-[#cde0cd] hover:bg-neutral-50"
                                     >
-                                      ↩ Return Items
+                                      {t("invoices.btn_return_items", "↩ Return Items")}
                                     </button>
                                     <button
                                       onClick={(e) => {
@@ -876,7 +878,7 @@ export default function InvoiceHistoryModule() {
                                       }}
                                       className="text-[11px] font-semibold px-3 py-1.5 rounded-sm bg-[#2e7d32] text-white hover:opacity-90"
                                     >
-                                      Full Details
+                                      {t("invoices.btn_full_details", "Full Details")}
                                     </button>
                                   </div>
                                 </div>
@@ -895,7 +897,7 @@ export default function InvoiceHistoryModule() {
           {/* PAGINATION */}
           <div className="flex flex-col gap-4 border-t border-[#c8d8c8] px-5 py-4 md:flex-row md:items-center md:justify-between bg-[#fcfdfc]">
             <div className="flex items-center gap-3">
-              <span className="text-xs text-neutral-500">Rows per page</span>
+              <span className="text-xs text-neutral-500">{t("invoices.rows_per_page", "Rows per page")}</span>
               <select
                 className="rounded-sm border border-[#cde0cd] px-2 py-1 text-xs bg-white"
                 value={rowsPerPage}
@@ -908,8 +910,8 @@ export default function InvoiceHistoryModule() {
 
               <p className="text-xs text-neutral-500">
                 {filteredInvoices.length === 0 
-                  ? "No results"
-                  : `Showing ${(page - 1) * rowsPerPage + 1}–${Math.min(page * rowsPerPage, filteredInvoices.length)} of ${filteredInvoices.length} invoices`
+                  ? t("invoices.no_results", "No results")
+                  : t("invoices.showing_range", "Showing {start}–{end} of {total} invoices").replace("{start}", (page - 1) * rowsPerPage + 1).replace("{end}", Math.min(page * rowsPerPage, filteredInvoices.length)).replace("{total}", filteredInvoices.length)
                 }
               </p>
             </div>
@@ -969,20 +971,20 @@ export default function InvoiceHistoryModule() {
                   onClick={() => triggerOnePaid(drawerInvoice)}
                   className="flex-1 rounded-sm bg-[#2e7d32] py-2 px-3 font-semibold text-white hover:opacity-90 outline-none cursor-pointer"
                 >
-                  Mark Paid
+                  {t("invoices.action_mark_paid", "Mark Paid")}
                 </button>
               )}
               <button
                 onClick={() => handleDownloadPDF(drawerInvoice)}
                 className="flex-1 rounded-sm border border-[#cde0cd] bg-white py-2 px-3 font-semibold text-neutral-700 hover:bg-neutral-50 outline-none cursor-pointer"
               >
-                Print Invoice
+                {t("invoices.action_print", "Print Invoice")}
               </button>
               <button
                 onClick={() => deleteInvoice(drawerInvoice.id)}
                 className="flex-1 rounded-sm border border-red-200 bg-white py-2 px-3 font-semibold text-red-600 hover:bg-red-50 outline-none cursor-pointer"
               >
-                Void
+                {t("invoices.action_delete", "Void")}
               </button>
             </div>
 
@@ -1000,12 +1002,12 @@ export default function InvoiceHistoryModule() {
                   </div>
 
                   <span className={`px-2 py-0.5 ${statusStyles[drawerInvoice.status] || ""}`}>
-                    {drawerInvoice.status}
+                    {t("invoices.status_" + drawerInvoice.status.toLowerCase(), drawerInvoice.status)}
                   </span>
                 </div>
 
                 {!drawerInvoice.itemsLoaded ? (
-                  <div className="py-6 text-center text-xs text-[#2e7d32] font-semibold">Loading details...</div>
+                  <div className="py-6 text-center text-xs text-[#2e7d32] font-semibold">{t("invoices.loading_details", "Loading details...")}</div>
                 ) : (
                   <div className="space-y-2 text-xs divide-y divide-neutral-100">
                     {drawerInvoice.items.map((item, idx) => (
@@ -1023,25 +1025,25 @@ export default function InvoiceHistoryModule() {
 
                 <div className="mt-6 space-y-2 border-t border-[#c8d8c8] pt-4 text-xs">
                   <div className="flex justify-between">
-                    <span>Subtotal</span>
+                    <span>{t("invoices.subtotal", "Subtotal")}</span>
                     <span className="font-mono">{formatMoney(drawerInvoice.amount)}</span>
                   </div>
 
                   {drawerInvoice.discountTotal > 0 && (
                     <div className="flex justify-between text-red-600">
-                      <span>Discount</span>
+                      <span>{t("invoices.discount", "Discount")}</span>
                       <span className="font-mono">-{formatMoney(drawerInvoice.discountTotal)}</span>
                     </div>
                   )}
 
                   <div className="flex justify-between text-sm font-bold text-[#1b3a1d] border-t border-dashed border-neutral-200 pt-2">
-                    <span>Total</span>
+                    <span>{t("invoices.total", "Total")}</span>
                     <span className="font-mono">{formatMoney(drawerInvoice.total)}</span>
                   </div>
 
                   {drawerInvoice.balanceDue > 0 && (
                     <div className="flex justify-between text-xs font-bold text-red-600">
-                      <span>Outstanding Balance</span>
+                      <span>{t("invoices.outstanding_balance", "Outstanding Balance")}</span>
                       <span className="font-mono">{formatMoney(drawerInvoice.balanceDue)}</span>
                     </div>
                   )}
@@ -1052,12 +1054,12 @@ export default function InvoiceHistoryModule() {
               {drawerInvoice.balanceDue > 0 && (
                 <div className="border border-[#c8d8c8] p-5 rounded-sm bg-[#fcfdfc] space-y-4">
                   <h4 className="text-xs font-bold text-[#1b3a1d] uppercase tracking-wider border-b border-[#c8d8c8] pb-2">
-                    Record Payment
+                    {t("invoices.record_payment", "Record Payment")}
                   </h4>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[10px] font-bold text-[#6a8f6c] uppercase tracking-wider mb-1">
-                        Amount (₨)
+                        {t("invoices.amount_rs", "Amount (₨)")}
                       </label>
                       <input
                         type="number"
@@ -1071,7 +1073,7 @@ export default function InvoiceHistoryModule() {
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-[#6a8f6c] uppercase tracking-wider mb-1">
-                        Method
+                        {t("invoices.method", "Method")}
                       </label>
                       <select
                         value={drawerPayMethod}
@@ -1089,7 +1091,7 @@ export default function InvoiceHistoryModule() {
                   <div className="grid grid-cols-1 gap-3">
                     <div>
                       <label className="block text-[10px] font-bold text-[#6a8f6c] uppercase tracking-wider mb-1">
-                        Payment Date
+                        {t("invoices.payment_date", "Payment Date")}
                       </label>
                       <input
                         type="date"
@@ -1100,11 +1102,11 @@ export default function InvoiceHistoryModule() {
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-[#6a8f6c] uppercase tracking-wider mb-1">
-                        Notes
+                        {t("invoices.notes", "Notes")}
                       </label>
                       <input
                         type="text"
-                        placeholder="Payment details or memo..."
+                        placeholder={t("invoices.notes_placeholder", "Payment details or memo...")}
                         value={drawerPayNotes}
                         onChange={(e) => setDrawerPayNotes(e.target.value)}
                         className="w-full rounded-sm border border-[#cde0cd] p-2 bg-white text-xs outline-none"
@@ -1115,11 +1117,11 @@ export default function InvoiceHistoryModule() {
                     onClick={async () => {
                       const amt = Number(drawerPayAmount);
                       if (!amt || amt <= 0) {
-                        alert("Please enter a valid payment amount.");
+                        alert(t("invoices.alert_valid_amount", "Please enter a valid payment amount."));
                         return;
                       }
                       if (amt > drawerInvoice.balanceDue) {
-                        alert("Payment amount cannot exceed outstanding balance.");
+                        alert(t("invoices.alert_exceed_balance", "Payment amount cannot exceed outstanding balance."));
                         return;
                       }
                       try {
@@ -1131,19 +1133,19 @@ export default function InvoiceHistoryModule() {
                           date: drawerPayDate,
                           notes: drawerPayNotes,
                         });
-                        alert("Payment recorded successfully.");
+                        alert(t("invoices.alert_payment_success", "Payment recorded successfully."));
                         loadInvoices();
                         const updated = await fetchInvoiceDetails(drawerInvoice.id);
                         if (updated) {
                           setDrawerInvoice(updated);
                         }
                       } catch (err) {
-                        alert("Failed to record payment: " + err.message);
+                        alert(t("invoices.alert_payment_failed", "Failed to record payment: ") + err.message);
                       }
                     }}
                     className="w-full rounded-sm bg-[#2e7d32] py-2 text-xs font-semibold text-white hover:opacity-90 outline-none cursor-pointer"
                   >
-                    Submit Payment
+                    {t("invoices.submit_payment", "Submit Payment")}
                   </button>
                 </div>
               )}
@@ -1151,7 +1153,7 @@ export default function InvoiceHistoryModule() {
               {/* Payment History */}
               <div className="border border-[#c8d8c8] p-5 rounded-sm bg-white">
                 <h4 className="mb-4 text-xs font-bold text-[#1b3a1d] uppercase tracking-wider">
-                  Payment History
+                  {t("invoices.payment_history", "Payment History")}
                 </h4>
 
                 {drawerInvoice.paymentHistory && drawerInvoice.paymentHistory.length > 0 ? (
@@ -1169,7 +1171,7 @@ export default function InvoiceHistoryModule() {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-xs text-neutral-400">No payments recorded yet.</p>
+                  <p className="text-xs text-neutral-400">{t("invoices.no_payments", "No payments recorded yet.")}</p>
                 )}
               </div>
             </div>
@@ -1182,13 +1184,13 @@ export default function InvoiceHistoryModule() {
         <>
           <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setReturnInvoice(null)} />
           <div className="fixed left-1/2 top-1/2 z-50 w-[520px] -translate-x-1/2 -translate-y-1/2 rounded-sm bg-white p-6 border border-[#c8d8c8] shadow-2xl text-left">
-            <h2 className="mb-1.5 text-base font-bold text-[#1b3a1d] uppercase tracking-wider">Return Items</h2>
+            <h2 className="mb-1.5 text-base font-bold text-[#1b3a1d] uppercase tracking-wider">{t("invoices.return_items", "Return Items")}</h2>
             <p className="text-xs text-neutral-500 mb-5">
               {returnInvoice.invoiceNo || returnInvoice.id} · {returnInvoice.client}
             </p>
 
             {!returnInvoice.itemsLoaded ? (
-              <div className="py-12 text-center text-xs text-[#2e7d32] font-semibold">Loading items...</div>
+              <div className="py-12 text-center text-xs text-[#2e7d32] font-semibold">{t("invoices.loading_items", "Loading items...")}</div>
             ) : (
               <div className="space-y-2 mb-6 max-h-[300px] overflow-y-auto">
                 {(returnInvoice.items || []).map((item, idx) => {
@@ -1206,7 +1208,7 @@ export default function InvoiceHistoryModule() {
                       />
                       <div className="flex-1">
                         <p className="font-semibold text-xs text-[#1b3a1d]">{item.name}</p>
-                        <p className="text-[10px] text-neutral-400 font-mono">Max return qty: {item.qty}</p>
+                        <p className="text-[10px] text-neutral-400 font-mono">{t("invoices.max_return_qty", "Max return qty: ")}{item.qty}</p>
                       </div>
                       <input
                         type="number"
@@ -1234,7 +1236,7 @@ export default function InvoiceHistoryModule() {
                 onClick={() => { setReturnInvoice(null); setReturnSelections({}); }}
                 className="rounded-sm border border-[#cde0cd] px-4 py-2 text-xs font-semibold text-neutral-600 hover:bg-neutral-50 cursor-pointer"
               >
-                Cancel
+                {t("invoices.cancel", "Cancel")}
               </button>
               <button
                 onClick={async () => {
@@ -1253,11 +1255,11 @@ export default function InvoiceHistoryModule() {
                   }).filter(Boolean);
 
                   if (returnItems.length === 0) {
-                    alert("Select at least one item to return.");
+                    alert(t("invoices.alert_select_return_item", "Select at least one item to return."));
                     return;
                   }
 
-                  if (!window.confirm("Confirm return of items? This will register a sales return and restore inventory stock.")) return;
+                  if (!window.confirm(t("invoices.confirm_return_msg", "Confirm return of items? This will register a sales return and restore inventory stock."))) return;
 
                   try {
                     await returnSale(returnInvoice.id, { items: returnItems });
@@ -1268,12 +1270,12 @@ export default function InvoiceHistoryModule() {
                       setDrawerInvoice(null);
                     }
                   } catch (err) {
-                    alert("Failed to process items return: " + err.message);
+                    alert(t("invoices.alert_return_failed", "Failed to process items return: ") + err.message);
                   }
                 }}
                 className="rounded-sm bg-[#2e7d32] px-4 py-2 text-xs font-semibold text-white hover:opacity-90 cursor-pointer"
               >
-                Confirm Return
+                {t("invoices.confirm_return", "Confirm Return")}
               </button>
             </div>
           </div>
@@ -1285,15 +1287,17 @@ export default function InvoiceHistoryModule() {
         <>
           <div className="fixed inset-0 z-50 bg-black/40" onClick={() => { setPayingInvoice(null); setPayingBulk(false); }} />
           <div className="fixed left-1/2 top-1/2 z-50 w-[400px] -translate-x-1/2 -translate-y-1/2 rounded-sm bg-white p-6 border border-[#c8d8c8] shadow-2xl text-left">
-            <h3 className="text-sm font-bold text-[#1b3a1d] uppercase tracking-wider mb-2">Record Invoice Payment</h3>
+            <h3 className="text-sm font-bold text-[#1b3a1d] uppercase tracking-wider mb-2">{t("invoices.record_invoice_payment", "Record Invoice Payment")}</h3>
             <p className="text-xs text-neutral-500 mb-4">
               {payingBulk 
-                ? `Recording outstanding account payment in bulk for selected invoice items.` 
-                : `Recording outstanding balance of ${formatMoney(payingInvoice?.balanceDue || 0)} for Invoice ${payingInvoice?.invoiceNo || payingInvoice?.id}.`
+                ? t("invoices.bulk_payment_desc", "Recording outstanding account payment in bulk for selected invoice items.") 
+                : t("invoices.single_payment_desc", "Recording outstanding balance of {amount} for Invoice {invoice}.")
+                    .replace("{amount}", formatMoney(payingInvoice?.balanceDue || 0))
+                    .replace("{invoice}", payingInvoice?.invoiceNo || payingInvoice?.id)
               }
             </p>
             <div className="mb-5">
-              <label className="block text-[10px] font-bold text-[#6a8f6c] uppercase tracking-wider mb-1.5">Select Payment Channel</label>
+              <label className="block text-[10px] font-bold text-[#6a8f6c] uppercase tracking-wider mb-1.5">{t("invoices.select_payment_channel", "Select Payment Channel")}</label>
               <select 
                 value={paymentMethod} 
                 onChange={e => setPaymentMethod(e.target.value)}
@@ -1309,13 +1313,13 @@ export default function InvoiceHistoryModule() {
                 onClick={() => { setPayingInvoice(null); setPayingBulk(false); }}
                 className="px-4 py-2 text-xs font-semibold rounded-sm border border-[#cde0cd] hover:bg-neutral-50 text-neutral-600 cursor-pointer"
               >
-                Cancel
+                {t("invoices.cancel", "Cancel")}
               </button>
               <button 
                 onClick={executePayment}
                 className="px-4 py-2 text-xs font-semibold rounded-sm bg-[#2e7d32] text-white hover:opacity-90 cursor-pointer"
               >
-                Record Payment
+                {t("invoices.record_payment", "Record Payment")}
               </button>
             </div>
           </div>

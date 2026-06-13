@@ -4,18 +4,57 @@ const store = require("../store");
 
 router.post("/login", async (req, res) => {
   try {
-    const user = await store.loginByPin(req.body.pin);
-    if (!user) return res.status(401).json({ message: "Invalid PIN" });
+    const { username, password } = req.body;
+    const user = await store.loginUser(username, password);
+    if (!user) return res.status(401).json({ message: "Invalid username or password" });
     return res.json({
       message: "Login successful",
       user: {
         id: user.id,
         username: user.username,
         role: user.role,
+        permissions: user.permissions,
       },
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/users", async (req, res) => {
+  try {
+    const users = await store.listUsers();
+    return res.json({ users });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/users/active", async (req, res) => {
+  try {
+    const users = await store.listActiveUsers();
+    return res.json({ users });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.post("/users", async (req, res) => {
+  try {
+    const user = await store.saveUser(req.body);
+    return res.json({ user });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+router.post("/users/change-password", async (req, res) => {
+  try {
+    const { userId, oldPassword, newPassword } = req.body;
+    const result = await store.changePassword(userId, oldPassword, newPassword);
+    return res.json(result);
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
   }
 });
 
@@ -181,6 +220,15 @@ router.post("/customers", async (req, res) => {
 router.get("/customers/:id/history", async (req, res) => {
   try {
     const history = await store.getCustomerHistory(Number(req.params.id));
+    return res.json({ history });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/suppliers/:id/history", async (req, res) => {
+  try {
+    const history = await store.getSupplierHistory(Number(req.params.id));
     return res.json({ history });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -440,6 +488,27 @@ router.get("/backup/export", async (req, res) => {
   }
 });
 
+router.get("/backup/download", async (req, res) => {
+  try {
+    res.download(store.dbPath, "cheema_traders_pos_backup.db");
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/db/info", async (req, res) => {
+  try {
+    const fsModule = require("fs/promises");
+    const stat = await fsModule.stat(store.dbPath);
+    return res.json({
+      path: store.dbPath,
+      size: stat.size,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
 router.post("/backup/import", async (req, res) => {
   try {
     if (!req.body.path) return res.status(400).json({ message: "Backup path is required" });
@@ -513,6 +582,88 @@ router.post("/coa/:id/deactivate", async (req, res) => {
     return res.json(result);
   } catch (error) {
     return res.status(400).json({ message: error.message });
+  }
+});
+
+// --- ANALYSIS ---
+router.get("/analysis/overview", async (req, res) => {
+  try {
+    const data = await store.getAnalysisOverview();
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/analysis/revenue-trend", async (req, res) => {
+  try {
+    const data = await store.getRevenueTrend();
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/analysis/category-sales", async (req, res) => {
+  try {
+    const data = await store.getCategorySalesMtd();
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/analysis/sales-summary", async (req, res) => {
+  try {
+    const data = await store.getSalesSummaryMtd();
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/analysis/product-movement", async (req, res) => {
+  try {
+    const data = await store.getProductMovementMtd();
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/analysis/weekly-sales", async (req, res) => {
+  try {
+    const data = await store.getWeeklySalesActual();
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/analysis/inventory", async (req, res) => {
+  try {
+    const data = await store.getInventoryAnalysis();
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/analysis/customer-dues", async (req, res) => {
+  try {
+    const data = await store.getCustomerDuesAnalysis();
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/analysis/supplier", async (req, res) => {
+  try {
+    const data = await store.getSupplierAnalysis();
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
   }
 });
 

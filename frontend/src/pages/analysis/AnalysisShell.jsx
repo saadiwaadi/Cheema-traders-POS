@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { st } from "./shared/analysisStyles";
 import InventoryWorkspace from "./InventoryWorkspace";
 import CustomerDuesWorkspace from "./CustomerDuesWorkspace";
 import SupplierWorkspace from "./SupplierWorkspace";
 import SalesWorkspace from "./SalesWorkspace";
+import { getAnalysisOverview } from "../../lib/posApi";
 
 const WORKSPACES = [
   { id: "sales", label: "Sales" },
@@ -14,6 +15,27 @@ const WORKSPACES = [
 
 export default function AnalysisShell() {
   const [activeWorkspace, setActiveWorkspace] = useState("sales");
+  const [overview, setOverview] = useState({
+    todaySales: 0,
+    cashInHand: 0,
+    supplierDues: 0,
+    creditOutstanding: 0,
+    inventoryValue: 0,
+    todayExpenses: 0,
+    todayProfit: 0,
+    recommendations: [],
+    activities: []
+  });
+
+  useEffect(() => {
+    getAnalysisOverview()
+      .then((data) => {
+        if (data) {
+          setOverview(data);
+        }
+      })
+      .catch(console.error);
+  }, [activeWorkspace]);
 
   function renderWorkspace() {
     switch (activeWorkspace) {
@@ -22,6 +44,12 @@ export default function AnalysisShell() {
       case "suppliers": return <SupplierWorkspace />;
       case "sales": default: return <SalesWorkspace />;
     }
+  }
+
+  function formatValue(val) {
+    if (val >= 1000000) return `Rs ${(val / 1000000).toFixed(2)}M`;
+    if (val >= 1000) return `Rs ${(val / 1000).toFixed(1)}k`;
+    return `Rs ${val.toLocaleString()}`;
   }
 
   return (
@@ -51,11 +79,11 @@ export default function AnalysisShell() {
 
         {/* STABLE STATUS BAR */}
         <div style={st.statusBar}>
-          <StatusCard label="Today's Sales" value="Rs 148,200" />
-          <StatusCard label="Cash In Hand" value="Rs 84,000" />
-          <StatusCard label="Supplier Dues" value="Rs 245,000" />
-          <StatusCard label="Credit Outstanding" value="Rs 212,400" />
-          <StatusCard label="Inventory Value" value="Rs 2.8M" />
+          <StatusCard label="Today's Sales" value={`Rs ${overview.todaySales.toLocaleString()}`} />
+          <StatusCard label="Cash In Hand" value={`Rs ${overview.cashInHand.toLocaleString()}`} />
+          <StatusCard label="Supplier Dues" value={`Rs ${overview.supplierDues.toLocaleString()}`} />
+          <StatusCard label="Credit Outstanding" value={`Rs ${overview.creditOutstanding.toLocaleString()}`} />
+          <StatusCard label="Inventory Value" value={formatValue(overview.inventoryValue)} />
         </div>
 
         {/* MAIN GRID: WORKSPACE BODY + STABLE RIGHT PANEL */}
@@ -69,10 +97,10 @@ export default function AnalysisShell() {
             <div style={st.sideCard}>
               <h3 style={st.sideTitle}>Financial Overview</h3>
               <div style={st.metricList}>
-                <MetricRow label="Today's Profit" value="Rs 18,400" highlight />
-                <MetricRow label="Pending Supplier Payments" value="Rs 245,000" />
-                <MetricRow label="Customer Credit" value="Rs 212,400" />
-                <MetricRow label="Expenses Today" value="Rs 8,200" />
+                <MetricRow label="Today's Profit" value={`Rs ${overview.todayProfit.toLocaleString()}`} highlight />
+                <MetricRow label="Pending Supplier Payments" value={`Rs ${overview.supplierDues.toLocaleString()}`} />
+                <MetricRow label="Customer Credit" value={`Rs ${overview.creditOutstanding.toLocaleString()}`} />
+                <MetricRow label="Expenses Today" value={`Rs ${overview.todayExpenses.toLocaleString()}`} />
               </div>
             </div>
 
@@ -80,10 +108,9 @@ export default function AnalysisShell() {
             <div style={st.sideCard}>
               <h3 style={st.sideTitle}>Operational Recommendations</h3>
               <div style={st.insightList}>
-                <div style={st.insightItem}>Roundup likely requires restocking within 5 days based on current movement.</div>
-                <div style={st.insightItem}>12 batches approaching expiry this month — review inventory workspace.</div>
-                <div style={st.insightItem}>Ali Traders credit overdue by 41 days. Consider follow-up.</div>
-                <div style={st.insightItem}>Mospilan movement slowing compared to last month.</div>
+                {overview.recommendations.map((item, i) => (
+                  <div key={i} style={st.insightItem}>{item}</div>
+                ))}
               </div>
             </div>
 
@@ -91,10 +118,9 @@ export default function AnalysisShell() {
             <div style={st.sideCard}>
               <h3 style={st.sideTitle}>Recent Activity</h3>
               <div style={st.activityList}>
-                <div style={st.activityItem}>Invoice INV-1042 generated.</div>
-                <div style={st.activityItem}>New supplier payment recorded for Bayer.</div>
-                <div style={st.activityItem}>Inventory batch added for Roundup.</div>
-                <div style={st.activityItem}>Product pricing updated for Mospilan.</div>
+                {overview.activities.map((item, i) => (
+                  <div key={i} style={st.activityItem}>{item}</div>
+                ))}
               </div>
             </div>
           </div>

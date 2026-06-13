@@ -152,7 +152,6 @@ function AddSupplierPanel({ isOpen, onClose, onSaved, supplierToEdit }) {
   const [salesOfficerPhone, setSalesOfficerPhone] = useState("");
   const [address, setAddress] = useState("");
   const [openingBalance, setOpeningBalance] = useState("");
-  const [balanceType, setBalanceType] = useState("none");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -164,15 +163,13 @@ function AddSupplierPanel({ isOpen, onClose, onSaved, supplierToEdit }) {
         setSalesOfficerPhone(supplierToEdit.salesOfficerPhone || "");
         setAddress(supplierToEdit.address || "");
         const balVal = supplierToEdit.openingBalance || supplierToEdit.opening_balance || 0;
-        setOpeningBalance(String(Math.abs(balVal)));
-        setBalanceType(balVal > 0 ? "credit" : balVal < 0 ? "debit" : "none");
+        setOpeningBalance(balVal === 0 ? "" : String(balVal));
       } else {
         setName("");
         setPhone("");
         setSalesOfficerPhone("");
         setAddress("");
         setOpeningBalance("");
-        setBalanceType("none");
       }
       setErrorMsg("");
     }
@@ -189,22 +186,13 @@ function AddSupplierPanel({ isOpen, onClose, onSaved, supplierToEdit }) {
     }
     setSaving(true);
     try {
-      let finalBal = Number(openingBalance || 0);
-      if (balanceType === "none") {
-        finalBal = 0;
-      } else if (balanceType === "debit") {
-        finalBal = -Math.abs(finalBal); // We paid them in advance
-      } else {
-        finalBal = Math.abs(finalBal); // We owe them money
-      }
-
       const saved = await saveSupplier({
         id: supplierToEdit ? supplierToEdit.id : undefined,
         name,
         phone,
         salesOfficerPhone,
         address,
-        openingBalance: finalBal,
+        openingBalance: Number(openingBalance || 0),
       });
       onSaved(saved);
     } catch (e) {
@@ -274,18 +262,9 @@ function AddSupplierPanel({ isOpen, onClose, onSaved, supplierToEdit }) {
               <div style={st.fieldWrap}>
                 <label style={st.fieldLabel}>Opening Balance (Rs)</label>
                 <input style={st.input} type="number" placeholder="0" value={openingBalance} onChange={e => setOpeningBalance(e.target.value)} />
-              </div>
-              <div style={st.fieldWrap}>
-                <label style={st.fieldLabel}>Balance Type</label>
-                <select
-                  style={st.input}
-                  value={balanceType}
-                  onChange={(e) => setBalanceType(e.target.value)}
-                >
-                  <option value="none">Zero Balance</option>
-                  <option value="credit">(Cr)</option>
-                  <option value="debit">(Dr)</option>
-                </select>
+                <span style={st.fieldHint}>
+                  Enter a negative value (e.g., -100) if the supplier has to pay (we paid in advance). Enter a positive value (e.g., 1000) if we have to pay them.
+                </span>
               </div>
             </div>
 

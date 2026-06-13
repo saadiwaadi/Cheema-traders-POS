@@ -152,7 +152,6 @@ function AddCustomerPanel({ isOpen, onClose, onSaved, customerToEdit }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [openingBalance, setOpeningBalance] = useState("");
-  const [balanceType, setBalanceType] = useState("none");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -162,13 +161,20 @@ function AddCustomerPanel({ isOpen, onClose, onSaved, customerToEdit }) {
         setName(customerToEdit.name || "");
         setPhone(customerToEdit.phone || "");
         const balVal = customerToEdit.opening_balance || 0;
-        setOpeningBalance(String(Math.abs(balVal)));
-        setBalanceType(balVal > 0 ? "debit" : balVal < 0 ? "credit" : "none");
+        // Flip signs when loading into UI:
+        // Customer owes us (Debit) is stored positive, input wants negative.
+        // We owe them (Credit) is stored negative, input wants positive.
+        if (balVal > 0) {
+          setOpeningBalance(String(-balVal));
+        } else if (balVal < 0) {
+          setOpeningBalance(String(Math.abs(balVal)));
+        } else {
+          setOpeningBalance("");
+        }
       } else {
         setName("");
         setPhone("");
         setOpeningBalance("");
-        setBalanceType("none");
       }
       setErrorMsg("");
     }
@@ -187,7 +193,6 @@ function AddCustomerPanel({ isOpen, onClose, onSaved, customerToEdit }) {
         name,
         phone,
         openingBalance,
-        balanceType,
       });
       onSaved(saved);
     } catch (e) {
@@ -244,20 +249,8 @@ function AddCustomerPanel({ isOpen, onClose, onSaved, customerToEdit }) {
               <div style={st.fieldWrap}>
                 <label style={st.fieldLabel}>Opening Balance (Rs)</label>
                 <input style={st.input} type="number" placeholder="0" value={openingBalance} onChange={e => setOpeningBalance(e.target.value)} />
-              </div>
-              <div style={st.fieldWrap}>
-                <label style={st.fieldLabel}>Balance Type</label>
-                <select
-                  style={st.input}
-                  value={balanceType}
-                  onChange={(e) => setBalanceType(e.target.value)}
-                >
-                  <option value="none">No Opening Balance</option>
-                  <option value="debit">Customer Will Pay</option>
-                  <option value="credit">Advance / Store Credit</option>
-                </select>
                 <span style={st.fieldHint}>
-                  Customer Will Pay = pending amount. Advance = prepaid customer balance.
+                  Enter a negative value (e.g., -100) if the customer has to pay. Enter a positive value (e.g., 1000) if we have to pay them (advance/store credit).
                 </span>
               </div>
             </div>

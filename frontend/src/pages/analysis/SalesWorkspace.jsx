@@ -1,29 +1,45 @@
+import { useEffect, useState } from "react";
 import { st } from "./shared/analysisStyles";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { getSalesSummaryMtd, getWeeklySalesActual, getProductMovementMtd } from "../../lib/posApi";
 
 export default function SalesWorkspace() {
+  const [summary, setSummary] = useState({
+    dailyAverage: 0,
+    mtdCount: 0,
+    mtdAverageBill: 0,
+    topCategory: "None"
+  });
+  const [performanceData, setPerformanceData] = useState([]);
+  const [salesData, setSalesData] = useState([]);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    getSalesSummaryMtd().then(setSummary).catch(console.error);
+    getWeeklySalesActual().then(setPerformanceData).catch(console.error);
+    getProductMovementMtd().then((data) => {
+      if (data) {
+        const mapped = data.map((item) => {
+          const u = item.unitsSold || 0;
+          return {
+            product: item.product,
+            category: item.category,
+            unitsSold: u,
+            turnover: u > 100 ? "High" : u > 20 ? "Medium" : "Low",
+            velocity: u > 100 ? "Fast" : u > 20 ? "Stable" : "Slow"
+          };
+        });
+        setSalesData(mapped);
+      }
+    }).catch(console.error);
+  }, []);
+
   const salesSummary = [
-    { label: "Daily Average", value: "Rs 112,000" },
-    { label: "Invoice Count (MTD)", value: "342" },
-    { label: "Average Bill Value", value: "Rs 8,400" },
-    { label: "Top Category", value: "Insecticides" },
-  ];
-
-  const salesData = [
-    { product: "Roundup (1L)", category: "Herbicide", unitsSold: 142, turnover: "High", velocity: "Fast" },
-    { product: "Mospilan (50g)", category: "Insecticide", unitsSold: 118, turnover: "High", velocity: "Fast" },
-    { product: "Coragen (50ml)", category: "Pesticide", unitsSold: 74, turnover: "Medium", velocity: "Stable" },
-    { product: "Confidor (250ml)", category: "Insecticide", unitsSold: 52, turnover: "Medium", velocity: "Stable" },
-    { product: "Nativo (65g)", category: "Fungicide", unitsSold: 12, turnover: "Low", velocity: "Slow" },
-    { product: "Aliette (250g)", category: "Fungicide", unitsSold: 9, turnover: "Low", velocity: "Slow" },
-    { product: "DAP Fertilizer (50kg)", category: "Fertilizer", unitsSold: 85, turnover: "High", velocity: "Fast" },
-  ];
-
-  const performanceData = [
-    { week: "Week 1", actual: 420000, target: 400000 },
-    { week: "Week 2", actual: 480000, target: 420000 },
-    { week: "Week 3", actual: 390000, target: 450000 },
-    { week: "Week 4", actual: 510000, target: 450000 },
+    { label: "Daily Average", value: `Rs ${summary.dailyAverage.toLocaleString(undefined, { maximumFractionDigits: 0 })}` },
+    { label: "Invoice Count (MTD)", value: summary.mtdCount.toLocaleString() },
+    { label: "Average Bill Value", value: `Rs ${summary.mtdAverageBill.toLocaleString(undefined, { maximumFractionDigits: 0 })}` },
+    { label: "Top Category", value: summary.topCategory },
   ];
 
   return (
@@ -45,21 +61,25 @@ export default function SalesWorkspace() {
           </div>
         </div>
         <div style={{ height: 260, width: "100%", marginTop: 10 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={performanceData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4eee4" />
-              <XAxis dataKey="week" axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: "#708571" }} dy={10} />
-              <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: "#708571" }} tickFormatter={(val) => `Rs ${val / 1000}k`} />
-              <Tooltip 
-                cursor={{ fill: "#f1f6f1" }}
-                contentStyle={{ borderRadius: 8, border: "1px solid #dbe8db", boxShadow: "0 4px 12px rgba(0,0,0,0.05)" }}
-                formatter={(value) => [`Rs ${value.toLocaleString()}`, ""]}
-              />
-              <Legend iconType="circle" wrapperStyle={{ fontSize: 13, paddingTop: 10 }} />
-              <Bar dataKey="actual" name="Actual Sales" fill="#388e3c" radius={[4, 4, 0, 0]} barSize={40} />
-              <Bar dataKey="target" name="Target" fill="#a5d6a7" radius={[4, 4, 0, 0]} barSize={40} />
-            </BarChart>
-          </ResponsiveContainer>
+          {mounted && (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={performanceData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                <XAxis dataKey="week" axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: "var(--text-secondary)" }} dy={10} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: "var(--text-secondary)" }} tickFormatter={(val) => `Rs ${val / 1000}k`} />
+                <Tooltip 
+                  cursor={{ fill: "var(--surface-secondary)" }}
+                  contentStyle={{ borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", boxShadow: "0 4px 12px rgba(0,0,0,0.15)" }}
+                  itemStyle={{ color: "var(--text-primary)" }}
+                  labelStyle={{ color: "var(--text-secondary)", fontWeight: 600 }}
+                  formatter={(value) => [`Rs ${value.toLocaleString()}`, ""]}
+                />
+                <Legend iconType="circle" wrapperStyle={{ fontSize: 13, paddingTop: 10 }} />
+                <Bar dataKey="actual" name="Actual Sales" fill="#388e3c" radius={[4, 4, 0, 0]} barSize={40} />
+                <Bar dataKey="target" name="Target" fill="#a5d6a7" radius={[4, 4, 0, 0]} barSize={40} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </div>
 

@@ -39,6 +39,7 @@ db.serialize(() => {
       pin TEXT,
       role TEXT NOT NULL DEFAULT 'staff',
       active INTEGER NOT NULL DEFAULT 1,
+      permissions TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
@@ -439,6 +440,9 @@ db.serialize(() => {
 
   db.run(`ALTER TABLE users ADD COLUMN pin TEXT`, ignoreColumnExists);
   db.run(`ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1`, ignoreColumnExists);
+  db.run(`ALTER TABLE users ADD COLUMN permissions TEXT`, ignoreColumnExists);
+  db.run(`ALTER TABLE users ADD COLUMN created_at TEXT`, ignoreColumnExists);
+  db.run(`ALTER TABLE users ADD COLUMN updated_at TEXT`, ignoreColumnExists);
   db.run(`ALTER TABLE products ADD COLUMN sku TEXT`, ignoreColumnExists);
   db.run(`ALTER TABLE products ADD COLUMN category_id INTEGER`, ignoreColumnExists);
   db.run(`ALTER TABLE products ADD COLUMN unit TEXT`, ignoreColumnExists);
@@ -462,6 +466,7 @@ db.serialize(() => {
   db.run(`ALTER TABLE sales_returns ADD COLUMN notes TEXT`, ignoreColumnExists);
   db.run(`ALTER TABLE expenses ADD COLUMN money_from TEXT`, ignoreColumnExists);
   db.run(`ALTER TABLE expenses ADD COLUMN money_to TEXT`, ignoreColumnExists);
+  db.run(`ALTER TABLE journal_lines ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)`, ignoreColumnExists);
   db.run(`
     CREATE VIEW IF NOT EXISTS sale_returns_summary AS
     SELECT

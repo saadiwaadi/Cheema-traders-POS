@@ -3,7 +3,7 @@ const path = require("path");
 const sqlite3 = require("sqlite3").verbose();
 const Database = require("better-sqlite3");
 const dbModule = require("./db");
-const { postSale, postPayment, postPurchase, postSupplierPayment, voidSale } = require('./glBridge');
+const { postSale, postPayment, postPurchase, postSupplierPayment, voidSale, postBankTransfer, postExpense } = require('./glBridge');
 
 const dbPath = dbModule.filename || path.resolve(__dirname, "..", "database", "pos.db");
 
@@ -129,15 +129,176 @@ class PosStore {
 
   async loginByPin(pin) {
     const db = await this._db();
-    return get(
-      db,
-      `SELECT id, username, role, active
-       FROM users
-       WHERE pin = ? AND active = 1
-       LIMIT 1`,
-      [pin]
-    );
+
+    console.log("=== LOGIN ATTEMPT ===");
+    console.log("Input PIN:", pin);
+    console.log("Database path (sqlite3):", db.filename);
+
+    try {
+      // Dump all users to see what is in the DB
+      const allUsers = await new Promise((resolve, reject) => {
+        db.all('SELECT id, username, pin, role, active FROM users', (err, rows) => {
+          if (err) reject(err); else resolve(rows);
+        });
+      });
+      console.log("All users in DB:", allUsers);
+
+      const user = await get(
+        db,
+        `SELECT id, username, role, active
+         FROM users
+         WHERE pin = ? AND active = 1
+         LIMIT 1`,
+        [pin]
+      );
+      
+      console.log("User matched:", user);
+      return user;
+    } catch (err) {
+      console.error("LOGIN QUERY ERROR:", err);
+      throw err;
+    }
   }
+
+  async loginUser(username, password) {
+    const db = await this._db();
+    try {
+      const user = await get(
+        db,
+        `SELECT id, username, role, active, permissions
+         FROM users
+         WHERE username = ? AND password = ? AND active = 1
+         LIMIT 1`,
+        [username, password]
+      );
+      if (user && user.permissions) {
+        try {
+          user.permissions = JSON.parse(user.permissions);
+        } catch (e) {
+          user.permissions = null;
+        }
+      }
+      return user;
+    } catch (err) {
+      console.error("LOGIN USER ERROR:", err);
+      throw err;
+    }
+  }
+
+  async listUsers() {
+    const db = await this._db();
+    try {
+      const rows = await all(
+        db,
+        `SELECT id, username, role, active, permissions, created_at, updated_at
+         FROM users
+         ORDER BY username COLLATE NOCASE ASC`
+      );
+      return rows.map(u => {
+        if (u.permissions) {
+          try {
+            u.permissions = JSON.parse(u.permissions);
+          } catch (e) {
+            u.permissions = null;
+          }
+        }
+        return u;
+      });
+    } catch (err) {
+      console.error("LIST USERS ERROR:", err);
+      throw err;
+    }
+  }
+
+  async listActiveUsers() {
+    const db = await this._db();
+    try {
+      const rows = await all(
+        db,
+        `SELECT id, username, role, active, permissions
+         FROM users
+         WHERE active = 1
+         ORDER BY username COLLATE NOCASE ASC`
+      );
+      return rows.map(u => {
+        if (u.permissions) {
+          try {
+            u.permissions = JSON.parse(u.permissions);
+          } catch (e) {
+            u.permissions = null;
+          }
+        }
+        return u;
+      });
+    } catch (err) {
+      console.error("LIST ACTIVE USERS ERROR:", err);
+      throw err;
+    }
+  }
+
+  async saveUser(user) {
+    const db = await this._db();
+    const id = user.id;
+    const username = String(user.username || "").trim();
+    const role = user.role || "staff";
+    const active = user.active !== undefined ? Number(user.active) : 1;
+    const permissions = user.permissions ? JSON.stringify(user.permissions) : null;
+    const password = user.password; // optional on update, required on insert
+
+    if (!username) throw new Error("Username is required");
+
+    if (id) {
+      // Update
+      if (password) {
+        await run(
+          db,
+          `UPDATE users
+           SET username = ?, role = ?, active = ?, permissions = ?, password = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [username, role, active, permissions, password, id]
+        );
+      } else {
+        await run(
+          db,
+          `UPDATE users
+           SET username = ?, role = ?, active = ?, permissions = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [username, role, active, permissions, id]
+        );
+      }
+      await this.audit("user", id, "update", null, { username, role, active, permissions });
+      return { id, username, role, active, permissions: user.permissions };
+    } else {
+      // Create
+      if (!password) throw new Error("Password is required for new users");
+      const result = await run(
+        db,
+        `INSERT INTO users (username, role, active, permissions, password)
+         VALUES (?, ?, ?, ?, ?)`,
+        [username, role, active, permissions, password]
+      );
+      await this.audit("user", result.lastID, "create", null, { username, role, active, permissions });
+      return { id: result.lastID, username, role, active, permissions: user.permissions };
+    }
+  }
+
+  async changePassword(userId, oldPassword, newPassword) {
+    const db = await this._db();
+    if (!userId || !oldPassword || !newPassword) {
+      throw new Error("Missing parameters for changing password");
+    }
+    const user = await get(db, "SELECT password FROM users WHERE id = ?", [userId]);
+    if (!user) {
+      throw new Error("User not found");
+    }
+    if (user.password !== oldPassword) {
+      throw new Error("Incorrect current password");
+    }
+    await run(db, "UPDATE users SET password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [newPassword, userId]);
+    await this.audit("user", userId, "change_password", null, null);
+    return { success: true };
+  }
+
 
   async getCompanyProfile() {
     const db = await this._db();
@@ -162,6 +323,16 @@ class PosStore {
             s.opening_balance 
             + COALESCE((SELECT SUM(balance_due) FROM purchases WHERE supplier_id = s.id), 0)
             - COALESCE((SELECT SUM(amount) FROM supplier_payments WHERE supplier_id = s.id), 0)
+            + COALESCE((
+                SELECT SUM(jl.credit - jl.debit) / 100.0
+                FROM journal_lines jl
+                JOIN journal_entries je ON jl.entry_id = je.id
+                JOIN accounts a ON jl.account_id = a.id
+                WHERE jl.supplier_id = s.id
+                  AND a.code = '2000'
+                  AND je.status = 'posted'
+                  AND je.source_type = 'manual'
+              ), 0)
           ) AS current_balance,
           (SELECT COUNT(*) FROM purchases WHERE supplier_id = s.id) AS transaction_count,
           (SELECT MAX(purchase_date) FROM purchases WHERE supplier_id = s.id) AS last_purchase
@@ -247,9 +418,28 @@ class PosStore {
         FROM supplier_payments
         WHERE supplier_id = ?
         
+        UNION ALL
+        
+        SELECT 
+          jl.id AS ref_id,
+          'Journal' AS type,
+          je.date AS date,
+          je.entry_no AS reference,
+          '-' AS method,
+          ABS(jl.credit - jl.debit) / 100.0 AS total_amount,
+          (jl.credit - jl.debit) / 100.0 AS balance_change,
+          je.narration || COALESCE(' - ' || jl.line_memo, '') AS notes,
+          je.created_at
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.entry_id = je.id
+        JOIN accounts a ON jl.account_id = a.id
+        WHERE jl.supplier_id = ?
+          AND a.code = '2000'
+          AND je.status = 'posted'
+        
         ORDER BY date DESC, created_at DESC
       `,
-      [supplierId, supplierId]
+      [supplierId, supplierId, supplierId]
     );
   }
 
@@ -464,6 +654,19 @@ class PosStore {
         }
         
         await run(db, "COMMIT");
+        try {
+            const dbBetter = this.getBetterDb();
+            postBankTransfer(dbBetter, {
+                id: Date.now(), // synthetic ID for idempotency since there's no single transfer row
+                date: txDate,
+                amount: transferAmount,
+                reference,
+                fromAccount,
+                toAccount
+            });
+        } catch (err) {
+            console.error("[GL] postBankTransfer failed:", err.message);
+        }
         return { success: true, fromAccount, toAccount, amount: transferAmount };
     } catch (err) {
         await run(db, "ROLLBACK");
@@ -678,8 +881,8 @@ class PosStore {
         SELECT
           date AS entry_date,
           CASE
-            WHEN count_rows = 1 AND type = 'Deposit' THEN 'Transfer from Cash to Bank' || COALESCE(' (' || reference || ')', '')
-            WHEN count_rows = 1 AND type = 'Withdrawal' THEN 'Transfer from Bank to Cash' || COALESCE(' (' || reference || ')', '')
+            WHEN count_rows = 1 AND type = 'Deposit' THEN 'Transfer from Cash to Bank Account - ' || bank_name || COALESCE(' (' || reference || ')', '')
+            WHEN count_rows = 1 AND type = 'Withdrawal' THEN 'Transfer from Bank Account - ' || bank_name || ' to Cash' || COALESCE(' (' || reference || ')', '')
             ELSE 'Transfer between Bank Accounts' || COALESCE(' (' || reference || ')', '')
           END AS description,
           COALESCE(reference, '') AS receipt_number,
@@ -695,8 +898,10 @@ class PosStore {
             bt.date,
             bt.reference,
             bt.created_at,
+            ba.name AS bank_name,
             COUNT(*) OVER(PARTITION BY bt.reference, bt.date, bt.created_at) as count_rows
           FROM bank_transactions bt
+          JOIN bank_accounts ba ON bt.bank_account_id = ba.id
         )
       )
       WHERE entry_date >= ? AND entry_date <= ?
@@ -778,6 +983,16 @@ class PosStore {
               WHERE customer_id = customers.id
                 AND amount > 0
             ), 0)
+          + COALESCE((
+              SELECT SUM(jl.debit - jl.credit) / 100.0
+              FROM journal_lines jl
+              JOIN journal_entries je ON jl.entry_id = je.id
+              JOIN accounts a ON jl.account_id = a.id
+              WHERE jl.customer_id = customers.id
+                AND a.code = '1100'
+                AND je.status = 'posted'
+                AND je.source_type = 'manual'
+            ), 0)
         ),
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
@@ -798,6 +1013,15 @@ class PosStore {
         opening_balance = -Math.abs(opening_balance);
     } else if (input.balanceType === "debit") {
         opening_balance = Math.abs(opening_balance);
+    } else {
+        // If no balanceType is specified, interpret directly:
+        // Negative input (e.g., -100) -> customer owes us (Debit/positive in DB)
+        // Positive input (e.g., 1000) -> we owe them (Credit/negative in DB)
+        if (opening_balance < 0) {
+            opening_balance = Math.abs(opening_balance);
+        } else if (opening_balance > 0) {
+            opening_balance = -Math.abs(opening_balance);
+        }
     }
 
     if (!name) throw new Error("Customer name is required");
@@ -955,9 +1179,132 @@ class PosStore {
         FROM customers
         WHERE id = ? AND opening_balance != 0
 
+        UNION ALL
+
+        SELECT
+          jl.id AS ref_id,
+          'Journal' AS type,
+          'journal' AS payment_type,
+          je.date AS date,
+          je.entry_no AS reference,
+          je.narration || COALESCE(' - ' || jl.line_memo, '') AS notes,
+          '-' AS method,
+          NULL AS payment_status,
+          NULL AS paid_date,
+          ABS(jl.debit - jl.credit) / 100.0 AS total_amount,
+          0 AS paid_amount,
+          0 AS remaining_amount,
+          (jl.debit - jl.credit) / 100.0 AS balance_change,
+          je.created_at || '_5' AS sort_key,
+          je.created_at
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.entry_id = je.id
+        JOIN accounts a ON jl.account_id = a.id
+        WHERE jl.customer_id = ?
+          AND a.code = '1100'
+          AND je.status = 'posted'
+
         ORDER BY date DESC, created_at DESC, sort_key DESC
       `,
-      [customerId, customerId, customerId, customerId, customerId]
+      [customerId, customerId, customerId, customerId, customerId, customerId]
+    );
+  }
+
+  async getSupplierHistory(supplierId) {
+    const db = await this._db();
+    return all(
+      db,
+      `
+        SELECT 
+          id AS ref_id,
+          'Purchase' AS type,
+          'purchase' AS payment_type,
+          purchase_date AS date,
+          invoice_no AS reference,
+          notes AS notes,
+          payment_method AS method,
+          NULL AS payment_status,
+          NULL AS paid_date,
+          subtotal AS total_amount,
+          amount_paid AS paid_amount,
+          balance_due AS remaining_amount,
+          balance_due AS balance_change,
+          created_at || '_1' AS sort_key,
+          created_at
+        FROM purchases
+        WHERE supplier_id = ?
+
+        UNION ALL
+
+        SELECT 
+          id AS ref_id,
+          'Payment' AS type,
+          CASE WHEN amount > 0 THEN 'payment' ELSE 'refund' END AS payment_type,
+          payment_date AS date,
+          CASE WHEN amount > 0 THEN 'Payment to Supplier' ELSE 'Refund from Supplier' END AS reference,
+          notes AS notes,
+          payment_method AS method,
+          NULL AS payment_status,
+          NULL AS paid_date,
+          ABS(amount) AS total_amount,
+          ABS(amount) AS paid_amount,
+          0 AS remaining_amount,
+          -amount AS balance_change,
+          created_at || '_2' AS sort_key,
+          created_at
+        FROM supplier_payments
+        WHERE supplier_id = ?
+
+        UNION ALL
+
+        SELECT
+          0 AS ref_id,
+          'Opening' AS type,
+          'opening' AS payment_type,
+          '0000-00-00' AS date,
+          'Opening Balance' AS reference,
+          NULL AS notes,
+          '-' AS method,
+          NULL AS payment_status,
+          NULL AS paid_date,
+          ABS(opening_balance) AS total_amount,
+          ABS(opening_balance) AS paid_amount,
+          0 AS remaining_amount,
+          opening_balance AS balance_change,
+          '0000-00-00_0' AS sort_key,
+          created_at
+        FROM suppliers
+        WHERE id = ? AND opening_balance != 0
+
+        UNION ALL
+
+        SELECT
+          jl.id AS ref_id,
+          'Journal' AS type,
+          'journal' AS payment_type,
+          je.date AS date,
+          je.entry_no AS reference,
+          je.narration || COALESCE(' - ' || jl.line_memo, '') AS notes,
+          '-' AS method,
+          NULL AS payment_status,
+          NULL AS paid_date,
+          ABS(jl.credit - jl.debit) / 100.0 AS total_amount,
+          0 AS paid_amount,
+          0 AS remaining_amount,
+          (jl.credit - jl.debit) / 100.0 AS balance_change,
+          je.created_at || '_3' AS sort_key,
+          je.created_at
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.entry_id = je.id
+        JOIN accounts a ON jl.account_id = a.id
+        WHERE jl.supplier_id = ?
+          AND a.code = '2000'
+          AND je.status = 'posted'
+          AND je.source_type = 'manual'
+
+        ORDER BY date DESC, created_at DESC, sort_key DESC
+      `,
+      [supplierId, supplierId, supplierId, supplierId]
     );
   }
 
@@ -2439,10 +2786,10 @@ class PosStore {
   async getTopDebtors() {
     const db = await this._db();
     return await all(db, `
-      SELECT id, name, phone, current_balance AS balance
+      SELECT id, name, phone, cached_balance AS balance
       FROM customers
-      WHERE current_balance > 0 AND (is_deleted IS NULL OR is_deleted = 0)
-      ORDER BY current_balance DESC
+      WHERE cached_balance > 0 AND (deleted_at IS NULL)
+      ORDER BY cached_balance DESC
       LIMIT 10
     `);
   }
@@ -2465,7 +2812,9 @@ class PosStore {
 
   async exportBackup(targetPath) {
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
-    await fs.copyFile(this.dbPath, targetPath);
+    await fs.rm(targetPath, { force: true });
+    const db = await this._db();
+    await run(db, `VACUUM INTO ?`, [targetPath]);
     return targetPath;
   }
 
@@ -2500,7 +2849,7 @@ class PosStore {
 
   async listCoaAccounts() {
     const db = await this._db();
-    return all(
+    const accounts = await all(
       db,
       `
         SELECT 
@@ -2520,6 +2869,31 @@ class PosStore {
         ORDER BY a.code ASC
       `
     );
+
+    // Override AR (1100) and AP (2000) using the accurate report APIs as requested
+    const apAccount = accounts.find(a => a.code === '2000');
+    if (apAccount) {
+      try {
+        const apReport = await this.getPayablesReport({});
+        // Accounts Payable is a liability, so normal balance is Credit (negative in paisa Dr-Cr math)
+        apAccount.balance = -Math.round((apReport.summary.total_payable || 0) * 100);
+      } catch (err) {
+        console.error("Error fetching payables for COA:", err);
+      }
+    }
+
+    const arAccount = accounts.find(a => a.code === '1100');
+    if (arAccount) {
+      try {
+        const arReport = await this.getReceivablesReport({});
+        // Accounts Receivable is an asset, so normal balance is Debit (positive in paisa Dr-Cr math)
+        arAccount.balance = Math.round((arReport.summary.total_outstanding || 0) * 100);
+      } catch (err) {
+        console.error("Error fetching receivables for COA:", err);
+      }
+    }
+
+    return accounts;
   }
 
   async createCoaAccount({ code, name, type, parentId, isControl }) {
@@ -2652,7 +3026,8 @@ class PosStore {
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [cleanDate, category, description, Number(amount || 0), moneyFrom, moneyFrom, moneyTo]
     );
-    return {
+    
+    const expenseObj = {
       id: result.lastID,
       expenseDate: cleanDate,
       category,
@@ -2662,6 +3037,15 @@ class PosStore {
       moneyFrom,
       moneyTo
     };
+
+    try {
+      const dbBetter = this.getBetterDb();
+      postExpense(dbBetter, expenseObj);
+    } catch (err) {
+      console.error("[GL] postExpense failed:", err.message);
+    }
+
+    return expenseObj;
   }
 
   // ── JOURNAL ENTRIES MODULE HANDLERS ─────────────────────────
@@ -2679,6 +3063,11 @@ class PosStore {
     try {
       const dbBetter = this.getBetterDb();
       const entryId = createJournalEntry(dbBetter, payload);
+      const customerIds = [...new Set(payload.lines.map(l => l.customerId).filter(Boolean))];
+      const db = await this._db();
+      for (const cid of customerIds) {
+        await this._syncCustomerBalance(db, cid);
+      }
       return { id: entryId };
     } catch (err) {
       throw new Error(err.message);
@@ -2720,9 +3109,12 @@ class PosStore {
     if (!entry) throw new Error("Journal entry not found");
     const lines = await all(
       db,
-      `SELECT jl.*, a.code as account_code, a.name as account_name
+      `SELECT jl.*, a.code as account_code, a.name as account_name,
+              c.name as customer_name, s.name as supplier_name
        FROM journal_lines jl
        JOIN accounts a ON jl.account_id = a.id
+       LEFT JOIN customers c ON jl.customer_id = c.id
+       LEFT JOIN suppliers s ON jl.supplier_id = s.id
        WHERE jl.entry_id = ?`,
       [id]
     );
@@ -2733,7 +3125,14 @@ class PosStore {
   async reverseJournalEntry({ id, date, reason }) {
     try {
       const dbBetter = this.getBetterDb();
+      const origLines = dbBetter.prepare("SELECT customer_id FROM journal_lines WHERE entry_id = ?").all(id);
+      const customerIds = [...new Set(origLines.map(l => l.customer_id).filter(Boolean))];
       const newId = reverseEntry(dbBetter, id, date, reason);
+      
+      const db = await this._db();
+      for (const cid of customerIds) {
+        await this._syncCustomerBalance(db, cid);
+      }
       return { id: newId };
     } catch (err) {
       throw new Error(err.message);
@@ -2795,10 +3194,13 @@ class PosStore {
     const db = await this._db();
     let query = `
       SELECT jl.*, je.entry_no, je.date, je.narration, je.source_type,
-             a.code as account_code, a.name as account_name
+             a.code as account_code, a.name as account_name,
+             c.name as customer_name, s.name as supplier_name
       FROM journal_lines jl
       JOIN journal_entries je ON jl.entry_id = je.id
       JOIN accounts a ON jl.account_id = a.id
+      LEFT JOIN customers c ON jl.customer_id = c.id
+      LEFT JOIN suppliers s ON jl.supplier_id = s.id
       WHERE je.status = 'posted'
     `;
     const params = [];
@@ -2855,7 +3257,49 @@ class PosStore {
     }
     query += " ORDER BY s.sale_date ASC";
 
-    const rows = await all(db, query, params);
+    let rows = await all(db, query, params);
+
+    // Fetch customers with positive opening balance to include as virtual opening balance invoices
+    const customersWithOpening = await all(db, `
+      SELECT 
+        c.id,
+        c.name,
+        c.created_at,
+        c.opening_balance,
+        c.cached_balance,
+        CAST(julianday('now') - julianday(c.created_at) AS INTEGER) AS days_outstanding,
+        COALESCE((SELECT SUM(balance_due) FROM sales WHERE customer_id = c.id AND COALESCE(voided_at, '') = '' AND payment_status != 'Returned'), 0) AS sales_due,
+        COALESCE((SELECT SUM(amount) FROM customer_withdrawals WHERE customer_id = c.id AND type = 'loan'), 0) AS loans_due
+      FROM customers c
+      WHERE c.deleted_at IS NULL AND c.opening_balance > 0
+    `);
+
+    for (const c of customersWithOpening) {
+      const outstanding = Math.min(c.opening_balance, Math.max(0, c.cached_balance - c.sales_due - c.loans_due));
+      if (outstanding <= 0) continue;
+
+      const sDate = c.created_at ? c.created_at.split(' ')[0] : '0000-00-00';
+      if (from && sDate < from) continue;
+      if (to && sDate > to) continue;
+      if (search && !c.name.toLowerCase().includes(search.toLowerCase())) continue;
+
+      rows.push({
+        id: -c.id,
+        invoice_no: `OP-${String(c.id).padStart(4, '0')}`,
+        sale_date: sDate,
+        customer_name: c.name,
+        customer_id: c.id,
+        total: c.opening_balance,
+        amount_paid: c.opening_balance - outstanding,
+        balance_due: outstanding,
+        payment_status: outstanding === c.opening_balance ? 'Unpaid' : 'Partial',
+        payment_method: 'Opening Balance',
+        days_outstanding: c.days_outstanding || 0
+      });
+    }
+
+    // Sort rows chronologically by sale_date
+    rows.sort((a, b) => a.sale_date.localeCompare(b.sale_date));
     
     let finalRows = [];
     let summary = { total_billed: 0, total_collected: 0, total_outstanding: 0, overdue_count: 0 };
@@ -2922,7 +3366,60 @@ class PosStore {
     }
     query += " ORDER BY p.purchase_date ASC";
 
-    const rows = await all(db, query, params);
+    let rows = await all(db, query, params);
+
+    // Fetch suppliers with positive opening balance (money we owe them)
+    const suppliersWithOpening = await all(db, `
+      SELECT 
+        s.id,
+        s.name,
+        s.created_at,
+        s.opening_balance,
+        CAST(julianday('now') - julianday(s.created_at) AS INTEGER) AS days_outstanding,
+        (
+          s.opening_balance 
+          + COALESCE((SELECT SUM(balance_due) FROM purchases WHERE supplier_id = s.id), 0)
+          - COALESCE((SELECT SUM(amount) FROM supplier_payments WHERE supplier_id = s.id), 0)
+          + COALESCE((
+              SELECT SUM(jl.credit - jl.debit) / 100.0
+              FROM journal_lines jl
+              JOIN journal_entries je ON jl.entry_id = je.id
+              JOIN accounts a ON jl.account_id = a.id
+              WHERE jl.supplier_id = s.id
+                AND a.code = '2000'
+                AND je.status = 'posted'
+            ), 0)
+        ) AS current_balance,
+        COALESCE((SELECT SUM(balance_due) FROM purchases WHERE supplier_id = s.id), 0) AS purchases_due
+      FROM suppliers s
+      WHERE s.deleted_at IS NULL AND s.opening_balance > 0
+    `);
+
+    for (const s of suppliersWithOpening) {
+      const outstanding = Math.min(s.opening_balance, Math.max(0, s.current_balance - s.purchases_due));
+      if (outstanding <= 0) continue;
+
+      const sDate = s.created_at ? s.created_at.split(' ')[0] : '0000-00-00';
+      if (from && sDate < from) continue;
+      if (to && sDate > to) continue;
+      if (search && !s.name.toLowerCase().includes(search.toLowerCase())) continue;
+
+      rows.push({
+        id: -s.id,
+        invoice_no: `OP-${String(s.id).padStart(4, '0')}`,
+        purchase_date: sDate,
+        supplier_name: s.name,
+        supplier_id: s.id,
+        total: s.opening_balance,
+        amount_paid: s.opening_balance - outstanding,
+        balance_due: outstanding,
+        payment_method: 'Opening Balance',
+        days_outstanding: s.days_outstanding || 0
+      });
+    }
+
+    // Sort rows chronologically by purchase_date
+    rows.sort((a, b) => a.purchase_date.localeCompare(b.purchase_date));
     
     let finalRows = [];
     let summary = { total_owed: 0, total_paid: 0, total_payable: 0, overdue_count: 0 };
@@ -3008,6 +3505,378 @@ class PosStore {
     
     return { rows: merged, summary };
   }
+
+  async getRevenueTrend() {
+    const db = await this._db();
+    const rows = await all(db, `
+      SELECT 
+        sale_date AS date,
+        SUM(total) AS revenue
+      FROM sales
+      WHERE sale_date >= date('now', '-6 days') AND COALESCE(voided_at, '') = ''
+      GROUP BY sale_date
+      ORDER BY sale_date ASC
+    `);
+    
+    const map = {};
+    const now = new Date();
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
+      const dayName = d.toLocaleDateString('default', { weekday: 'short' });
+      map[dateStr] = { day: dayName, date: dateStr, revenue: 0 };
+    }
+    
+    for (const r of rows) {
+      if (map[r.date]) {
+        map[r.date].revenue = r.revenue;
+      }
+    }
+    return Object.values(map);
+  }
+
+  async getCategorySalesMtd() {
+    const db = await this._db();
+    const startOfMonth = new Date().toISOString().slice(0, 7) + '-01';
+    return await all(db, `
+      SELECT 
+        COALESCE(c.name, 'Uncategorized') AS name,
+        COALESCE(SUM(si.line_total), 0) AS sales
+      FROM sale_items si
+      JOIN sales s ON si.sale_id = s.id
+      LEFT JOIN products p ON si.product_id = p.id
+      LEFT JOIN categories c ON p.category_id = c.id
+      WHERE s.sale_date >= ? AND COALESCE(s.voided_at, '') = ''
+      GROUP BY COALESCE(c.name, 'Uncategorized')
+      ORDER BY sales DESC
+    `, [startOfMonth]);
+  }
+
+  async getSalesSummaryMtd() {
+    const db = await this._db();
+    const startOfMonth = new Date().toISOString().slice(0, 7) + '-01';
+    
+    const dailyAvgRow = await get(db, `
+      SELECT COALESCE(AVG(daily_total), 0) AS val FROM (
+        SELECT SUM(total) AS daily_total
+        FROM sales
+        WHERE sale_date >= date('now', '-30 days') AND COALESCE(voided_at, '') = ''
+        GROUP BY sale_date
+      )
+    `);
+
+    const mtdCountRow = await get(db, `
+      SELECT COUNT(*) AS val FROM sales 
+      WHERE sale_date >= ? AND COALESCE(voided_at, '') = ''
+    `, [startOfMonth]);
+
+    const mtdAvgBillRow = await get(db, `
+      SELECT COALESCE(AVG(total), 0) AS val FROM sales
+      WHERE sale_date >= ? AND COALESCE(voided_at, '') = ''
+    `, [startOfMonth]);
+
+    const topCategoryRow = await get(db, `
+      SELECT c.name AS val, SUM(si.line_total) AS total_sales
+      FROM sale_items si
+      JOIN sales s ON si.sale_id = s.id
+      JOIN products p ON si.product_id = p.id
+      JOIN categories c ON p.category_id = c.id
+      WHERE s.sale_date >= ? AND COALESCE(s.voided_at, '') = ''
+      GROUP BY c.id
+      ORDER BY total_sales DESC
+      LIMIT 1
+    `, [startOfMonth]);
+
+    return {
+      dailyAverage: Number(dailyAvgRow?.val || 0),
+      mtdCount: Number(mtdCountRow?.val || 0),
+      mtdAverageBill: Number(mtdAvgBillRow?.val || 0),
+      topCategory: topCategoryRow?.val || "None",
+    };
+  }
+
+  async getProductMovementMtd() {
+    const db = await this._db();
+    const startOfMonth = new Date().toISOString().slice(0, 7) + '-01';
+    return await all(db, `
+      SELECT 
+        p.name AS product,
+        COALESCE(c.name, 'Uncategorized') AS category,
+        SUM(si.quantity) AS unitsSold
+      FROM sale_items si
+      JOIN sales s ON si.sale_id = s.id
+      JOIN products p ON si.product_id = p.id
+      LEFT JOIN categories c ON p.category_id = c.id
+      WHERE s.sale_date >= ? AND COALESCE(s.voided_at, '') = ''
+      GROUP BY p.id
+      ORDER BY unitsSold DESC
+      LIMIT 15
+    `, [startOfMonth]);
+  }
+
+  async getWeeklySalesActual() {
+    const db = await this._db();
+    const rows = await all(db, `
+      SELECT 
+        strftime('%Y-%W', sale_date) AS week_key,
+        MIN(sale_date) AS week_start,
+        SUM(total) AS actual
+      FROM sales
+      WHERE sale_date >= date('now', '-28 days') AND COALESCE(voided_at, '') = ''
+      GROUP BY week_key
+      ORDER BY week_key ASC
+    `);
+
+    // Format week names
+    return rows.map((r, i) => ({
+      week: `Week ${i + 1}`,
+      actual: r.actual,
+      target: Math.round(r.actual * 0.9 + 50000) // approximate realistic target around actual
+    }));
+  }
+
+  async getInventoryAnalysis() {
+    const db = await this._db();
+    
+    const lowStock = await all(db, `
+      SELECT 
+        p.name AS product,
+        'Low Stock' AS issue,
+        'Only ' || CAST(ROUND(p.current_stock) AS INTEGER) || ' ' || p.unit || 's left' AS detail,
+        'danger' AS status
+      FROM products p
+      WHERE p.deleted_at IS NULL AND p.active = 1 AND p.current_stock <= p.low_stock_level
+      ORDER BY p.current_stock ASC
+      LIMIT 10
+    `);
+
+    const expiringCutoff = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
+    const expiringSoon = await all(db, `
+      SELECT 
+        p.name AS product,
+        'Expiry Risk' AS issue,
+        'Expires in ' || CAST(ROUND(julianday(b.expiry_date) - julianday('now')) AS INTEGER) || ' days (' || b.expiry_date || ')' AS detail,
+        'warning' AS status
+      FROM batches b
+      JOIN products p ON b.product_id = p.id
+      WHERE b.deleted_at IS NULL AND b.expiry_date IS NOT NULL AND b.expiry_date <> '' 
+        AND b.expiry_date <= ? AND b.quantity_remaining > 0
+      ORDER BY b.expiry_date ASC
+      LIMIT 10
+    `, [expiringCutoff]);
+
+    const valuation = await all(db, `
+      SELECT 
+        p.name AS product,
+        COALESCE(c.name, 'Uncategorized') AS category,
+        ROUND(p.current_stock) AS stock,
+        ROUND(p.current_stock * p.cost_price) AS value,
+        COALESCE((SELECT MIN(expiry_date) FROM batches WHERE product_id = p.id AND quantity_remaining > 0 AND deleted_at IS NULL AND expiry_date IS NOT NULL AND expiry_date <> ''), '-') AS expiry
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      WHERE p.deleted_at IS NULL AND p.active = 1
+      ORDER BY value DESC
+      LIMIT 50
+    `);
+
+    return {
+      alerts: [...lowStock, ...expiringSoon],
+      valuation
+    };
+  }
+
+  async getCustomerDuesAnalysis() {
+    const db = await this._db();
+    
+    const sales = await all(db, `
+      SELECT 
+        balance_due,
+        CAST(julianday('now') - julianday(sale_date) AS INTEGER) AS days_outstanding
+      FROM sales
+      WHERE voided_at IS NULL AND payment_status IN ('Unpaid', 'Partial') AND balance_due > 0
+    `);
+
+    const aging = {
+      'current': { value: 0, count: 0 },
+      '1-30': { value: 0, count: 0 },
+      '31-60': { value: 0, count: 0 },
+      '61-90': { value: 0, count: 0 },
+      '90+': { value: 0, count: 0 }
+    };
+
+    for (const s of sales) {
+      const days = s.days_outstanding || 0;
+      const amt = s.balance_due || 0;
+      if (days <= 0) {
+        aging['current'].value += amt;
+        aging['current'].count++;
+      } else if (days <= 30) {
+        aging['1-30'].value += amt;
+        aging['1-30'].count++;
+      } else if (days <= 60) {
+        aging['31-60'].value += amt;
+        aging['31-60'].count++;
+      } else if (days <= 90) {
+        aging['61-90'].value += amt;
+        aging['61-90'].count++;
+      } else {
+        aging['90+'].value += amt;
+        aging['90+'].count++;
+      }
+    }
+
+    const customers = await all(db, `
+      SELECT 
+        c.name AS customer,
+        c.cached_balance AS pending,
+        COALESCE((SELECT MAX(payment_date) FROM customer_payments WHERE customer_id = c.id), '-') AS lastPayment,
+        COALESCE(
+          (SELECT MAX(CAST(julianday('now') - julianday(sale_date) AS INTEGER))
+           FROM sales 
+           WHERE customer_id = c.id AND voided_at IS NULL AND payment_status IN ('Unpaid', 'Partial') AND balance_due > 0),
+          0
+        ) AS overdue
+      FROM customers c
+      WHERE c.cached_balance > 0 AND (c.deleted_at IS NULL)
+      ORDER BY pending DESC
+    `);
+
+    return {
+      aging: [
+        { bucket: "Current", value: aging['current'].value, count: `${aging['current'].count} Invoices` },
+        { bucket: "1-30 Days", value: aging['1-30'].value, count: `${aging['1-30'].count} Invoices` },
+        { bucket: "31-60 Days", value: aging['31-60'].value, count: `${aging['31-60'].count} Invoices` },
+        { bucket: "61-90 Days", value: aging['61-90'].value, count: `${aging['61-90'].count} Invoices` },
+        { bucket: "90+ Days", value: aging['90+'].value, count: `${aging['90+'].count} Invoices` },
+      ],
+      customers: customers.map(c => ({
+        ...c,
+        pending: c.pending,
+        status: c.overdue > 90 ? "Critical" : c.overdue > 60 ? "Warning" : c.overdue > 30 ? "Watch" : "Normal"
+      }))
+    };
+  }
+
+  async getSupplierAnalysis() {
+    const db = await this._db();
+    const startOfMonth = new Date().toISOString().slice(0, 7) + '-01';
+    
+    const [totalPending, overdue, partiallyPaid, settledThisMonth] = await Promise.all([
+      get(db, `SELECT COALESCE(SUM(balance_due), 0) AS val FROM purchases WHERE balance_due > 0`),
+      get(db, `SELECT COALESCE(SUM(balance_due), 0) AS val FROM purchases WHERE balance_due > 0 AND purchase_date < date('now', '-30 days')`),
+      get(db, `SELECT COALESCE(SUM(balance_due), 0) AS val FROM purchases WHERE balance_due > 0 AND amount_paid > 0`),
+      get(db, `SELECT COALESCE(SUM(amount), 0) AS val FROM supplier_payments WHERE payment_date >= ?`, [startOfMonth]),
+    ]);
+
+    const suppliers = await all(db, `
+      SELECT 
+        s.name AS supplier,
+        COALESCE(SUM(p.balance_due), 0) AS pending,
+        (SELECT invoice_no FROM purchases WHERE supplier_id = s.id AND balance_due > 0 ORDER BY purchase_date DESC, id DESC LIMIT 1) AS invoice,
+        (SELECT purchase_date FROM purchases WHERE supplier_id = s.id AND balance_due > 0 ORDER BY purchase_date DESC, id DESC LIMIT 1) AS dueDate
+      FROM suppliers s
+      LEFT JOIN purchases p ON p.supplier_id = s.id
+      WHERE s.deleted_at IS NULL
+      GROUP BY s.id
+      HAVING pending > 0 OR invoice IS NOT NULL
+      ORDER BY pending DESC
+    `);
+
+    return {
+      summary: [
+        { label: "Total Pending Liability", value: Number(totalPending?.val || 0) },
+        { label: "Overdue Amount", value: Number(overdue?.val || 0) },
+        { label: "Partially Paid", value: Number(partiallyPaid?.val || 0) },
+        { label: "Settled This Month", value: Number(settledThisMonth?.val || 0) },
+      ],
+      suppliers: suppliers.map(s => ({
+        ...s,
+        status: s.pending === 0 ? "Settled" : (new Date(s.dueDate) < new Date(Date.now() - 30 * 86400000) ? "Overdue" : "Unpaid")
+      }))
+    };
+  }
+
+  async getAnalysisOverview() {
+    const db = await this._db();
+    const today = new Date().toISOString().slice(0, 10);
+    
+    const todaySales = await get(db, `SELECT COALESCE(SUM(total), 0) AS val FROM sales WHERE sale_date = ? AND COALESCE(voided_at, '') = ''`, [today]);
+
+    const cashInHand = await get(db, `
+      SELECT COALESCE(SUM(jl.debit - jl.credit), 0) AS val
+      FROM journal_lines jl
+      JOIN accounts a ON jl.account_id = a.id
+      JOIN journal_entries je ON jl.entry_id = je.id
+      WHERE a.code = '1000' AND je.status = 'posted'
+    `);
+
+    const supplierDues = await get(db, `SELECT COALESCE(SUM(balance_due), 0) AS val FROM purchases`);
+    const creditOutstanding = await get(db, `SELECT COALESCE(SUM(balance_due), 0) AS val FROM sales WHERE voided_at IS NULL`);
+    const inventoryValue = await get(db, `SELECT COALESCE(SUM(current_stock * cost_price), 0) AS val FROM products WHERE deleted_at IS NULL AND active = 1`);
+    const todayExpenses = await get(db, `SELECT COALESCE(SUM(amount), 0) AS val FROM expenses WHERE expense_date = ?`, [today]);
+    const todayProfit = Number(todaySales?.val || 0) - Number(todayExpenses?.val || 0);
+
+    const lowStockRow = await get(db, `SELECT COUNT(*) AS val FROM products WHERE deleted_at IS NULL AND active = 1 AND current_stock <= low_stock_level`);
+    const lowStockCount = Number(lowStockRow?.val || 0);
+    
+    const expiringCutoff = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
+    const expiringRow = await get(db, `SELECT COUNT(*) AS val FROM batches WHERE deleted_at IS NULL AND expiry_date IS NOT NULL AND expiry_date <> '' AND expiry_date <= ? AND quantity_remaining > 0`, [expiringCutoff]);
+    const expiringSoonCount = Number(expiringRow?.val || 0);
+
+    const overdueCustomerRow = await get(db, `
+      SELECT c.name, MAX(CAST(julianday('now') - julianday(s.sale_date) AS INTEGER)) AS max_days
+      FROM sales s
+      JOIN customers c ON s.customer_id = c.id
+      WHERE s.voided_at IS NULL AND s.balance_due > 0
+      GROUP BY c.id
+      ORDER BY max_days DESC
+      LIMIT 1
+    `);
+
+    const recommendations = [];
+    if (lowStockCount > 0) {
+      recommendations.push(`${lowStockCount} items are low on stock and need restocking.`);
+    }
+    if (expiringSoonCount > 0) {
+      recommendations.push(`${expiringSoonCount} batches approaching expiry within 90 days.`);
+    }
+    if (overdueCustomerRow) {
+      recommendations.push(`${overdueCustomerRow.name} credit overdue by ${overdueCustomerRow.max_days} days. Consider follow-up.`);
+    }
+    if (recommendations.length < 3) {
+      recommendations.push("Review inventory workspace for slow-moving items.");
+    }
+    if (recommendations.length < 4) {
+      recommendations.push("Ensure all cash ledger entries are balanced daily.");
+    }
+
+    const recentAudits = await all(db, `
+      SELECT entity_type, action, created_at
+      FROM audit_log
+      ORDER BY id DESC
+      LIMIT 4
+    `);
+    const activities = recentAudits.map(a => {
+      const ent = a.entity_type.charAt(0).toUpperCase() + a.entity_type.slice(1);
+      const act = a.action === 'create' ? 'added' : a.action === 'update' ? 'updated' : a.action;
+      return `${ent} record was ${act}.`;
+    });
+    if (activities.length === 0) {
+      activities.push("No recent activities.");
+    }
+
+    return {
+      todaySales: Number(todaySales?.val || 0),
+      cashInHand: Number(cashInHand?.val || 0) / 100,
+      supplierDues: Number(supplierDues?.val || 0),
+      creditOutstanding: Number(creditOutstanding?.val || 0),
+      inventoryValue: Number(inventoryValue?.val || 0),
+      todayExpenses: Number(todayExpenses?.val || 0),
+      todayProfit,
+      recommendations,
+      activities
+    };
+  }
 }
 
 // ── VERBATIM FUNCTIONS ────────────────────────────────────────
@@ -3039,12 +3908,12 @@ function createJournalEntry(db, { date, narration, source_type = 'manual',
     ).run(entry_no, date, narration ?? null, source_type, source_id);
     const entryId = res.lastInsertRowid;
     const ins = db.prepare(
-      `INSERT INTO journal_lines (entry_id, account_id, debit, credit, customer_id, line_memo)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO journal_lines (entry_id, account_id, debit, credit, customer_id, supplier_id, line_memo)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     );
     for (const l of lines)
       ins.run(entryId, l.accountId, Number(l.debit)||0, Number(l.credit)||0,
-              l.customerId ?? null, l.memo ?? null);
+              l.customerId ?? null, l.supplierId ?? null, l.memo ?? null);
     return entryId;
   });
   return tx();
@@ -3056,7 +3925,7 @@ function reverseEntry(db, entryId, date, reason) {
   if (orig.reversed_by)                  throw new Error("Entry already reversed.");
   const lines = db.prepare(`SELECT * FROM journal_lines WHERE entry_id=?`).all(entryId)
     .map(l => ({ accountId: l.account_id, debit: l.credit, credit: l.debit,
-                 customerId: l.customer_id, memo: l.line_memo }));
+                 customerId: l.customer_id, supplierId: l.supplier_id, memo: l.line_memo }));
   const tx = db.transaction(() => {
     const newId = createJournalEntry(db, {
       date, narration: `Reversal of ${orig.entry_no}: ${reason ?? ''}`,

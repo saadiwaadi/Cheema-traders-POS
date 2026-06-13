@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
 import * as api from "../lib/posApi";
+import { useThemeLanguage } from "../context/ThemeLanguageContext";
 
 export default function InventoryManagementPage() {
+  const { t } = useThemeLanguage();
   const [activeTab, setActiveTab] = useState("view"); // "view" | "entry" | "history"
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -30,7 +32,7 @@ export default function InventoryManagementPage() {
         {/* TOOLBAR & NAV BAR */}
         <div style={st.toolbar}>
           <div style={st.toolbarLeft}>
-            <h1 style={st.pageTitle}>Inventory Management</h1>
+            <h1 style={st.pageTitle}>{t("inventory.title", "Inventory Management")}</h1>
           </div>
 
           {/* Navigation Bar */}
@@ -39,19 +41,19 @@ export default function InventoryManagementPage() {
               style={{ ...st.navBtn, ...(activeTab === "view" ? st.navBtnActive : {}) }}
               onClick={() => setActiveTab("view")}
             >
-              Stock View
+              {t("inventory.stock_view", "Stock View")}
             </button>
             <button
               style={{ ...st.navBtn, ...(activeTab === "entry" ? st.navBtnActive : {}) }}
               onClick={() => setActiveTab("entry")}
             >
-              Stock Entry
+              {t("inventory.stock_entry", "Stock Entry")}
             </button>
             <button
               style={{ ...st.navBtn, ...(activeTab === "history" ? st.navBtnActive : {}) }}
               onClick={() => setActiveTab("history")}
             >
-              Purchase History
+              {t("inventory.purchase_history", "Purchase History")}
             </button>
           </div>
         </div>
@@ -66,6 +68,7 @@ export default function InventoryManagementPage() {
 
 /* ─── STOCK VIEW TAB ─── */
 function StockViewTab({ refreshKey }) {
+  const { t } = useThemeLanguage();
   const [batches, setBatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -130,13 +133,13 @@ function StockViewTab({ refreshKey }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* Metrics Row */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 16 }}>
         <div style={st.metricCard}>
-          <div style={st.metricLabel}>Total Active Batches</div>
+          <div style={st.metricLabel}>{t("inventory.total_active_batches", "Total Active Batches")}</div>
           <div style={st.metricValue}>{displayedBatches.length}</div>
         </div>
         <div style={st.metricCard}>
-          <div style={st.metricLabel}>Total Inventory Value (Cost)</div>
+          <div style={st.metricLabel}>{t("inventory.total_value_cost", "Total Inventory Value (Cost)")}</div>
           <div style={st.metricValue}>Rs {totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
         </div>
       </div>
@@ -144,12 +147,12 @@ function StockViewTab({ refreshKey }) {
       <div style={st.productCard}>
         <div style={st.productTop}>
           <div>
-            <h2 style={st.sectionTitle}>Available Stock</h2>
-            <p style={st.subText}>Current inventory across all batches.</p>
+            <h2 style={st.sectionTitle}>{t("inventory.available_stock", "Available Stock")}</h2>
+            <p style={st.subText}>{t("inventory.current_inventory_sub", "Current inventory across all batches.")}</p>
           </div>
           <input
             style={st.searchInp}
-            placeholder="Search product or batch no..."
+            placeholder={t("inventory.search_placeholder", "Search product or batch no...")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -166,7 +169,7 @@ function StockViewTab({ refreshKey }) {
               }}
               onClick={() => setSelectedCategory(cat)}
             >
-              {cat}
+              {t("inventory.category_" + cat.toLowerCase(), cat)}
             </button>
           ))}
         </div>
@@ -175,20 +178,20 @@ function StockViewTab({ refreshKey }) {
 
         <div style={st.tableWrap}>
           <div style={st.tableHead}>
-            <span style={{ flex: 2 }}>Product</span>
-            <span style={{ flex: 1.2 }}>Batch No</span>
-            <span style={{ flex: 1.5 }}>Supplier</span>
-            <span style={{ flex: 1, textAlign: "right" }}>Qty Remaining</span>
-            <span style={{ flex: 1, textAlign: "right" }}>Cost Price</span>
-            <span style={{ flex: 1, textAlign: "right" }}>Retail Price</span>
-            <span style={{ flex: 1.2, textAlign: "center" }}>Expiry Date</span>
-            <span style={{ width: 80, textAlign: "center" }}>Status</span>
+            <span style={{ flex: 2 }}>{t("inventory.product", "Product")}</span>
+            <span style={{ flex: 1.2 }}>{t("inventory.batch_no", "Batch No")}</span>
+            <span style={{ flex: 1.5 }}>{t("inventory.supplier", "Supplier")}</span>
+            <span style={{ flex: 1, textAlign: "right" }}>{t("inventory.qty_remaining", "Qty Remaining")}</span>
+            <span style={{ flex: 1, textAlign: "right" }}>{t("inventory.cost_price", "Cost Price")}</span>
+            <span style={{ flex: 1, textAlign: "right" }}>{t("inventory.retail_price", "Retail Price")}</span>
+            <span style={{ flex: 1.2, textAlign: "center" }}>{t("inventory.expiry_date", "Expiry Date")}</span>
+            <span style={{ width: 80, textAlign: "center" }}>{t("inventory.status", "Status")}</span>
           </div>
 
           {loading ? (
-            <div style={{ padding: 20, textAlign: "center", color: "#666" }}>Loading inventory...</div>
+            <div style={{ padding: 20, textAlign: "center", color: "#666" }}>{t("inventory.loading", "Loading inventory...")}</div>
           ) : displayedBatches.length === 0 ? (
-            <div style={{ padding: 20, textAlign: "center", color: "#666" }}>No batches found.</div>
+            <div style={{ padding: 20, textAlign: "center", color: "#666" }}>{t("inventory.no_batches", "No batches found.")}</div>
           ) : (
             displayedBatches.map((b) => (
               <div key={b.id} className="ledger-row" style={st.tableRowView}>
@@ -204,7 +207,7 @@ function StockViewTab({ refreshKey }) {
                         <line x1="12" y1="9" x2="12" y2="13"></line>
                         <line x1="12" y1="17" x2="12.01" y2="17"></line>
                       </svg>
-                      Low Stock ({b.lowStockLevel})
+                      {t("inventory.low_stock", "Low Stock")} ({b.lowStockLevel})
                     </span>
                   )}
                 </span>
@@ -213,7 +216,7 @@ function StockViewTab({ refreshKey }) {
                 <span style={{ flex: 1.2, textAlign: "center", color: "#555", fontFamily: "IBM Plex Mono, monospace" }}>{b.expiryDate || "—"}</span>
                 <div style={{ width: 80, display: "flex", justifyContent: "center" }}>
                   <div style={{ ...st.statusBadge, ...(b.expiryStatus === "expired" ? st.badgeDanger : b.expiryStatus === "expiring" ? st.badgeWarning : st.badgeSuccess) }}>
-                    {b.expiryStatus}
+                    {t("inventory.expiry_status_" + b.expiryStatus, b.expiryStatus)}
                   </div>
                 </div>
               </div>
@@ -227,6 +230,7 @@ function StockViewTab({ refreshKey }) {
 
 /* ─── STOCK ENTRY TAB ─── */
 function StockEntryTab({ onSaved }) {
+  const { t } = useThemeLanguage();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -308,7 +312,7 @@ function StockEntryTab({ onSaved }) {
     // Filter out rows without a product name
     const validRows = inventory.filter(i => i.productName.trim() !== "");
     if (validRows.length === 0) {
-      setError("Please enter at least one product name.");
+      setError(t("inventory.error_product_name_required", "Please enter at least one product name."));
       setSaving(false);
       return;
     }
@@ -332,7 +336,7 @@ function StockEntryTab({ onSaved }) {
           category: row.category,
         }))
       });
-      setSuccess("Inventory saved successfully!");
+      setSuccess(t("inventory.success_saved", "Inventory saved successfully!"));
       setTimeout(() => {
         onSaved(); // switch tab to view
       }, 1000);
@@ -360,16 +364,16 @@ function StockEntryTab({ onSaved }) {
       {/* GLOBAL DETAILS & PAYMENT - MOVED TO TOP */}
       <div style={st.infoRow}>
         <div style={st.infoCard}>
-          <h3 style={st.sectionTitleSm}>Global Batch Details (Optional)</h3>
+          <h3 style={st.sectionTitleSm}>{t("inventory.global_batch_details", "Global Batch Details (Optional)")}</h3>
           <div style={st.grid3}>
             <div style={st.fieldWrap}>
-              <label style={st.fieldLabel}>Supplier</label>
+              <label style={st.fieldLabel}>{t("inventory.supplier", "Supplier")}</label>
               <select
                 style={st.fieldInput}
                 value={supplierId}
                 onChange={(e) => setSupplierId(e.target.value)}
               >
-                <option value="">-- Select Supplier --</option>
+                <option value="">{t("inventory.select_supplier", "-- Select Supplier --")}</option>
                 {suppliers.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
@@ -378,14 +382,14 @@ function StockEntryTab({ onSaved }) {
               </select>
             </div>
             <Field
-              label="Entry Date"
+              label={t("inventory.entry_date", "Entry Date")}
               type="date"
               style={{ ...st.fieldInput, fontFamily: "IBM Plex Mono, monospace" }}
               value={purchaseDate}
               onChange={(e) => setPurchaseDate(e.target.value)}
             />
             <Field
-              label="Warehouse Shelf"
+              label={t("inventory.warehouse_shelf", "Warehouse Shelf")}
               placeholder="A-2"
               value={warehouseShelf}
               onChange={(e) => setWarehouseShelf(e.target.value)}
@@ -394,23 +398,23 @@ function StockEntryTab({ onSaved }) {
         </div>
 
         <div style={st.infoCard}>
-          <h3 style={st.sectionTitleSm}>Payment Tracking</h3>
+          <h3 style={st.sectionTitleSm}>{t("inventory.payment_tracking", "Payment Tracking")}</h3>
           <div style={st.grid3}>
             <FieldSelect
-              label="Payment Type"
+              label={t("inventory.payment_type", "Payment Type")}
               options={["Cash", "Credit", "Partial", ...banks.map(b => b.name)]}
               value={paymentType}
               onChange={(e) => setPaymentType(e.target.value)}
             />
             <Field
-              label="Amount Paid"
+              label={t("inventory.amount_paid", "Amount Paid")}
               placeholder="0"
               type="number"
               style={{ ...st.fieldInput, fontFamily: "IBM Plex Mono, monospace" }}
               value={amountPaid}
               onChange={(e) => setAmountPaid(e.target.value)}
             />
-            <Field label="Due Date" type="date" style={{ ...st.fieldInput, fontFamily: "IBM Plex Mono, monospace" }} />
+            <Field label={t("inventory.due_date", "Due Date")} type="date" style={{ ...st.fieldInput, fontFamily: "IBM Plex Mono, monospace" }} />
           </div>
         </div>
       </div>
@@ -419,23 +423,23 @@ function StockEntryTab({ onSaved }) {
       <div style={st.productCard}>
         <div style={st.productTop}>
           <div>
-            <h2 style={st.sectionTitle}>Quick Stock Entry</h2>
-            <p style={st.subText}>Add and manage incoming inventory batches.</p>
+            <h2 style={st.sectionTitle}>{t("inventory.quick_stock_entry", "Quick Stock Entry")}</h2>
+            <p style={st.subText}>{t("inventory.quick_stock_entry_sub", "Add and manage incoming inventory batches.")}</p>
           </div>
-          <button style={st.addBtn} onClick={addRow}>+ Add Batch</button>
+          <button style={st.addBtn} onClick={addRow}>{t("inventory.btn_add_batch", "+ Add Batch")}</button>
         </div>
 
         <div style={st.tableWrap}>
           <div style={st.tableHead}>
             <span style={{ width: 36 }}>#</span>
-            <span style={{ flex: 2 }}>Product</span>
-            <span style={{ flex: 1.2 }}>Batch</span>
-            <span style={{ flex: 1.1 }}>Category</span>
-            <span style={{ flex: 0.8 }}>Qty</span>
-            <span style={{ flex: 0.9 }}>Unit</span>
-            <span style={{ flex: 1 }}>Cost</span>
-            <span style={{ flex: 1 }}>Retail</span>
-            <span style={{ flex: 1.1 }}>Expiry</span>
+            <span style={{ flex: 2 }}>{t("inventory.product", "Product")}</span>
+            <span style={{ flex: 1.2 }}>{t("inventory.batch", "Batch")}</span>
+            <span style={{ flex: 1.1 }}>{t("inventory.category", "Category")}</span>
+            <span style={{ flex: 0.8 }}>{t("inventory.qty", "Qty")}</span>
+            <span style={{ flex: 0.9 }}>{t("inventory.unit", "Unit")}</span>
+            <span style={{ flex: 1 }}>{t("inventory.cost", "Cost")}</span>
+            <span style={{ flex: 1 }}>{t("inventory.retail", "Retail")}</span>
+            <span style={{ flex: 1.1 }}>{t("inventory.expiry", "Expiry")}</span>
             <span style={{ width: 40 }}></span>
           </div>
 
@@ -445,7 +449,7 @@ function StockEntryTab({ onSaved }) {
 
               <input
                 style={{ ...st.inp, flex: 2 }}
-                placeholder="Product Name"
+                placeholder={t("inventory.placeholder_product_name", "Product Name")}
                 value={item.productName}
                 onChange={(e) => updateItem(item.id, "productName", e.target.value)}
               />
@@ -463,10 +467,10 @@ function StockEntryTab({ onSaved }) {
                 value={item.category}
                 onChange={(e) => updateItem(item.id, "category", e.target.value)}
               >
-                <option>Dairy</option>
-                <option>Pesticide</option>
-                <option>Seeds</option>
-                <option>Fertilizer</option>
+                <option value="Dairy">{t("inventory.category_dairy", "Dairy")}</option>
+                <option value="Pesticide">{t("inventory.category_pesticide", "Pesticide")}</option>
+                <option value="Seeds">{t("inventory.category_seeds", "Seeds")}</option>
+                <option value="Fertilizer">{t("inventory.category_fertilizer", "Fertilizer")}</option>
               </select>
 
               <input
@@ -481,16 +485,16 @@ function StockEntryTab({ onSaved }) {
                 value={item.unit}
                 onChange={(e) => updateItem(item.id, "unit", e.target.value)}
               >
-                <option>Litre</option>
-                <option>Kg</option>
-                <option>Bottle</option>
-                <option>Piece</option>
+                <option value="Litre">{t("inventory.unit_litre", "Litre")}</option>
+                <option value="Kg">{t("inventory.unit_kg", "Kg")}</option>
+                <option value="Bottle">{t("inventory.unit_bottle", "Bottle")}</option>
+                <option value="Piece">{t("inventory.unit_piece", "Piece")}</option>
               </select>
 
               <input
                 style={{ ...st.inp, flex: 1, fontFamily: "IBM Plex Mono, monospace" }}
                 type="number"
-                placeholder="Cost"
+                placeholder={t("inventory.cost", "Cost")}
                 value={item.costPrice}
                 onChange={(e) => updateItem(item.id, "costPrice", e.target.value)}
               />
@@ -498,7 +502,7 @@ function StockEntryTab({ onSaved }) {
               <input
                 style={{ ...st.inp, flex: 1, fontFamily: "IBM Plex Mono, monospace" }}
                 type="number"
-                placeholder="Retail"
+                placeholder={t("inventory.retail", "Retail")}
                 value={item.salePrice}
                 onChange={(e) => updateItem(item.id, "salePrice", e.target.value)}
               />
@@ -516,11 +520,11 @@ function StockEntryTab({ onSaved }) {
 
           {/* PERSISTENT RUNNING TOTAL LEDGER FOOTER BAR */}
           <div style={st.tableFooter}>
-            <span style={{ fontWeight: 600 }}>{validRows.length} rows entered</span>
+            <span style={{ fontWeight: 600 }}>{t("inventory.rows_entered", "{count} rows entered").replace("{count}", validRows.length)}</span>
             <div style={{ display: "flex", gap: 24 }}>
-              <span>Total Cost: <strong style={{ fontFamily: "IBM Plex Mono, monospace" }}>Rs {totalInventoryValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></span>
-              <span>Paid: <strong style={{ color: "#2e7d32", fontFamily: "IBM Plex Mono, monospace" }}>Rs {(Number(amountPaid) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></span>
-              <span>Due: <strong style={{ color: totalDue > 0 ? "#c62828" : "#2e7d32", fontFamily: "IBM Plex Mono, monospace" }}>Rs {totalDue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></span>
+              <span>{t("inventory.total_cost_label", "Total Cost:")} <strong style={{ fontFamily: "IBM Plex Mono, monospace" }}>Rs {totalInventoryValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></span>
+              <span>{t("inventory.paid_label", "Paid:")} <strong style={{ color: "#2e7d32", fontFamily: "IBM Plex Mono, monospace" }}>Rs {(Number(amountPaid) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></span>
+              <span>{t("inventory.due_label", "Due:")} <strong style={{ color: totalDue > 0 ? "#c62828" : "#2e7d32", fontFamily: "IBM Plex Mono, monospace" }}>Rs {totalDue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></span>
             </div>
           </div>
         </div>
@@ -529,26 +533,26 @@ function StockEntryTab({ onSaved }) {
       {/* REVIEW & SAVE SECTION */}
       <div style={st.reviewCard}>
         <div style={st.reviewHeader}>
-          <h2 style={st.sectionTitle}>Review & Save Record</h2>
-          <p style={st.subText}>Confirm the entered quantities, costs, and payment details before committing to stock.</p>
+          <h2 style={st.sectionTitle}>{t("inventory.review_save_record", "Review & Save Record")}</h2>
+          <p style={st.subText}>{t("inventory.review_save_record_sub", "Confirm the entered quantities, costs, and payment details before committing to stock.")}</p>
         </div>
         
         <div style={st.reviewBody}>
           <div style={st.reviewMetrics}>
             <div style={st.reviewMetric}>
-              <span style={st.reviewMetricLabel}>Total Batches</span>
+              <span style={st.reviewMetricLabel}>{t("inventory.total_batches", "Total Batches")}</span>
               <span style={st.reviewMetricValue}>{totalProducts}</span>
             </div>
             <div style={st.reviewMetric}>
-              <span style={st.reviewMetricLabel}>Total Cost</span>
+              <span style={st.reviewMetricLabel}>{t("inventory.total_cost", "Total Cost")}</span>
               <span style={st.reviewMetricValue}>Rs {totalInventoryValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
             </div>
             <div style={st.reviewMetric}>
-              <span style={st.reviewMetricLabel}>Amount Paid</span>
+              <span style={st.reviewMetricLabel}>{t("inventory.amount_paid", "Amount Paid")}</span>
               <span style={st.reviewMetricValue}>Rs {(Number(amountPaid) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
             </div>
             <div style={st.reviewMetric}>
-              <span style={st.reviewMetricLabel}>Remaining Due</span>
+              <span style={st.reviewMetricLabel}>{t("inventory.remaining_due", "Remaining Due")}</span>
               <span style={{ ...st.reviewMetricValue, color: totalDue > 0 ? "#c62828" : "#2e7d32" }}>
                 Rs {totalDue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
               </span>
@@ -562,7 +566,7 @@ function StockEntryTab({ onSaved }) {
             onClick={handleSave}
             disabled={saving}
           >
-            {saving ? "Saving Record..." : "✓ Confirm & Save Inventory"}
+            {saving ? t("inventory.saving_record", "Saving Record...") : t("inventory.btn_confirm_save", "✓ Confirm & Save Inventory")}
           </button>
         </div>
       </div>
@@ -602,6 +606,7 @@ function SumRow({ label, value }) {
 }
 
 function StockHistoryTab({ onChanged }) {
+  const { t } = useThemeLanguage();
   const [purchases, setPurchases] = useState([]);
   const [banks, setBanks] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -666,7 +671,7 @@ function StockHistoryTab({ onChanged }) {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm("Delete this purchase record? Stock quantities will be reversed on the backend.")) return;
+    if (!window.confirm(t("inventory.confirm_delete_purchase", "Delete this purchase record? Stock quantities will be reversed on the backend."))) return;
     try {
       await api.deletePurchase(id);
       await loadData();
@@ -683,17 +688,17 @@ function StockHistoryTab({ onChanged }) {
       {error && <div style={st.alertError}>{error}</div>}
 
       {/* Metrics */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
         <div style={st.metricCard}>
-          <div style={st.metricLabel}>Total Purchases</div>
+          <div style={st.metricLabel}>{t("inventory.total_purchases", "Total Purchases")}</div>
           <div style={st.metricValue}>{filtered.length}</div>
         </div>
         <div style={st.metricCard}>
-          <div style={st.metricLabel}>Total Spend (filtered)</div>
+          <div style={st.metricLabel}>{t("inventory.total_spend_filtered", "Total Spend (filtered)")}</div>
           <div style={st.metricValue}>Rs {totalSpend.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
         </div>
         <div style={st.metricCard}>
-          <div style={st.metricLabel}>Unique Suppliers</div>
+          <div style={st.metricLabel}>{t("inventory.unique_suppliers", "Unique Suppliers")}</div>
           <div style={st.metricValue}>
             {new Set(filtered.map(p => p.supplierName).filter(Boolean)).size}
           </div>
@@ -703,12 +708,12 @@ function StockHistoryTab({ onChanged }) {
       <div style={st.productCard}>
         <div style={st.productTop}>
           <div>
-            <h2 style={st.sectionTitle}>Purchase History</h2>
-            <p style={st.subText}>Every stock purchase logged via Stock Entry. Edit header info or delete a record entirely.</p>
+            <h2 style={st.sectionTitle}>{t("inventory.purchase_history", "Purchase History")}</h2>
+            <p style={st.subText}>{t("inventory.purchase_history_sub", "Every stock purchase logged via Stock Entry. Edit header info or delete a record entirely.")}</p>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 13, color: "#666" }}>From</span>
+              <span style={{ fontSize: 13, color: "#666" }}>{t("inventory.from", "From")}</span>
               <input
                 type="date"
                 style={{ ...st.inp, width: 140, fontFamily: "IBM Plex Mono, monospace", padding: "6px 8px" }}
@@ -717,7 +722,7 @@ function StockHistoryTab({ onChanged }) {
               />
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 13, color: "#666" }}>To</span>
+              <span style={{ fontSize: 13, color: "#666" }}>{t("inventory.to", "To")}</span>
               <input
                 type="date"
                 style={{ ...st.inp, width: 140, fontFamily: "IBM Plex Mono, monospace", padding: "6px 8px" }}
@@ -727,7 +732,7 @@ function StockHistoryTab({ onChanged }) {
             </div>
             <input
               style={{ ...st.searchInp, width: 220 }}
-              placeholder="Search supplier..."
+              placeholder={t("inventory.search_supplier", "Search supplier...")}
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
@@ -737,21 +742,21 @@ function StockHistoryTab({ onChanged }) {
         <div style={st.tableWrap}>
           {/* Header */}
           <div style={st.tableHead}>
-            <span style={{ flex: 1.2 }}>Date</span>
-            <span style={{ flex: 1.5 }}>Supplier</span>
-            <span style={{ flex: 0.8, textAlign: "center" }}>Batches</span>
-            <span style={{ flex: 1, textAlign: "right" }}>Total Cost</span>
-            <span style={{ flex: 1, textAlign: "right" }}>Amount Paid</span>
-            <span style={{ flex: 1, textAlign: "right" }}>Remaining</span>
-            <span style={{ flex: 1 }}>Payment</span>
-            <span style={{ flex: 1.4 }}>Notes</span>
-            <span style={{ width: 90, textAlign: "center" }}>Actions</span>
+            <span style={{ flex: 1.2 }}>{t("inventory.date", "Date")}</span>
+            <span style={{ flex: 1.5 }}>{t("inventory.supplier", "Supplier")}</span>
+            <span style={{ flex: 0.8, textAlign: "center" }}>{t("inventory.batches", "Batches")}</span>
+            <span style={{ flex: 1, textAlign: "right" }}>{t("inventory.total_cost", "Total Cost")}</span>
+            <span style={{ flex: 1, textAlign: "right" }}>{t("inventory.amount_paid", "Amount Paid")}</span>
+            <span style={{ flex: 1, textAlign: "right" }}>{t("inventory.remaining", "Remaining")}</span>
+            <span style={{ flex: 1 }}>{t("inventory.payment", "Payment")}</span>
+            <span style={{ flex: 1.4 }}>{t("inventory.notes", "Notes")}</span>
+            <span style={{ width: 90, textAlign: "center" }}>{t("inventory.actions", "Actions")}</span>
           </div>
 
           {loading ? (
-            <div style={{ padding: 20, textAlign: "center", color: "#666" }}>Loading purchase history...</div>
+            <div style={{ padding: 20, textAlign: "center", color: "#666" }}>{t("inventory.loading_history", "Loading purchase history...")}</div>
           ) : filtered.length === 0 ? (
-            <div style={{ padding: 20, textAlign: "center", color: "#666" }}>No purchase records found.</div>
+            <div style={{ padding: 20, textAlign: "center", color: "#666" }}>{t("inventory.no_purchase_records", "No purchase records found.")}</div>
           ) : (
             filtered.map(p => {
               const isEditing = editingId === p.id;
@@ -836,7 +841,7 @@ function StockHistoryTab({ onChanged }) {
                   {isEditing ? (
                     <input style={{ ...st.inp, flex: 1.4 }}
                       value={editValues.notes}
-                      placeholder="Notes..."
+                      placeholder={t("inventory.notes", "Notes...")}
                       onChange={e => setEditValues(v => ({ ...v, notes: e.target.value }))} />
                   ) : (
                     <span style={{ flex: 1.4, color: "#888", fontSize: 12 }}>{p.notes || "—"}</span>
@@ -847,22 +852,22 @@ function StockHistoryTab({ onChanged }) {
                     {isEditing ? (
                       <>
                         <button
-                          title="Save"
+                          title={t("inventory.save", "Save")}
                           style={{ ...st.delBtn, background: "#e8f5e9", color: "#2e7d32", fontWeight: 700 }}
                           onClick={() => saveEdit(p.id)}>✓</button>
                         <button
-                          title="Cancel"
+                          title={t("inventory.cancel", "Cancel")}
                           style={st.delBtn}
                           onClick={() => setEditingId(null)}>✕</button>
                       </>
                     ) : (
                       <>
                         <button
-                          title="Edit"
+                          title={t("inventory.edit", "Edit")}
                           style={{ ...st.delBtn, background: "#e8f0ff", color: "#5c35cc", fontWeight: 700 }}
                           onClick={() => startEdit(p)}>✎</button>
                         <button
-                          title="Delete"
+                          title={t("inventory.delete", "Delete")}
                           style={st.delBtn}
                           onClick={() => handleDelete(p.id)}>🗑</button>
                       </>
@@ -881,7 +886,7 @@ function StockHistoryTab({ onChanged }) {
 const st = {
   page: { display: "flex", flexDirection: "column", minHeight: "100%", background: "#f5f8f5", fontFamily: "Segoe UI, -apple-system, BlinkMacSystemFont, sans-serif" },
   main: { flex: 1, padding: 20, overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 },
-  toolbar: { display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #c8d8c8", paddingBottom: 12, marginBottom: 4 },
+  toolbar: { display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #c8d8c8", paddingBottom: 12, marginBottom: 4, flexWrap: "wrap", gap: 12 },
   toolbarLeft: { display: "flex", alignItems: "center", gap: 12 },
   pageTitle: { margin: 0, fontSize: 16, fontWeight: 700, color: "#1b3a1d", textTransform: "uppercase", letterSpacing: "0.08em", paddingLeft: 12, borderLeft: "3px solid #2e7d32" },
 
@@ -896,24 +901,24 @@ const st = {
   summaryToggle: { padding: "10px 18px", border: "none", background: "#2e7d32", color: "#fff", borderRadius: 4, cursor: "pointer", fontWeight: 600, transition: "background 0.2s" },
 
   productCard: { background: "#fff", borderRadius: 2, padding: 20, border: "1px solid #b8c8b8" },
-  productTop: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
+  productTop: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 12 },
   sectionTitle: { margin: 0, fontSize: 15, fontWeight: 700, color: "#1b3a1d", textTransform: "uppercase", letterSpacing: "0.03em" },
   subText: { margin: "4px 0 0 0", fontSize: 12, color: "#666" },
   addBtn: { padding: "8px 16px", background: "#2e7d32", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontWeight: 600, transition: "background 0.2s" },
   searchInp: { padding: "8px 14px", border: "1px solid #cde0cd", borderRadius: 4, outline: "none", width: 280, fontSize: 13, background: "#fcfdfc" },
 
-  tableWrap: { display: "flex", flexDirection: "column" },
-  tableHead: { display: "flex", padding: "10px 12px", borderBottom: "2px solid #c8d8c8", fontSize: 11, fontWeight: 700, color: "#6a8f6c", textTransform: "uppercase", letterSpacing: "0.05em" },
-  tableRow: { display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", borderBottom: "1px solid rgba(0,0,0,0.08)" },
-  tableRowView: { display: "flex", alignItems: "center", gap: 10, padding: "12px 12px", borderBottom: "1px solid rgba(0,0,0,0.08)", fontSize: 13.5 },
+  tableWrap: { display: "flex", flexDirection: "column", overflowX: "auto", width: "100%" },
+  tableHead: { display: "flex", padding: "10px 12px", borderBottom: "2px solid #c8d8c8", fontSize: 11, fontWeight: 700, color: "#6a8f6c", textTransform: "uppercase", letterSpacing: "0.05em", minWidth: 980 },
+  tableRow: { display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", borderBottom: "1px solid rgba(0,0,0,0.08)", minWidth: 980 },
+  tableRowView: { display: "flex", alignItems: "center", gap: 10, padding: "12px 12px", borderBottom: "1px solid rgba(0,0,0,0.08)", fontSize: 13.5, minWidth: 980 },
   rowNum: { fontSize: 13, fontWeight: 600, color: "#a3bca5", textAlign: "center" },
   inp: { padding: "8px 10px", border: "1px solid #cde0cd", borderRadius: 4, background: "#fcfdfc", outline: "none", boxSizing: "border-box", fontSize: 13 },
   delBtn: { width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", background: "#fff0f0", color: "#d32f2f", border: "none", borderRadius: 4, cursor: "pointer", fontSize: 12 },
 
-  infoRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 },
+  infoRow: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 },
   infoCard: { background: "#fff", borderRadius: 2, padding: 20, border: "1px solid #b8c8b8" },
   sectionTitleSm: { margin: "0 0 16px 0", fontSize: 13.5, fontWeight: 700, color: "#1b3a1d", textTransform: "uppercase", letterSpacing: "0.03em" },
-  grid3: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 },
+  grid3: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 },
 
   fieldWrap: { display: "flex", flexDirection: "column", gap: 6 },
   fieldLabel: { fontSize: 10, fontWeight: 700, color: "#6a8f6c", textTransform: "uppercase", letterSpacing: "0.05em" },
@@ -947,5 +952,5 @@ const st = {
   settingsText: { fontSize: 13, color: "#555" },
   thresholdInp: { width: 50, padding: "4px 6px", border: "1px solid #cde0cd", borderRadius: 4, outline: "none", textAlign: "center", fontSize: 13, fontFamily: "IBM Plex Mono, monospace" },
 
-  tableFooter: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "#f8faf8", borderTop: "2px solid #c8d8c8", borderBottom: "1px solid #c8d8c8", fontSize: 13.5, color: "#1b3a1d" },
+  tableFooter: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "#f8faf8", borderTop: "2px solid #c8d8c8", borderBottom: "1px solid #c8d8c8", fontSize: 13.5, color: "#1b3a1d", minWidth: 980 },
 };

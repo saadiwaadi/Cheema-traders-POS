@@ -15,14 +15,56 @@ async function httpJson(path, options = {}) {
   return data;
 }
 
-function usingIpc() {
-  return typeof window !== "undefined" && window.pos;
+export function usingIpc() {
+  return typeof window !== "undefined" && window.pos !== undefined;
 }
 
-export async function loginWithPin(pin) {
-  if (usingIpc()) return window.pos.login(pin);
-  return httpJson("/login", { method: "POST", body: JSON.stringify({ pin }) });
+if (typeof window !== "undefined") {
+  console.log('window.pos available methods:', Object.keys(window.pos || {}));
 }
+
+export async function login(username, password) {
+  if (usingIpc()) {
+    const user = await window.ipc.invoke("users:login", username, password);
+    return user ? { user } : null;
+  }
+  return httpJson("/login", { method: "POST", body: JSON.stringify({ username, password }) });
+}
+
+export async function listUsers() {
+  if (usingIpc()) {
+    const users = await window.ipc.invoke("users:list");
+    return { users };
+  }
+  return httpJson("/users");
+}
+
+export async function listActiveUsers() {
+  if (usingIpc()) {
+    const users = await window.ipc.invoke("users:list-active");
+    return { users };
+  }
+  return httpJson("/users/active");
+}
+
+export async function saveUser(user) {
+  if (usingIpc()) {
+    const saved = await window.ipc.invoke("users:save", user);
+    return { user: saved };
+  }
+  return httpJson("/users", { method: "POST", body: JSON.stringify(user) });
+}
+
+export async function changePassword(userId, oldPassword, newPassword) {
+  if (usingIpc()) {
+    return window.ipc.invoke("users:change-password", userId, oldPassword, newPassword);
+  }
+  return httpJson("/users/change-password", {
+    method: "POST",
+    body: JSON.stringify({ userId, oldPassword, newPassword }),
+  });
+}
+
 
 export async function getDashboardSummary() {
   if (usingIpc()) return window.pos.getDashboardSummary();
@@ -144,11 +186,15 @@ export async function listCustomers(search = "") {
 }
 
 export async function saveCustomer(payload) {
-  if (usingIpc()) return window.pos.saveCustomer(payload);
-  return httpJson("/customers", {
+  if (usingIpc()) {
+    const res = await window.pos.saveCustomer(payload);
+    return res.customer;
+  }
+  const res = await httpJson("/customers", {
     method: "POST",
     body: JSON.stringify(payload),
   });
+  return res.customer;
 }
 
 export async function getCustomerHistory(id) {
@@ -238,11 +284,15 @@ export async function listSuppliers(search = "") {
 }
 
 export async function saveSupplier(payload) {
-  if (usingIpc()) return window.pos.saveSupplier(payload);
-  return httpJson("/suppliers", {
+  if (usingIpc()) {
+    const res = await window.pos.saveSupplier(payload);
+    return res.supplier;
+  }
+  const res = await httpJson("/suppliers", {
     method: "POST",
     body: JSON.stringify(payload),
   });
+  return res.supplier;
 }
 
 export async function getSupplierHistory(id) {
@@ -368,4 +418,60 @@ export async function updateCoaAccount(payload) {
 export async function deactivateCoaAccount(id) {
   if (usingIpc() && window.ipc) return window.ipc.invoke("coa:deactivate", { id });
   return httpJson(`/coa/${id}/deactivate`, { method: "POST" });
+}
+
+export async function getAnalysisOverview() {
+  if (usingIpc() && window.pos.getAnalysisOverview) return window.pos.getAnalysisOverview();
+  return httpJson("/analysis/overview");
+}
+
+export async function getRevenueTrend() {
+  if (usingIpc() && window.pos.getRevenueTrend) return window.pos.getRevenueTrend();
+  return httpJson("/analysis/revenue-trend");
+}
+
+export async function getCategorySalesMtd() {
+  if (usingIpc() && window.pos.getCategorySalesMtd) return window.pos.getCategorySalesMtd();
+  return httpJson("/analysis/category-sales");
+}
+
+export async function getSalesSummaryMtd() {
+  if (usingIpc() && window.pos.getSalesSummaryMtd) return window.pos.getSalesSummaryMtd();
+  return httpJson("/analysis/sales-summary");
+}
+
+export async function getProductMovementMtd() {
+  if (usingIpc() && window.pos.getProductMovementMtd) return window.pos.getProductMovementMtd();
+  return httpJson("/analysis/product-movement");
+}
+
+export async function getWeeklySalesActual() {
+  if (usingIpc() && window.pos.getWeeklySalesActual) return window.pos.getWeeklySalesActual();
+  return httpJson("/analysis/weekly-sales");
+}
+
+export async function getInventoryAnalysis() {
+  if (usingIpc() && window.pos.getInventoryAnalysis) return window.pos.getInventoryAnalysis();
+  return httpJson("/analysis/inventory");
+}
+
+export async function getCustomerDuesAnalysis() {
+  if (usingIpc() && window.pos.getCustomerDuesAnalysis) return window.pos.getCustomerDuesAnalysis();
+  return httpJson("/analysis/customer-dues");
+}
+
+export async function getSupplierAnalysis() {
+  if (usingIpc() && window.pos.getSupplierAnalysis) return window.pos.getSupplierAnalysis();
+  return httpJson("/analysis/supplier");
+}
+
+export function getBackupDownloadUrl() {
+  return `${HTTP_BASE}/backup/download`;
+}
+
+export async function getDbInfo() {
+  if (usingIpc()) {
+    if (window.ipc) return window.ipc.invoke("db:info");
+  }
+  return httpJson("/db/info");
 }

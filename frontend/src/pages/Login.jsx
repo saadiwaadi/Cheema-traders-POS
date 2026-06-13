@@ -1,92 +1,91 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { loginWithPin } from "../lib/posApi";
-
+import { login, listActiveUsers } from "../lib/posApi";
 
 function Login() {
-    
   const navigate = useNavigate();
-  const [pin, setPin] = useState("");
+  const [users, setUsers] = useState([]);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [isCustomUser, setIsCustomUser] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
 
   useEffect(() => {
-    setTimeout(() => {
+    const splashTimer = setTimeout(() => {
       setShowSplash(false);
     }, 2200);
+
+    const loadUsers = async () => {
+      try {
+        const data = await listActiveUsers();
+        if (data?.users) {
+          setUsers(data.users);
+          if (data.users.length > 0) {
+            setUsername(data.users[0].username);
+          } else {
+            setIsCustomUser(true);
+          }
+        } else {
+          setIsCustomUser(true);
+        }
+      } catch (err) {
+        console.error("Failed to load active users:", err);
+        setIsCustomUser(true);
+      }
+    };
+    loadUsers();
+
+    return () => clearTimeout(splashTimer);
   }, []);
 
-  const login = useCallback(async (enteredPin) => {
+  const handleLogin = async (e) => {
+    if (e) e.preventDefault();
+    if (!username.trim() || !password) {
+      setError("Please enter both username and password");
+      return;
+    }
+
     setLoading(true);
     setError("");
 
     try {
-      const data = await loginWithPin(enteredPin);
+      const data = await login(username.trim(), password);
       if (data?.user) {
         localStorage.setItem("user", JSON.stringify(data.user));
         navigate("/dashboard");
       } else {
-        setError("Invalid PIN");
-
-        setTimeout(() => {
-          setPin("");
-        }, 500);
+        setError("Invalid username or password");
       }
     } catch (err) {
       console.error(err);
-      setError("Server error");
+      setError(err.message || "Server error");
     } finally {
       setLoading(false);
     }
-  }, [navigate]);
-
-  const handleClick = useCallback((num) => {
-    if (pin.length < 4) {
-      setError("");
-
-      const newPin = pin + num;
-      setPin(newPin);
-
-      if (newPin.length === 4) {
-        login(newPin);
-      }
-    }
-  }, [pin, login]);
-
-  const handleDelete = useCallback(() => {
-    setPin((prev) => prev.slice(0, -1));
-  }, []);
-
-  useEffect(() => {
-    const handleKey = (e) => {
-      if (e.key >= "0" && e.key <= "9") handleClick(e.key);
-      else if (e.key === "Backspace") handleDelete();
-      else if (e.key === "Enter") login(pin);
-    };
-
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [handleClick, handleDelete, login, pin]);
+  };
 
   return (
     <div style={styles.container}>
-      {/* 🌿 LIGHT GREEN BACKGROUND */}
+      {/* 🌿 LIGHT GREEN GRADIENT BACKGROUND */}
       <div style={styles.bg}></div>
 
-      <AnimatePresence>
+      <AnimatePresence mode="wait">
         {showSplash ? (
           <motion.div
+            key="splash"
             style={styles.splash}
             initial={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.8, ease: "easeInOut" }}
           >
             <motion.h1
               initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
-              style={{ color: "#2e7d32" }}
+              transition={{ duration: 0.6 }}
+              style={styles.splashTitle}
             >
               POS System
             </motion.h1>
@@ -94,64 +93,107 @@ function Login() {
             <motion.h2
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              transition={{ delay: 1 }}
-              style={styles.name}
+              transition={{ delay: 0.8, duration: 0.6 }}
+              style={styles.splashSubtitle}
             >
               CHEEMA TRADERS
             </motion.h2>
           </motion.div>
         ) : (
           <motion.div
+            key="login-card"
             style={styles.card}
-            initial={{ opacity: 0, y: 40 }}
-            animate={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0, y: 40, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.6, type: "spring", stiffness: 100 }}
           >
-            <h2 style={styles.title}>Cheema Traders</h2>
-            <p style={styles.subtitle}>POS Login</p>
-
-            {/* PIN DOTS */}
-            <div style={styles.pinWrapper}>
-              {[0, 1, 2, 3].map((i) => (
-                <motion.div
-                  key={i}
-                  style={{
-                    ...styles.dot,
-                    background: i < pin.length ? "#66bb6a" : "#c8e6c9",
-                  }}
-                  animate={{ scale: i < pin.length ? 1.2 : 1 }}
-                />
-              ))}
+            <div style={styles.header}>
+              <h2 style={styles.title}>Cheema Traders</h2>
+              <p style={styles.subtitle}>Sign in to your account</p>
             </div>
 
-            {error && <p style={styles.error}>{error}</p>}
+            <form onSubmit={handleLogin} style={styles.form}>
+              <div style={styles.inputGroup}>
+                <div style={styles.labelRow}>
+                  <label style={styles.label}>Username</label>
+                  {users.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomUser(!isCustomUser);
+                        if (isCustomUser && users.length > 0) {
+                          setUsername(users[0].username);
+                        } else {
+                          setUsername("");
+                        }
+                      }}
+                      style={styles.toggleBtn}
+                    >
+                      {isCustomUser ? "Select from list" : "Type instead"}
+                    </button>
+                  )}
+                </div>
 
-            {loading ? (
-              <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ repeat: Infinity, duration: 1 }}
-                style={styles.loader}
-              />
-            ) : (
-              <div style={styles.keypad}>
-                {[1,2,3,4,5,6,7,8,9].map(num => (
-                  <KeyButton key={num} onClick={() => handleClick(num)}>
-                    {num}
-                  </KeyButton>
-                ))}
-
-                <KeyButton onClick={handleDelete}>⌫</KeyButton>
-
-                <KeyButton onClick={() => handleClick(0)}>0</KeyButton>
-
-                <motion.button
-                  whileTap={{ scale: 0.95 }}
-                  style={styles.loginBtn}
-                  onClick={() => login(pin)}
-                >
-                  Enter
-                </motion.button>
+                {isCustomUser ? (
+                  <input
+                    type="text"
+                    placeholder="Enter Username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    style={styles.input}
+                    required
+                  />
+                ) : (
+                  <select
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    style={styles.select}
+                  >
+                    {users.map((u) => (
+                      <option key={u.id} value={u.username}>
+                        {u.username}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
-            )}
+
+              <div style={styles.inputGroup}>
+                <label style={styles.label}>Password</label>
+                <input
+                  type="password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  style={styles.input}
+                  required
+                />
+              </div>
+
+              {error && (
+                <motion.p
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  style={styles.error}
+                >
+                  {error}
+                </motion.p>
+              )}
+
+              <motion.button
+                whileHover={{ scale: 1.02, backgroundColor: "#388e3c" }}
+                whileTap={{ scale: 0.98 }}
+                type="submit"
+                style={styles.loginBtn}
+                disabled={loading}
+              >
+                {loading ? (
+                  <span style={styles.loaderText}>Logging in...</span>
+                ) : (
+                  "Login"
+                )}
+              </motion.button>
+            </form>
           </motion.div>
         )}
       </AnimatePresence>
@@ -159,120 +201,146 @@ function Login() {
   );
 }
 
-/* BUTTON */
-const KeyButton = ({ children, onClick }) => (
-  <motion.button
-    whileTap={{ scale: 0.9 }}
-    whileHover={{ scale: 1.05 }}
-    style={styles.btn}
-    onClick={onClick}
-  >
-    {children}
-  </motion.button>
-);
-
 const styles = {
   container: {
     height: "100vh",
     display: "flex",
     justifyContent: "center",
     alignItems: "center",
-    fontFamily: "Segoe UI, sans-serif",
+    fontFamily: "'Inter', 'Segoe UI', sans-serif",
     position: "relative",
+    overflow: "hidden",
   },
-
   bg: {
     position: "absolute",
     width: "100%",
     height: "100%",
-    background: "linear-gradient(135deg, #e8f5e9, #c8e6c9)",
+    background: "linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%)",
     zIndex: -1,
   },
-
   splash: {
     textAlign: "center",
   },
-
-  name: {
-    fontSize: "28px",
-    fontWeight: "bold",
-    color: "#43a047",
+  splashTitle: {
+    fontSize: "42px",
+    fontWeight: "800",
+    color: "#1b5e20",
+    margin: 0,
+    letterSpacing: "-0.5px",
   },
-
+  splashSubtitle: {
+    fontSize: "24px",
+    fontWeight: "500",
+    color: "#43a047",
+    margin: "10px 0 0 0",
+    letterSpacing: "2px",
+  },
   card: {
     background: "#ffffff",
-    padding: "35px",
-    borderRadius: "16px",
-    width: "300px",
-    textAlign: "center",
-    boxShadow: "0 10px 25px rgba(0,0,0,0.1)",
+    padding: "40px",
+    borderRadius: "24px",
+    width: "360px",
+    boxShadow: "0 20px 40px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.02)",
+    border: "1px solid rgba(255, 255, 255, 0.8)",
   },
-
+  header: {
+    textAlign: "center",
+    marginBottom: "32px",
+  },
   title: {
     margin: 0,
-    fontSize: "22px",
+    fontSize: "26px",
+    fontWeight: "700",
+    color: "#1b5e20",
+    letterSpacing: "-0.5px",
+  },
+  subtitle: {
+    fontSize: "14px",
+    color: "#666666",
+    margin: "8px 0 0 0",
+  },
+  form: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "20px",
+  },
+  inputGroup: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+  },
+  labelRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  label: {
+    fontSize: "13px",
     fontWeight: "600",
     color: "#2e7d32",
   },
-
-  subtitle: {
-    fontSize: "13px",
-    color: "#666",
-    marginBottom: "20px",
+  toggleBtn: {
+    background: "none",
+    border: "none",
+    color: "#43a047",
+    fontSize: "12px",
+    fontWeight: "600",
+    cursor: "pointer",
+    padding: 0,
+    outline: "none",
+    textDecoration: "underline",
   },
-
-  pinWrapper: {
+  input: {
+    height: "46px",
+    padding: "0 16px",
+    borderRadius: "12px",
+    border: "1.5px solid #e0e0e0",
+    fontSize: "15px",
+    outline: "none",
+    transition: "border-color 0.2s, box-shadow 0.2s",
+    background: "#fafafa",
+    color: "#333",
+    width: "100%",
+    boxSizing: "border-box",
+  },
+  select: {
+    height: "46px",
+    padding: "0 12px",
+    borderRadius: "12px",
+    border: "1.5px solid #e0e0e0",
+    fontSize: "15px",
+    outline: "none",
+    background: "#fafafa",
+    color: "#333",
+    width: "100%",
+    boxSizing: "border-box",
+    cursor: "pointer",
+  },
+  error: {
+    color: "#d32f2f",
+    fontSize: "13px",
+    margin: 0,
+    textAlign: "center",
+    fontWeight: "500",
+  },
+  loginBtn: {
+    height: "48px",
+    borderRadius: "12px",
+    border: "none",
+    background: "#43a047",
+    color: "#ffffff",
+    fontSize: "16px",
+    fontWeight: "600",
+    cursor: "pointer",
+    boxShadow: "0 4px 12px rgba(67, 160, 71, 0.2)",
     display: "flex",
     justifyContent: "center",
-    gap: "12px",
-    margin: "20px 0",
+    alignItems: "center",
+    width: "100%",
+    marginTop: "8px",
   },
-
-  dot: {
-    width: "12px",
-    height: "12px",
-    borderRadius: "50%",
-  },
-
-  error: {
-    color: "red",
-    fontSize: "12px",
-  },
-
-  keypad: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, 70px)",
-    gap: "10px",
-    justifyContent: "center",
-    marginTop: "15px",
-  },
-
-  btn: {
-    height: "55px",
-    borderRadius: "10px",
-    border: "1px solid #c8e6c9",
-    background: "#f1f8f4",
-    fontSize: "18px",
-    cursor: "pointer",
-  },
-
-  loginBtn: {
-    height: "55px",
-    borderRadius: "10px",
-    border: "none",
-    background: "#66bb6a",
-    color: "#fff",
-    fontWeight: "bold",
-    cursor: "pointer",
-  },
-
-  loader: {
-    width: "40px",
-    height: "40px",
-    border: "4px solid #c8e6c9",
-    borderTop: "4px solid #66bb6a",
-    borderRadius: "50%",
-    margin: "20px auto",
+  loaderText: {
+    opacity: 0.8,
   },
 };
 

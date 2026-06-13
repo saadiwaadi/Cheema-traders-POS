@@ -1,19 +1,37 @@
+import { useEffect, useState } from "react";
 import { st } from "./shared/analysisStyles";
+import { getCustomerDuesAnalysis } from "../../lib/posApi";
 
 export default function CustomerDuesWorkspace() {
-  const agingData = [
-    { bucket: "0-30 Days", value: "Rs 45,000", count: "12 Invoices" },
-    { bucket: "31-60 Days", value: "Rs 82,400", count: "8 Invoices" },
-    { bucket: "61-90 Days", value: "Rs 35,000", count: "3 Invoices" },
-    { bucket: "90+ Days", value: "Rs 50,000", count: "4 Invoices" },
-  ];
+  const [agingData, setAgingData] = useState([]);
+  const [customerData, setCustomerData] = useState([]);
 
-  const customerData = [
-    { customer: "Ali Traders", pending: "Rs 50,000", lastPayment: "12 May 2026", overdue: 95, status: "Critical" },
-    { customer: "Raza Farms", pending: "Rs 35,000", lastPayment: "01 Jul 2026", overdue: 62, status: "Warning" },
-    { customer: "Hassan Agrochemicals", pending: "Rs 82,400", lastPayment: "20 Jul 2026", overdue: 45, status: "Watch" },
-    { customer: "Usman Ali", pending: "Rs 45,000", lastPayment: "10 Aug 2026", overdue: 15, status: "Normal" },
-  ];
+  useEffect(() => {
+    getCustomerDuesAnalysis()
+      .then((data) => {
+        if (data) {
+          if (data.aging) {
+            const mappedAging = data.aging.map((a) => ({
+              bucket: a.bucket,
+              value: `Rs ${a.value.toLocaleString()}`,
+              count: a.count,
+            }));
+            setAgingData(mappedAging);
+          }
+          if (data.customers) {
+            const mappedCustomers = data.customers.map((c) => ({
+              customer: c.customer,
+              pending: `Rs ${c.pending.toLocaleString()}`,
+              lastPayment: c.lastPayment,
+              overdue: c.overdue,
+              status: c.status,
+            }));
+            setCustomerData(mappedCustomers);
+          }
+        }
+      })
+      .catch(console.error);
+  }, []);
 
   return (
     <>
