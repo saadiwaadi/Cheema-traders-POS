@@ -510,3 +510,38 @@ export async function getRoiStats(args) {
   if (args?.to) query.set("to", args.to);
   return httpJson(`/analysis/roi-stats?${query.toString()}`);
 }
+
+export async function listEmployees(search) {
+  if (usingIpc()) {
+    if (window.ipc) return window.ipc.invoke("pos:employees:list", search);
+  }
+  return httpJson(`/employees?search=${encodeURIComponent(search || "")}`);
+}
+
+export async function saveEmployee(payload) {
+  if (usingIpc()) {
+    if (window.ipc) return window.ipc.invoke("pos:employees:save", payload);
+  }
+  return httpJson("/employees", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function getEmployeeHistory(id) {
+  if (usingIpc()) {
+    if (window.ipc) return window.ipc.invoke("pos:employees:history", id);
+  }
+  return httpJson(`/employees/${id}/history`);
+}
+
+export async function recordEmployeeTransaction(payload) {
+  if (usingIpc()) {
+    if (window.ipc) return window.ipc.invoke("pos:employees:transaction", payload);
+  }
+  return httpJson("/employees/transaction", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function getEmployeeStats() {
+  if (usingIpc()) {
+    if (window.ipc) return window.ipc.invoke("pos:employees:stats");
+  }
+  return httpJson("/employees/stats");
+}

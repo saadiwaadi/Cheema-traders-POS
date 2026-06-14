@@ -726,4 +726,50 @@ router.post("/license/activate", async (req, res) => {
   }
 });
 
+// --- EMPLOYEES ---
+router.get("/employees", async (req, res) => {
+  try {
+    const employees = await store.listEmployees(req.query.search || "");
+    return res.json({ employees });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.post("/employees", async (req, res) => {
+  try {
+    const employee = await store.addEmployee(req.body);
+    return res.status(201).json({ employee });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+router.get("/employees/stats", async (req, res) => {
+  try {
+    const stats = await store.getEmployeeStats();
+    return res.json(stats);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/employees/:id/history", async (req, res) => {
+  try {
+    const history = await store.getEmployeeHistory(Number(req.params.id));
+    return res.json({ history });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.post("/employees/transaction", async (req, res) => {
+  try {
+    const result = await store.recordEmployeeTransaction(req.body);
+    return res.status(201).json(result);
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
 module.exports = router;

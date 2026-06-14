@@ -381,6 +381,7 @@ export default function BillingWorkspace() {
               getOptionValue={(c) => c.id}
               placeholder={t("billing.search_customer", "Search or Select Customer Name")}
               onChange={(val, obj) => {
+                setRows([createRow()]);
                 setSelectedCustomerObj(obj || null);
                 setCustomer(obj ? obj.name : val || "");
                 setApplyCredit(false);

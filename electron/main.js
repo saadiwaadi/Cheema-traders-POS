@@ -121,6 +121,11 @@ function registerIpc() {
     "pos:license:info": () => store.getLicenseInfo(),
     "pos:license:activate": (_, payload) => store.activateLicense(payload),
     "analysis:roi-stats": (_, args) => store.getRoiStats(args),
+    "pos:employees:list": async (_, search) => ({ employees: await store.listEmployees(search || "") }),
+    "pos:employees:save": async (_, payload) => ({ employee: await store.addEmployee(payload) }),
+    "pos:employees:history": async (_, id) => ({ history: await store.getEmployeeHistory(id) }),
+    "pos:employees:transaction": async (_, payload) => await store.recordEmployeeTransaction(payload),
+    "pos:employees:stats": async () => await store.getEmployeeStats(),
     "db:print-html-report": async (_, html) => {
       let printWindow = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: false, contextIsolation: true } });
       printWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));

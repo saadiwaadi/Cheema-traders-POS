@@ -6,6 +6,7 @@ import {
   AreaChart, Area, PieChart, Pie, Cell
 } from "recharts";
 import SuppliersPage from "./suppliers";
+import EmployeesPage from "./Employees";
 import BillingPage from "./bill";
 import InvoiceHistory from "./invoices";
 import InventoryManagementPage from "./inventory";
@@ -32,6 +33,7 @@ const NAV_ITEMS = [
   { id: "products", label: "Inventory", icon: "M20 4H4v2l8 5 8-5V4zM4 13v7h16v-7l-8 5-8-5z", section: "main" },
   { id: "customers", label: "Customers", icon: "M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z", section: "main" },
   { id: "addCompany", label: "Suppliers", icon: "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z", section: "main" },
+  { id: "employees", label: "Employees", icon: "M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z", section: "main" },
   { id: "payments", label: "Payments", icon: "M20 4H4c-1.11 0-2 .89-2 2v12c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V6c0-1.11-.89-2-2-2zm0 14H4v-6h16v6zm0-10H4V6h16v2z", section: "finance" },
   { id: "expenses", label: "Expenses", icon: "M21 18v1c0 1.1-.9 2-2 2H5c-1.11 0-2-.9-2-2V5c0-1.1.89-2 2-2h14c1.1 0 2 .9 2 2v1h-9c-1.11 0-2 .9-2 2v8c0 1.1.89 2 2 2h9zm-9-2h10V9H12v9zm4-5.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z", section: "finance" },
   { id: "banks", label: "Banks", icon: "M4 10h3v7H4zm6.5 0h3v7h-3zM2 19h20v3H2zm15-9h3v7h-3zm-5-9L2 6v2h20V6z", section: "finance" },
@@ -46,7 +48,7 @@ const NAV_ITEMS = [
 ];
 
 const SECTION_LABELS = { main: "Operations", finance: "Finance", accounting: "Accounting", system: "System" };
-const STAFF_VISIBLE = ["home", "sales", "invoices", "products", "customers", "settings"];
+const STAFF_VISIBLE = ["home", "sales", "invoices", "products", "customers", "employees", "settings"];
 
 export default function Dashboard() {
   const [active, setActive] = useState("home");
@@ -442,6 +444,7 @@ export default function Dashboard() {
                 {active === "analysis" && allowedModules.includes("analysis") && <AnalysisPage />}
                 {active === "reports" && allowedModules.includes("reports") && <ReportsPage />}
                 {active === "addCompany" && allowedModules.includes("addCompany") && <SuppliersPage />}
+                {active === "employees" && allowedModules.includes("employees") && <EmployeesPage />}
               </div>
             </motion.div>
           )}

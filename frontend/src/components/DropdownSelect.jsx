@@ -58,6 +58,13 @@ export default function DropdownSelect({
           setOpen(true);
           if (e.target.value === "") onChange(null, null);
         }}
+        onKeyDown={(e) => {
+          if (e.key === "Backspace") {
+            e.preventDefault();
+            setQuery("");
+            onChange(null, null);
+          }
+        }}
         onFocus={() => setOpen(true)}
       />
 

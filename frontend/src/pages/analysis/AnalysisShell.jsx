@@ -4,6 +4,7 @@ import InventoryWorkspace from "./InventoryWorkspace";
 import CustomerDuesWorkspace from "./CustomerDuesWorkspace";
 import SupplierWorkspace from "./SupplierWorkspace";
 import SalesWorkspace from "./SalesWorkspace";
+import PayrollWorkspace from "./PayrollWorkspace";
 import { getAnalysisOverview, getRoiStats } from "../../lib/posApi";
 
 const WORKSPACES = [
@@ -11,6 +12,7 @@ const WORKSPACES = [
   { id: "inventory", label: "Inventory" },
   { id: "customerDues", label: "Customer Dues" },
   { id: "suppliers", label: "Suppliers" },
+  { id: "payroll", label: "Payroll & Advances" },
   { id: "roiCalculator", label: "ROI Calculator" },
 ];
 
@@ -84,6 +86,7 @@ export default function AnalysisShell() {
       case "inventory": return <InventoryWorkspace filters={dateFilters} />;
       case "customerDues": return <CustomerDuesWorkspace filters={dateFilters} />;
       case "suppliers": return <SupplierWorkspace filters={dateFilters} />;
+      case "payroll": return <PayrollWorkspace />;
       case "roiCalculator": return renderRoiCalculator();
       case "sales": default: return <SalesWorkspace filters={dateFilters} />;
     }

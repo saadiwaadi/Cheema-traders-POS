@@ -3186,9 +3186,13 @@ class PosStore {
       const dbBetter = this.getBetterDb();
       const entryId = createJournalEntry(dbBetter, payload);
       const customerIds = [...new Set(payload.lines.map(l => l.customerId).filter(Boolean))];
+      const employeeIds = [...new Set(payload.lines.map(l => l.employeeId).filter(Boolean))];
       const db = await this._db();
       for (const cid of customerIds) {
         await this._syncCustomerBalance(db, cid);
+      }
+      for (const eid of employeeIds) {
+        await this._syncEmployeeBalance(db, eid);
       }
       return { id: entryId };
     } catch (err) {
@@ -3212,7 +3216,13 @@ class PosStore {
           FROM journal_lines jl
           JOIN suppliers s ON jl.supplier_id = s.id
           WHERE jl.entry_id = je.id
-        ) as supplier_names
+        ) as supplier_names,
+        (
+          SELECT GROUP_CONCAT(e.name, ', ')
+          FROM journal_lines jl
+          JOIN employees e ON jl.employee_id = e.id
+          WHERE jl.entry_id = je.id
+        ) as employee_names
       FROM journal_entries je
       WHERE 1=1
     `;
@@ -3244,11 +3254,13 @@ class PosStore {
     const lines = await all(
       db,
       `SELECT jl.*, a.code as account_code, a.name as account_name,
-              c.name as customer_name, s.name as supplier_name
+              c.name as customer_name, s.name as supplier_name,
+              e.name as employee_name
        FROM journal_lines jl
        JOIN accounts a ON jl.account_id = a.id
        LEFT JOIN customers c ON jl.customer_id = c.id
        LEFT JOIN suppliers s ON jl.supplier_id = s.id
+       LEFT JOIN employees e ON jl.employee_id = e.id
        WHERE jl.entry_id = ?`,
       [id]
     );
@@ -3259,13 +3271,17 @@ class PosStore {
   async reverseJournalEntry({ id, date, reason }) {
     try {
       const dbBetter = this.getBetterDb();
-      const origLines = dbBetter.prepare("SELECT customer_id FROM journal_lines WHERE entry_id = ?").all(id);
+      const origLines = dbBetter.prepare("SELECT customer_id, employee_id FROM journal_lines WHERE entry_id = ?").all(id);
       const customerIds = [...new Set(origLines.map(l => l.customer_id).filter(Boolean))];
+      const employeeIds = [...new Set(origLines.map(l => l.employee_id).filter(Boolean))];
       const newId = reverseEntry(dbBetter, id, date, reason);
       
       const db = await this._db();
       for (const cid of customerIds) {
         await this._syncCustomerBalance(db, cid);
+      }
+      for (const eid of employeeIds) {
+        await this._syncEmployeeBalance(db, eid);
       }
       return { id: newId };
     } catch (err) {
@@ -3283,6 +3299,7 @@ class PosStore {
       
       const lines = dbBetter.prepare("SELECT * FROM journal_lines WHERE entry_id = ?").all(id);
       const customerIds = [...new Set(lines.map(l => l.customer_id).filter(Boolean))];
+      const employeeIds = [...new Set(lines.map(l => l.employee_id).filter(Boolean))];
       
       const tx = dbBetter.transaction(() => {
         if (entry.source_type === "expense" && entry.source_id) {
@@ -3295,6 +3312,9 @@ class PosStore {
       
       for (const cid of customerIds) {
         await this._syncCustomerBalance(db, cid);
+      }
+      for (const eid of employeeIds) {
+        await this._syncEmployeeBalance(db, eid);
       }
       return { success: true };
     } catch (err) {
@@ -4441,6 +4461,365 @@ class PosStore {
       capital
     };
   }
+
+  // ============================================================================
+  // EMPLOYEES
+  // ============================================================================
+
+  async _syncEmployeeBalance(db, employeeId) {
+    if (!employeeId) return;
+    await run(db, `
+      UPDATE employees SET
+        cached_balance = COALESCE((
+          SELECT SUM(jl.credit - jl.debit)
+          FROM journal_lines jl
+          JOIN journal_entries je ON jl.entry_id = je.id
+          JOIN accounts a ON jl.account_id = a.id
+          WHERE jl.employee_id = employees.id
+            AND a.code = '2100'
+            AND je.status = 'posted'
+        ), 0),
+        advance_balance = COALESCE((
+          SELECT SUM(jl.debit - jl.credit)
+          FROM journal_lines jl
+          JOIN journal_entries je ON jl.entry_id = je.id
+          JOIN accounts a ON jl.account_id = a.id
+          WHERE jl.employee_id = employees.id
+            AND a.code = '1300'
+            AND je.status = 'posted'
+        ), 0),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [employeeId]);
+  }
+
+  async listEmployees(search = "") {
+    const db = await this._db();
+    return all(
+      db,
+      `
+        SELECT 
+          id, 
+          name, 
+          designation, 
+          pay_type AS payType, 
+          (base_amount / 100.0) AS baseAmount, 
+          joining_date AS joiningDate, 
+          status, 
+          notes,
+          (cached_balance / 100.0) AS salaryBalance,
+          (advance_balance / 100.0) AS advanceBalance,
+          (SELECT COUNT(*) FROM employee_transactions WHERE employee_id = employees.id) AS transaction_count
+        FROM employees
+        WHERE deleted_at IS NULL
+          AND (name LIKE ? OR designation LIKE ?)
+        ORDER BY name COLLATE NOCASE ASC
+      `,
+      [normalizeSearch(search), normalizeSearch(search)]
+    );
+  }
+
+  async addEmployee(input) {
+    const db = await this._db();
+    const name = String(input.name || "").trim();
+    const designation = String(input.designation || "").trim() || null;
+    const payType = String(input.payType || "monthly").trim();
+    const baseAmount = Math.round(Number(input.baseAmount || 0) * 100);
+    const joiningDate = String(input.joiningDate || new Date().toISOString().split("T")[0]);
+    const status = String(input.status || "active");
+    const notes = String(input.notes || "").trim() || null;
+    const openingBalance = Math.round(Number(input.openingBalance || 0) * 100); // in paisa
+    const openingAdvanceBalance = Math.round(Number(input.openingAdvanceBalance || 0) * 100); // in paisa
+
+    if (!name) throw new Error("Employee name is required");
+
+    if (input.id) {
+      await run(
+        db,
+        `UPDATE employees SET 
+          name = ?, 
+          designation = ?, 
+          pay_type = ?, 
+          base_amount = ?, 
+          joining_date = ?, 
+          status = ?, 
+          notes = ?, 
+          updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+        [name, designation, payType, baseAmount, joiningDate, status, notes, input.id]
+      );
+      await this._syncEmployeeBalance(db, input.id);
+      return { id: input.id, name, designation, payType, baseAmount: baseAmount / 100.0, joiningDate, status, notes };
+    }
+
+    const result = await run(
+      db,
+      `INSERT INTO employees (name, designation, pay_type, base_amount, joining_date, status, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [name, designation, payType, baseAmount, joiningDate, status, notes]
+    );
+    const employeeId = result.lastID;
+
+    // Post opening salary balance (Credit to 2100 Salaries Payable) if non-zero
+    // Offset is explicitly 3900 (Opening Balance Equity)
+    if (openingBalance !== 0) {
+      const dbBetter = this.getBetterDb();
+      const coa = await this.listCoaAccounts();
+      const obeAcc = coa.find(a => a.code === '3900');
+      const spAcc = coa.find(a => a.code === '2100');
+      if (!obeAcc || !spAcc) {
+        throw new Error("Control accounts (3900, 2100) not found in Chart of Accounts.");
+      }
+
+      let lines = [];
+      if (openingBalance > 0) {
+        lines.push({ accountId: obeAcc.id, debit: openingBalance, credit: 0 });
+        lines.push({ accountId: spAcc.id, debit: 0, credit: openingBalance, employeeId });
+      } else {
+        const absBal = Math.abs(openingBalance);
+        lines.push({ accountId: spAcc.id, debit: absBal, credit: 0, employeeId });
+        lines.push({ accountId: obeAcc.id, debit: 0, credit: absBal });
+      }
+
+      const payload = {
+        date: joiningDate,
+        narration: `Opening Salary Balance for Employee: ${name}`,
+        source_type: "opening",
+        source_id: employeeId,
+        lines
+      };
+
+      createJournalEntry(dbBetter, payload);
+    }
+
+    // Post opening advance balance (Debit to 1300 Employee Advances) if non-zero
+    // Offset is explicitly 3900 (Opening Balance Equity)
+    if (openingAdvanceBalance !== 0) {
+      const dbBetter = this.getBetterDb();
+      const coa = await this.listCoaAccounts();
+      const obeAcc = coa.find(a => a.code === '3900');
+      const eaAcc = coa.find(a => a.code === '1300');
+      if (!obeAcc || !eaAcc) {
+        throw new Error("Control accounts (3900, 1300) not found in Chart of Accounts.");
+      }
+
+      let lines = [];
+      if (openingAdvanceBalance > 0) {
+        lines.push({ accountId: eaAcc.id, debit: openingAdvanceBalance, credit: 0, employeeId });
+        lines.push({ accountId: obeAcc.id, debit: 0, credit: openingAdvanceBalance });
+      } else {
+        const absBal = Math.abs(openingAdvanceBalance);
+        lines.push({ accountId: obeAcc.id, debit: absBal, credit: 0 });
+        lines.push({ accountId: eaAcc.id, debit: 0, credit: absBal, employeeId });
+      }
+
+      const payload = {
+        date: joiningDate,
+        narration: `Opening Advance Balance for Employee: ${name}`,
+        source_type: "opening",
+        source_id: employeeId + 1000000,
+        lines
+      };
+
+      createJournalEntry(dbBetter, payload);
+    }
+
+    await this._syncEmployeeBalance(db, employeeId);
+    return { id: employeeId, name, designation, payType, baseAmount: baseAmount / 100.0, joiningDate, status, notes };
+  }
+
+  async recordEmployeeTransaction(input) {
+    const db = await this._db();
+    const dbBetter = this.getBetterDb();
+
+    const employee_id = Number(input.employeeId);
+    const transaction_type = String(input.transactionType);
+    const amount = Number(input.amount); // in Rupees
+    const payment_account_id = input.paymentAccountId ? Number(input.paymentAccountId) : null;
+    const period_label = input.periodLabel ? String(input.periodLabel).trim() : null;
+    const notes = input.notes ? String(input.notes).trim() : null;
+    const transaction_date = String(input.transactionDate || new Date().toISOString().split("T")[0]);
+
+    if (!employee_id) throw new Error("Employee ID is required");
+    if (!transaction_type) throw new Error("Transaction type is required");
+    if (amount <= 0) throw new Error("Amount must be greater than zero");
+
+    const employee = await get(db, "SELECT name FROM employees WHERE id = ?", [employee_id]);
+    if (!employee) throw new Error("Employee not found");
+    const employeeName = employee.name;
+
+    const coa = await this.listCoaAccounts();
+    const spAcc = coa.find(a => a.code === '2100');
+    const sweAcc = coa.find(a => a.code === '6000');
+    const baeAcc = coa.find(a => a.code === '6001');
+    const eaAcc = coa.find(a => a.code === '1300');
+
+    if (!spAcc || !sweAcc || !baeAcc || !eaAcc) {
+      throw new Error("Required employee accounts (2100, 6000, 6001, 1300) are missing from Chart of Accounts.");
+    }
+
+    let lines = [];
+    const amountPaisa = Math.round(amount * 100);
+    const memo = `${transaction_type.toUpperCase()} - ${period_label || ''} ${notes || ''}`.trim();
+
+    if (transaction_type === 'salary' || transaction_type === 'wage') {
+      lines.push({ accountId: sweAcc.id, debit: amountPaisa, credit: 0, memo });
+      lines.push({ accountId: spAcc.id, debit: 0, credit: amountPaisa, employeeId: employee_id, memo });
+    } else if (transaction_type === 'bonus' || transaction_type === 'allowance') {
+      lines.push({ accountId: baeAcc.id, debit: amountPaisa, credit: 0, memo });
+      lines.push({ accountId: spAcc.id, debit: 0, credit: amountPaisa, employeeId: employee_id, memo });
+    } else if (transaction_type === 'deduction') {
+      lines.push({ accountId: spAcc.id, debit: amountPaisa, credit: 0, employeeId: employee_id, memo });
+      lines.push({ accountId: sweAcc.id, debit: 0, credit: amountPaisa, memo });
+    } else if (transaction_type === 'advance') {
+      if (!payment_account_id) throw new Error("Payment account is required for advances.");
+      lines.push({ accountId: eaAcc.id, debit: amountPaisa, credit: 0, employeeId: employee_id, memo });
+      lines.push({ accountId: payment_account_id, debit: 0, credit: amountPaisa, memo });
+    } else if (transaction_type === 'payment') {
+      if (!payment_account_id) throw new Error("Payment account is required for salary payments.");
+      lines.push({ accountId: spAcc.id, debit: amountPaisa, credit: 0, employeeId: employee_id, memo });
+      lines.push({ accountId: payment_account_id, debit: 0, credit: amountPaisa, memo });
+    } else {
+      throw new Error(`Invalid transaction type: ${transaction_type}`);
+    }
+
+    const jvPayload = {
+      date: transaction_date,
+      narration: `${transaction_type.toUpperCase()} for ${employeeName} ${period_label ? '(' + period_label + ')' : ''}`.trim(),
+      source_type: "manual",
+      source_id: null,
+      lines
+    };
+
+    const jvId = createJournalEntry(dbBetter, jvPayload);
+
+    const result = await run(db, `
+      INSERT INTO employee_transactions (
+        employee_id, transaction_type, amount, payment_account_id, period_label, notes, transaction_date, journal_entry_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      employee_id,
+      transaction_type,
+      amountPaisa,
+      payment_account_id,
+      period_label,
+      notes,
+      transaction_date,
+      jvId
+    ]);
+
+    await this._syncEmployeeBalance(db, employee_id);
+
+    return { id: result.lastID, journalEntryId: jvId };
+  }
+
+  async getEmployeeHistory(employeeId) {
+    const db = await this._db();
+    return all(
+      db,
+      `
+        SELECT 
+          et.id AS ref_id,
+          et.transaction_type AS type,
+          et.transaction_date AS date,
+          je.entry_no AS reference,
+          COALESCE(a.name, '-') AS method,
+          (et.amount / 100.0) AS total_amount,
+          (
+            CASE 
+              WHEN et.transaction_type IN ('salary', 'wage', 'bonus', 'allowance') THEN 0.0
+              ELSE (et.amount / 100.0)
+            END
+          ) AS debit,
+          (
+            CASE 
+              WHEN et.transaction_type IN ('salary', 'wage', 'bonus', 'allowance') THEN (et.amount / 100.0)
+              ELSE 0.0
+            END
+          ) AS credit,
+          (
+            CASE 
+              WHEN et.transaction_type IN ('salary', 'wage', 'bonus', 'allowance') THEN (et.amount / 100.0)
+              ELSE -(et.amount / 100.0)
+            END
+          ) AS balance_change,
+          et.notes,
+          et.created_at,
+          et.period_label AS period
+        FROM employee_transactions et
+        LEFT JOIN journal_entries je ON et.journal_entry_id = je.id
+        LEFT JOIN accounts a ON et.payment_account_id = a.id
+        WHERE et.employee_id = ?
+        
+        UNION ALL
+        
+        -- Include manual journal entries linked to this employee but not created via transaction form
+        SELECT 
+          jl.id AS ref_id,
+          'Journal' AS type,
+          je.date AS date,
+          je.entry_no AS reference,
+          '-' AS method,
+          ABS(jl.credit - jl.debit) / 100.0 AS total_amount,
+          (jl.debit / 100.0) AS debit,
+          (jl.credit / 100.0) AS credit,
+          ((jl.credit - jl.debit) / 100.0) AS balance_change,
+          je.narration || COALESCE(' - ' || jl.line_memo, '') AS notes,
+          je.created_at,
+          '-' AS period
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.entry_id = je.id
+        JOIN accounts a ON jl.account_id = a.id
+        WHERE jl.employee_id = ?
+          AND a.code IN ('2100', '1300')
+          AND je.status = 'posted'
+          AND NOT EXISTS (
+            SELECT 1 FROM employee_transactions 
+            WHERE journal_entry_id = je.id
+          )
+          
+        ORDER BY date DESC, created_at DESC
+      `,
+      [employeeId, employeeId]
+    );
+  }
+
+  async getEmployeeStats() {
+    const db = await this._db();
+    const counts = await get(db, `
+      SELECT 
+        COUNT(*) AS total,
+        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active
+      FROM employees
+      WHERE deleted_at IS NULL
+    `);
+    
+    const balances = await get(db, `
+      SELECT 
+        COALESCE(SUM(cached_balance), 0) / 100.0 AS unpaidSalaries,
+        COALESCE(SUM(advance_balance), 0) / 100.0 AS outstandingAdvances
+      FROM employees
+      WHERE deleted_at IS NULL
+    `);
+
+    const payTypes = await all(db, `
+      SELECT 
+        pay_type AS payType,
+        COUNT(*) AS count,
+        SUM(base_amount) / 100.0 AS totalBaseAmount
+      FROM employees
+      WHERE deleted_at IS NULL AND status = 'active'
+      GROUP BY pay_type
+    `);
+
+    return {
+      total: counts.total || 0,
+      active: counts.active || 0,
+      unpaidSalaries: balances.unpaidSalaries,
+      outstandingAdvances: balances.outstandingAdvances,
+      payTypes
+    };
+  }
 }
 
 // ── VERBATIM FUNCTIONS ────────────────────────────────────────
@@ -4472,12 +4851,12 @@ function createJournalEntry(db, { date, narration, source_type = 'manual',
     ).run(entry_no, date, narration ?? null, source_type, source_id);
     const entryId = res.lastInsertRowid;
     const ins = db.prepare(
-      `INSERT INTO journal_lines (entry_id, account_id, debit, credit, customer_id, supplier_id, line_memo)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO journal_lines (entry_id, account_id, debit, credit, customer_id, supplier_id, employee_id, line_memo)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
     for (const l of lines)
       ins.run(entryId, l.accountId, Number(l.debit)||0, Number(l.credit)||0,
-              l.customerId ?? null, l.supplierId ?? null, l.memo ?? null);
+              l.customerId ?? null, l.supplierId ?? null, l.employeeId ?? null, l.memo ?? null);
     return entryId;
   });
   return tx();
@@ -4489,7 +4868,7 @@ function reverseEntry(db, entryId, date, reason) {
   if (orig.reversed_by)                  throw new Error("Entry already reversed.");
   const lines = db.prepare(`SELECT * FROM journal_lines WHERE entry_id=?`).all(entryId)
     .map(l => ({ accountId: l.account_id, debit: l.credit, credit: l.debit,
-                 customerId: l.customer_id, supplierId: l.supplier_id, memo: l.line_memo }));
+                 customerId: l.customer_id, supplierId: l.supplier_id, employeeId: l.employee_id, memo: l.line_memo }));
   const tx = db.transaction(() => {
     const newId = createJournalEntry(db, {
       date, narration: `Reversal of ${orig.entry_no}: ${reason ?? ''}`,

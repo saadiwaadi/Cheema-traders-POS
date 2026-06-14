@@ -478,7 +478,7 @@ function ChartOfAccountsContent() {
                 <select style={s.input} value={formParentId} onChange={e => setFormParentId(e.target.value)}>
                   <option value="">No Parent (Top Level)</option>
                   {accounts
-                    .filter(a => a.type === formType && (!editingAccount || a.id !== editingAccount.id))
+                    .filter(a => a.type === formType && a.is_control === 1 && (!editingAccount || a.id !== editingAccount.id))
                     .map(a => (
                       <option key={a.id} value={a.id}>{a.code} - {a.name}</option>
                     ))}

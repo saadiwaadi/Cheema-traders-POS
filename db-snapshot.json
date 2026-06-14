@@ -1,0 +1,9 @@
+{
+  "customerCount": 1,
+  "supplierCount": 1,
+  "journalDebitSum": 1018010000,
+  "journalCreditSum": 1018010000,
+  "cashBookBalance": 5010000,
+  "trialBalanceDr": 1015000000,
+  "trialBalanceCr": 1015000000
+}

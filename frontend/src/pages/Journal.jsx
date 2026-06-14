@@ -11,6 +11,7 @@ export default function JournalPage() {
   const [accounts, setAccounts] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
+  const [employees, setEmployees] = useState([]);
   
   // Ledger Tab State
   
@@ -27,8 +28,8 @@ export default function JournalPage() {
   const [jvNarration, setJvNarration] = useState("");
   const [jvEntryNoPreview, setJvEntryNoPreview] = useState("");
   const [jvLines, setJvLines] = useState([
-    { accountId: "", debit: "", credit: "", memo: "", customerId: "", supplierId: "" },
-    { accountId: "", debit: "", credit: "", memo: "", customerId: "", supplierId: "" }
+    { accountId: "", debit: "", credit: "", memo: "", customerId: "", supplierId: "", employeeId: "" },
+    { accountId: "", debit: "", credit: "", memo: "", customerId: "", supplierId: "", employeeId: "" }
   ]);
   const [formError, setFormError] = useState("");
   const [formSuccess, setFormSuccess] = useState("");
@@ -90,6 +91,8 @@ export default function JournalPage() {
       setCustomers(custRes.customers || []);
       const suppRes = await ipc.invoke("pos:suppliers:list", "");
       setSuppliers(suppRes.suppliers || []);
+      const empRes = await ipc.invoke("pos:employees:list", "");
+      setEmployees(empRes.employees || []);
     } catch (err) {
       console.error("Failed to load subledgers:", err);
     }
@@ -196,7 +199,7 @@ export default function JournalPage() {
   };
 
   const addLine = () => {
-    setJvLines([...jvLines, { accountId: "", debit: "", credit: "", memo: "", customerId: "", supplierId: "" }]);
+    setJvLines([...jvLines, { accountId: "", debit: "", credit: "", memo: "", customerId: "", supplierId: "", employeeId: "" }]);
   };
 
   const removeLine = (index) => {
@@ -234,6 +237,9 @@ export default function JournalPage() {
         if (acc?.code === "2000" && !l.supplierId) {
           throw new Error(`Supplier selection is required for Accounts Payable line.`);
         }
+        if ((acc?.code === "2100" || acc?.code === "1300") && !l.employeeId) {
+          throw new Error(`Employee selection is required for ${acc.name} line.`);
+        }
 
         return {
           accountId: Number(l.accountId),
@@ -241,6 +247,7 @@ export default function JournalPage() {
           credit: cr,
           customerId: l.customerId ? Number(l.customerId) : null,
           supplierId: l.supplierId ? Number(l.supplierId) : null,
+          employeeId: l.employeeId ? Number(l.employeeId) : null,
           memo: l.memo || null
         };
       });
@@ -259,8 +266,8 @@ export default function JournalPage() {
       // Reset form
       setJvNarration("");
       setJvLines([
-        { accountId: "", debit: "", credit: "", memo: "", customerId: "", supplierId: "" },
-        { accountId: "", debit: "", credit: "", memo: "", customerId: "", supplierId: "" }
+        { accountId: "", debit: "", credit: "", memo: "", customerId: "", supplierId: "", employeeId: "" },
+        { accountId: "", debit: "", credit: "", memo: "", customerId: "", supplierId: "", employeeId: "" }
       ]);
       loadNextJVNo();
       
@@ -572,6 +579,11 @@ export default function JournalPage() {
                                 <strong>Supplier:</strong> {v.supplier_names}
                               </div>
                             )}
+                            {v.employee_names && (
+                              <div style={{ fontSize: 11, color: "var(--info || #0284c7)", marginTop: 4 }}>
+                                <strong>Employee:</strong> {v.employee_names}
+                              </div>
+                            )}
                             {v.reversed_by && (
                               <div style={{ color: "var(--danger)", fontSize: 11, marginTop: 4 }}>
                                 Reversed by {v.reversed_by}
@@ -708,8 +720,13 @@ export default function JournalPage() {
                               const acc = accounts.find(a => String(a.id) === String(newAccountId));
                               if (acc?.code === "1100") {
                                 handleLineChange(idx, "supplierId", "");
+                                handleLineChange(idx, "employeeId", "");
                               } else if (acc?.code === "2000") {
                                 handleLineChange(idx, "customerId", "");
+                                handleLineChange(idx, "employeeId", "");
+                              } else if (acc?.code === "2100" || acc?.code === "1300") {
+                                handleLineChange(idx, "customerId", "");
+                                handleLineChange(idx, "supplierId", "");
                               }
                             }}
                             required
@@ -749,6 +766,7 @@ export default function JournalPage() {
                                   onChange={(e) => {
                                     handleLineChange(idx, "supplierId", e.target.value);
                                     handleLineChange(idx, "customerId", "");
+                                    handleLineChange(idx, "employeeId", "");
                                   }}
                                   required
                                 >
@@ -756,6 +774,24 @@ export default function JournalPage() {
                                   {suppliers.map(s => (
                                     <option key={s.id} value={s.id}>
                                       {s.name} {s.phone ? `(${s.phone})` : ""}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : ["2100", "1300"].includes(accounts.find(a => String(a.id) === String(line.accountId))?.code) ? (
+                                <select
+                                  style={{ ...st.select, width: "100%", borderColor: "var(--info || #0284c7)", background: "rgba(2, 132, 199, 0.05)", padding: "4px 8px", fontSize: 12 }}
+                                  value={line.employeeId || ""}
+                                  onChange={(e) => {
+                                    handleLineChange(idx, "employeeId", e.target.value);
+                                    handleLineChange(idx, "customerId", "");
+                                    handleLineChange(idx, "supplierId", "");
+                                  }}
+                                  required
+                                >
+                                  <option value="">-- Required Employee --</option>
+                                  {employees.map(e => (
+                                    <option key={e.id} value={e.id}>
+                                      {e.name} {e.designation ? `(${e.designation})` : ""}
                                     </option>
                                   ))}
                                 </select>
@@ -1080,6 +1116,9 @@ export default function JournalPage() {
                           )}
                           {line.supplier_name && (
                             <span style={st.subledgerBadge}> (Supp: {line.supplier_name})</span>
+                          )}
+                          {line.employee_name && (
+                            <span style={st.subledgerBadge}> (Emp: {line.employee_name})</span>
                           )}
                         </td>
                         <td style={st.td}>{line.line_memo || "—"}</td>

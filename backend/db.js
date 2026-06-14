@@ -408,6 +408,43 @@ db.serialize(() => {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS employees (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      designation TEXT,
+      pay_type TEXT CHECK(pay_type IN ('monthly','hourly','daily','piece')) NOT NULL,
+      base_amount INTEGER NOT NULL DEFAULT 0, -- base salary/wage in paisa
+      joining_date TEXT,
+      status TEXT CHECK(status IN ('active','inactive','terminated')) NOT NULL DEFAULT 'active',
+      notes TEXT,
+      cached_balance INTEGER NOT NULL DEFAULT 0, -- Salaries Payable (2100) balance in paisa
+      advance_balance INTEGER NOT NULL DEFAULT 0, -- Employee Advances (1300) balance in paisa
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at TEXT
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS employee_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+      transaction_type TEXT CHECK(transaction_type IN ('salary','wage','advance','bonus','allowance','deduction','payment')) NOT NULL,
+      amount INTEGER NOT NULL, -- in paisa
+      payment_account_id INTEGER REFERENCES accounts(id),
+      period_label TEXT,
+      notes TEXT,
+      transaction_date TEXT NOT NULL,
+      journal_entry_id INTEGER REFERENCES journal_entries(id),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.run(`CREATE INDEX IF NOT EXISTS idx_lines_employee ON journal_lines(employee_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_employee_tx_emp ON employee_transactions(employee_id)`);
+
   db.get("SELECT COUNT(*) AS count FROM accounts", (err, row) => {
     if (!err && row && row.count === 0) {
       console.log("Seeding default Chart of Accounts...");
@@ -425,10 +462,13 @@ db.serialize(() => {
         ['4000', 'Sales Revenue', 'revenue', 0],
         ['4100', 'Sales Returns', 'revenue', 0],
         ['5000', 'Cost of Goods Sold', 'expense', 0],
-        ['6000', 'Salaries', 'expense', 0],
+        ['6000', 'Salaries & Wages Expense', 'expense', 0],
         ['6100', 'Rent', 'expense', 0],
         ['6200', 'Utilities', 'expense', 0],
         ['6900', 'Misc Expense', 'expense', 0],
+        ['2100', 'Salaries Payable', 'liability', 1],
+        ['6001', 'Bonuses & Allowances Expense', 'expense', 0],
+        ['1300', 'Employee Advances', 'asset', 0],
       ];
       const stmt = db.prepare("INSERT INTO accounts (code, name, type, is_control) VALUES (?, ?, ?, ?)");
       defaultAccounts.forEach((acc) => {
@@ -467,6 +507,28 @@ db.serialize(() => {
   db.run(`ALTER TABLE expenses ADD COLUMN money_from TEXT`, ignoreColumnExists);
   db.run(`ALTER TABLE expenses ADD COLUMN money_to TEXT`, ignoreColumnExists);
   db.run(`ALTER TABLE journal_lines ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)`, ignoreColumnExists);
+  db.run(`ALTER TABLE journal_lines ADD COLUMN employee_id INTEGER REFERENCES employees(id)`, ignoreColumnExists);
+
+  // Self-heal/ensure required accounts for existing databases
+  db.serialize(() => {
+    // 1. Rename existing 'Salaries' (6000) to 'Salaries & Wages Expense' if present
+    db.run("UPDATE accounts SET name = 'Salaries & Wages Expense' WHERE code = '6000' AND name = 'Salaries'");
+    
+    // 2. Insert missing accounts if they don't exist
+    const ensureAccs = [
+      ['2100', 'Salaries Payable', 'liability', 1],
+      ['6000', 'Salaries & Wages Expense', 'expense', 0],
+      ['6001', 'Bonuses & Allowances Expense', 'expense', 0],
+      ['1300', 'Employee Advances', 'asset', 0]
+    ];
+    ensureAccs.forEach(([code, name, type, isControl]) => {
+      db.run(
+        `INSERT OR IGNORE INTO accounts (code, name, type, is_control, is_active)
+         VALUES (?, ?, ?, ?, 1)`,
+        [code, name, type, isControl]
+      );
+    });
+  });
   db.run(`
     CREATE VIEW IF NOT EXISTS sale_returns_summary AS
     SELECT
