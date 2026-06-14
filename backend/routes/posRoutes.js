@@ -499,11 +499,24 @@ router.get("/backup/download", async (req, res) => {
 router.get("/db/info", async (req, res) => {
   try {
     const fsModule = require("fs/promises");
+    const pathModule = require("path");
     const stat = await fsModule.stat(store.dbPath);
+    const homeDir = process.env.USERPROFILE || process.env.HOME || "C:";
+    const backupDir = pathModule.join(homeDir, "CheemaTradersPOS", "Backups");
     return res.json({
       path: store.dbPath,
       size: stat.size,
+      backupDir: backupDir,
     });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.post("/backup/close-db", async (req, res) => {
+  try {
+    await store.close();
+    return res.json({ success: true });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -514,6 +527,25 @@ router.post("/backup/import", async (req, res) => {
     if (!req.body.path) return res.status(400).json({ message: "Backup path is required" });
     const dbPath = await store.importBackup(req.body.path);
     return res.json({ dbPath });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.post("/backup/delete", async (req, res) => {
+  try {
+    if (!req.body.path) return res.status(400).json({ message: "Backup path is required" });
+    await store.deleteBackup(req.body.path);
+    return res.json({ success: true });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.post("/backup/reset-data", async (req, res) => {
+  try {
+    const result = await store.resetDatabase();
+    return res.json({ result });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -661,6 +693,33 @@ router.get("/analysis/customer-dues", async (req, res) => {
 router.get("/analysis/supplier", async (req, res) => {
   try {
     const data = await store.getSupplierAnalysis();
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/analysis/roi-stats", async (req, res) => {
+  try {
+    const data = await store.getRoiStats({ from: req.query.from, to: req.query.to });
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/license/info", async (req, res) => {
+  try {
+    const data = await store.getLicenseInfo();
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.post("/license/activate", async (req, res) => {
+  try {
+    const data = await store.activateLicense(req.body);
     return res.json(data);
   } catch (error) {
     return res.status(500).json({ message: error.message });

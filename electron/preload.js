@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld("pos", {
   getMonthlyReport: () => invoke("db:get-monthly-report"),
   getTopDebtors: () => invoke("db:get-top-debtors"),
   getAnalysisOverview: () => invoke("analysis:overview"),
+  getRoiStats: (args) => invoke("analysis:roi-stats", args),
   getRevenueTrend: () => invoke("analysis:revenue-trend"),
   getCategorySalesMtd: () => invoke("analysis:category-sales"),
   getSalesSummaryMtd: () => invoke("analysis:sales-summary"),

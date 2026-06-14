@@ -6,8 +6,8 @@ export const st = {
   subtitle: { marginTop: 5, fontSize: 13, color: "var(--text-secondary)" },
   exportBtn: { height: 40, padding: "0 18px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface)", fontSize: 13, fontWeight: 600, cursor: "pointer", color: "var(--text-primary)" },
 
-  navStrip: { display: "flex", gap: 4, background: "var(--border)", borderRadius: 12, padding: 4 },
-  navBtn: { flex: 1, padding: "10px 0", border: "none", borderRadius: 9, background: "transparent", fontSize: 13, fontWeight: 600, color: "var(--text-secondary)", cursor: "pointer" },
+  navStrip: { display: "flex", gap: 6, background: "var(--border)", borderRadius: 12, padding: 4, width: "fit-content" },
+  navBtn: { padding: "10px 20px", border: "none", borderRadius: 9, background: "transparent", fontSize: 13, fontWeight: 600, color: "var(--text-secondary)", cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.2s ease" },
   navBtnActive: { background: "var(--surface)", color: "var(--text-primary)", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" },
 
   statusBar: { display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 },

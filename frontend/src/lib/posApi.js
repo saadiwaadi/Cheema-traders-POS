@@ -229,6 +229,11 @@ export async function saveExpense(payload) {
   return httpJson("/expenses", { method: "POST", body: JSON.stringify(payload) });
 }
 
+export async function deleteExpense(id) {
+  if (usingIpc()) return window.ipc.invoke("pos:expenses:delete", id);
+  return httpJson(`/expenses/${id}`, { method: "DELETE" });
+}
+
 export async function listSales(args = {}) {
   if (usingIpc()) return window.pos.listSales(args);
   const query = new URLSearchParams();
@@ -367,6 +372,11 @@ export async function importBackup(sourcePath) {
   });
 }
 
+export async function resetDatabase() {
+  if (usingIpc()) return window.ipc.invoke("system:reset-data");
+  return httpJson("/backup/reset-data", { method: "POST" });
+}
+
 export async function getCashBook(args = {}) {
   if (usingIpc()) return window.pos.getCashBook(args);
   const query = new URLSearchParams();
@@ -474,4 +484,29 @@ export async function getDbInfo() {
     if (window.ipc) return window.ipc.invoke("db:info");
   }
   return httpJson("/db/info");
+}
+
+export async function deleteBackup(path) {
+  if (usingIpc()) {
+    if (window.ipc) return window.ipc.invoke("system:delete-backup", path);
+  }
+  return httpJson("/backup/delete", { method: "POST", body: JSON.stringify({ path }) });
+}
+
+export async function getLicenseInfo() {
+  if (usingIpc() && window.pos.getLicenseInfo) return window.pos.getLicenseInfo();
+  return httpJson("/license/info");
+}
+
+export async function activateLicense(payload) {
+  if (usingIpc() && window.pos.activateLicense) return window.pos.activateLicense(payload);
+  return httpJson("/license/activate", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function getRoiStats(args) {
+  if (usingIpc() && window.pos.getRoiStats) return window.pos.getRoiStats(args);
+  const query = new URLSearchParams();
+  if (args?.from) query.set("from", args.from);
+  if (args?.to) query.set("to", args.to);
+  return httpJson(`/analysis/roi-stats?${query.toString()}`);
 }

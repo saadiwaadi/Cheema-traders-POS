@@ -61,7 +61,8 @@
       "database/**/*",
       "frontend/dist/**/*",
       "node_modules/**/*",
-      "package.json"
+      "package.json",
+      "!docs/**/*"
     ]
   }
 }

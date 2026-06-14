@@ -187,33 +187,33 @@ export default function CashBookPage() {
                 {/* Cash balance */}
                 <div style={{ ...st.card, borderLeft: `3px solid ${closingCash >= 0 ? '#388e3c' : '#d32f2f'}` }}>
                     <div style={st.cardLabel}>Cash in Hand</div>
-                    <div style={{ ...st.cardAmount, color: closingCash >= 0 ? '#1b3a1d' : '#d32f2f' }}>
+                    <div style={{ ...st.cardAmount, color: closingCash >= 0 ? 'var(--text-primary)' : 'var(--danger)' }}>
                         Rs. {fmt(closingCash)}
                     </div>
                     <div style={st.cardMetrics}>
-                        <span style={{ color: '#388e3c' }}>In Rs. {fmt(totalCashIn)}</span>
-                        <span style={{ color: '#d32f2f' }}>Out Rs. {fmt(totalCashOut)}</span>
+                        <span style={{ color: 'var(--success)' }}>In Rs. {fmt(totalCashIn)}</span>
+                        <span style={{ color: 'var(--danger)' }}>Out Rs. {fmt(totalCashOut)}</span>
                     </div>
                     <div style={st.cardHint}>Count physical cash — should match this number</div>
                 </div>
 
                 {/* Bank balance */}
-                <div style={{ ...st.card, borderLeft: `3px solid ${closingBank >= 0 ? '#1976d2' : '#d32f2f'}` }}>
+                <div style={{ ...st.card, borderLeft: `3px solid ${closingBank >= 0 ? 'var(--accent, #1976d2)' : '#d32f2f'}` }}>
                     <div style={st.cardLabel}>Bank Balance</div>
-                    <div style={{ ...st.cardAmount, color: closingBank >= 0 ? '#1b3a1d' : '#d32f2f' }}>
+                    <div style={{ ...st.cardAmount, color: closingBank >= 0 ? 'var(--text-primary)' : 'var(--danger)' }}>
                         Rs. {fmt(closingBank)}
                     </div>
                     <div style={st.cardMetrics}>
-                        <span style={{ color: '#388e3c' }}>In Rs. {fmt(totalBankIn)}</span>
-                        <span style={{ color: '#d32f2f' }}>Out Rs. {fmt(totalBankOut)}</span>
+                        <span style={{ color: 'var(--success)' }}>In Rs. {fmt(totalBankIn)}</span>
+                        <span style={{ color: 'var(--danger)' }}>Out Rs. {fmt(totalBankOut)}</span>
                     </div>
                     <div style={st.cardHint}>Compare against bank statement</div>
                 </div>
 
                 {/* Net Movement */}
-                <div style={{ ...st.card, borderLeft: `3px solid #2e7d32` }}>
+                <div style={{ ...st.card, borderLeft: `3px solid var(--success)` }}>
                     <div style={st.cardLabel}>Net Movement</div>
-                    <div style={{ ...st.cardAmount, color: '#1b3a1d' }}>
+                    <div style={{ ...st.cardAmount, color: 'var(--text-primary)' }}>
                         Rs. {fmt(closingCash + closingBank)}
                     </div>
                     <div style={st.cardHint}>Total net funds movement</div>
@@ -221,9 +221,9 @@ export default function CashBookPage() {
             </div>
 
             <div style={st.tableWrap}>
-                <div style={{ display: 'flex', gap: 8, padding: '12px 20px', borderBottom: '1px solid #c8d8c8', background: '#fafdfa', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: 8, padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface-secondary)', flexWrap: 'wrap' }}>
                     {Object.entries(byMethod).map(([method, total]) => (
-                        <div key={method} style={{ padding: '4px 12px', background: '#e8f5e9', border: '1px solid #c8d8c8', borderRadius: 4, fontSize: 12, fontWeight: 700, color: '#1b3a1d' }}>
+                        <div key={method} style={{ padding: '4px 12px', background: 'rgba(46, 125, 50, 0.15)', border: '1px solid var(--border)', borderRadius: 4, fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>
                             {method}: Rs {total.toLocaleString()}
                         </div>
                     ))}
@@ -245,13 +245,13 @@ export default function CashBookPage() {
                             position: sticky; 
                             top: 0; 
                             z-index: 10; 
-                            background: #ffffff; 
+                            background: var(--surface, #ffffff); 
                             padding: 12px 20px; 
                             font-size: 12px; 
                             font-weight: 600; 
-                            color: #6a8f6c; 
+                            color: var(--text-secondary, #6a8f6c); 
                             text-transform: uppercase; 
-                            border-bottom: 1px solid #c8d8c8; 
+                            border-bottom: 1px solid var(--border, #c8d8c8); 
                         }
                         .cashbook-table td { padding: 14px 20px; }
                         @keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 0.3; } 100% { opacity: 0.6; } }
@@ -301,33 +301,33 @@ export default function CashBookPage() {
                                                 </tr>
                                             )}
                                             <tr style={st.dataRow}>
-                                                <td style={{ fontFamily: 'monospace', fontSize: 13, color: '#6a8f6c' }}>
+                                                <td style={{ fontFamily: 'monospace', fontSize: 13, color: 'var(--text-secondary)' }}>
                                                     {e.entry_date}
                                                 </td>
-                                                <td style={{ fontSize: 14, color: '#333' }}>
+                                                <td style={{ fontSize: 14, color: 'var(--text-primary)' }}>
                                                     {e.description}
                                                     {e.receipt_number && (
-                                                        <span style={{ marginLeft: 6, fontSize: 12, color: '#888', fontFamily: 'monospace' }}>
+                                                         <span style={{ marginLeft: 6, fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
                                                             #{e.receipt_number}
                                                         </span>
                                                     )}
                                                 </td>
-                                                <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, color: e.cash_in > 0 ? '#388e3c' : '#bbb' }}>
+                                                <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, color: e.cash_in > 0 ? 'var(--success)' : 'rgba(150, 150, 150, 0.4)' }}>
                                                     {e.cash_in > 0 ? fmt(e.cash_in) : '—'}
                                                 </td>
-                                                <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, color: e.cash_out > 0 ? '#d32f2f' : '#bbb' }}>
+                                                <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, color: e.cash_out > 0 ? 'var(--danger)' : 'rgba(150, 150, 150, 0.4)' }}>
                                                     {e.cash_out > 0 ? fmt(e.cash_out) : '—'}
                                                 </td>
-                                                <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, color: e.bank_in > 0 ? '#388e3c' : '#bbb' }}>
+                                                <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, color: e.bank_in > 0 ? 'var(--success)' : 'rgba(150, 150, 150, 0.4)' }}>
                                                     {e.bank_in > 0 ? fmt(e.bank_in) : '—'}
                                                 </td>
-                                                <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, color: e.bank_out > 0 ? '#d32f2f' : '#bbb' }}>
+                                                <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, color: e.bank_out > 0 ? 'var(--danger)' : 'rgba(150, 150, 150, 0.4)' }}>
                                                     {e.bank_out > 0 ? fmt(e.bank_out) : '—'}
                                                 </td>
-                                                <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: e.cash_balance >= 0 ? '#1b3a1d' : '#d32f2f' }}>
+                                                <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: e.cash_balance >= 0 ? 'var(--text-primary)' : 'var(--danger)' }}>
                                                     {fmt(e.cash_balance)}
                                                 </td>
-                                                <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: e.bank_balance >= 0 ? '#1b3a1d' : '#d32f2f' }}>
+                                                <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: e.bank_balance >= 0 ? 'var(--text-primary)' : 'var(--danger)' }}>
                                                     {fmt(e.bank_balance)}
                                                 </td>
                                             </tr>
@@ -338,26 +338,26 @@ export default function CashBookPage() {
                         </tbody>
                         {withBalance.length > 0 && !loading && (
                             <tfoot>
-                                <tr style={{ borderTop: '2px solid #cde0cd', background: '#f9fcf9' }}>
-                                    <td colSpan={2} style={{ padding: '12px 16px', fontSize: 11, fontFamily: 'monospace', fontWeight: 700, textTransform: 'uppercase', color: '#6a8f6c' }}>
+                                <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--surface-secondary)' }}>
+                                    <td colSpan={2} style={{ padding: '12px 16px', fontSize: 11, fontFamily: 'monospace', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
                                         Period Total
                                     </td>
-                                    <td style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, fontSize: 14, color: '#388e3c', padding: '12px 16px' }}>
+                                    <td style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, fontSize: 14, color: 'var(--success)', padding: '12px 16px' }}>
                                         {fmt(totalCashIn)}
                                     </td>
-                                    <td style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, fontSize: 14, color: '#d32f2f', padding: '12px 16px' }}>
+                                    <td style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, fontSize: 14, color: 'var(--danger)', padding: '12px 16px' }}>
                                         {fmt(totalCashOut)}
                                     </td>
-                                    <td style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, fontSize: 14, color: '#388e3c', padding: '12px 16px' }}>
+                                    <td style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, fontSize: 14, color: 'var(--success)', padding: '12px 16px' }}>
                                         {fmt(totalBankIn)}
                                     </td>
-                                    <td style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, fontSize: 14, color: '#d32f2f', padding: '12px 16px' }}>
+                                    <td style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, fontSize: 14, color: 'var(--danger)', padding: '12px 16px' }}>
                                         {fmt(totalBankOut)}
                                     </td>
-                                    <td style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, fontSize: 14, padding: '12px 16px', color: closingCash >= 0 ? '#1b3a1d' : '#d32f2f' }}>
+                                    <td style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, fontSize: 14, padding: '12px 16px', color: closingCash >= 0 ? 'var(--text-primary)' : 'var(--danger)' }}>
                                         {fmt(closingCash)}
                                     </td>
-                                    <td style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, fontSize: 14, padding: '12px 16px', color: closingBank >= 0 ? '#1b3a1d' : '#d32f2f' }}>
+                                    <td style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, fontSize: 14, padding: '12px 16px', color: closingBank >= 0 ? 'var(--text-primary)' : 'var(--danger)' }}>
                                         {fmt(closingBank)}
                                     </td>
                                 </tr>
@@ -371,38 +371,38 @@ export default function CashBookPage() {
 }
 
 const st = {
-    page: { display: 'flex', flexDirection: 'column', height: '100%', background: '#f0f6f0', padding: 24, overflowY: 'auto', fontFamily: 'system-ui, sans-serif' },
+    page: { display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg, #f0f6f0)', padding: 24, overflowY: 'auto', fontFamily: 'system-ui, sans-serif' },
     pageHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
-    title: { margin: 0, fontSize: 24, fontWeight: 'bold', color: '#1b3a1d' },
-    subtitle: { margin: '4px 0 0 0', fontSize: 14, color: '#6a8f6c' },
+    title: { margin: 0, fontSize: 24, fontWeight: 'bold', color: 'var(--text-primary, #1b3a1d)' },
+    subtitle: { margin: '4px 0 0 0', fontSize: 14, color: 'var(--text-secondary, #6a8f6c)' },
     headerActions: { display: 'flex', gap: 12, alignItems: 'center' },
-    dateInput: { padding: '8px 12px', border: '1px solid #cde0cd', borderRadius: 4, outline: 'none', color: '#1b3a1d', fontSize: 13, fontFamily: 'monospace' },
-    btnGhost: { display: 'flex', alignItems: 'center', gap: 6, padding: "8px 14px", background: "#fff", border: "1px solid #cde0cd", borderRadius: 4, color: "#1b3a1d", fontWeight: 600, fontSize: 13, cursor: "pointer" },
+    dateInput: { padding: '8px 12px', border: '1px solid var(--border, #cde0cd)', borderRadius: 4, outline: 'none', color: 'var(--text-primary, #1b3a1d)', background: 'var(--input-bg, #fff)', fontSize: 13, fontFamily: 'monospace' },
+    btnGhost: { display: 'flex', alignItems: 'center', gap: 6, padding: "8px 14px", background: "var(--surface, #fff)", border: "1px solid var(--border, #cde0cd)", borderRadius: 4, color: "var(--text-primary, #1b3a1d)", fontWeight: 600, fontSize: 13, cursor: "pointer" },
 
     cardsGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 },
-    card: { background: '#fff', padding: '20px 24px', borderRadius: 4, border: '1px solid #c8d8c8' },
-    cardLabel: { fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#6a8f6c', marginBottom: 8 },
-    cardAmount: { fontSize: 28, fontFamily: 'monospace', fontWeight: 700, color: '#1b3a1d', marginBottom: 6 },
+    card: { background: 'var(--surface, #fff)', padding: '20px 24px', borderRadius: 4, border: '1px solid var(--border, #c8d8c8)' },
+    cardLabel: { fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary, #6a8f6c)', marginBottom: 8 },
+    cardAmount: { fontSize: 28, fontFamily: 'monospace', fontWeight: 700, color: 'var(--text-primary, #1b3a1d)', marginBottom: 6 },
     cardMetrics: { display: 'flex', gap: 24, fontSize: 13, fontFamily: 'monospace', fontWeight: 500 },
-    cardHint: { fontSize: 11, color: '#999', fontStyle: 'italic' },
+    cardHint: { fontSize: 11, color: 'var(--text-secondary, #999)', fontStyle: 'italic' },
 
-    tableWrap: { background: '#fff', borderRadius: 4, border: '1px solid #c8d8c8', overflow: 'hidden', display: 'flex', flexDirection: 'column' },
-    tableSearch: { padding: '14px 20px', borderBottom: '1px solid #c8d8c8', display: 'flex', alignItems: 'center', gap: 10, background: '#fafdfa' },
-    searchInput: { border: 'none', outline: 'none', background: 'transparent', fontSize: 14, color: '#1b3a1d', width: '100%', padding: '4px 0' },
+    tableWrap: { background: 'var(--surface, #fff)', borderRadius: 4, border: '1px solid var(--border, #c8d8c8)', overflow: 'hidden', display: 'flex', flexDirection: 'column' },
+    tableSearch: { padding: '14px 20px', borderBottom: '1px solid var(--border, #c8d8c8)', display: 'flex', alignItems: 'center', gap: 10, background: 'var(--surface-secondary, #fafdfa)' },
+    searchInput: { border: 'none', outline: 'none', background: 'transparent', fontSize: 14, color: 'var(--text-primary, #1b3a1d)', width: '100%', padding: '4px 0' },
 
     tableContainer: { overflowX: 'auto' },
     table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left' },
     dateSeparator: {
-        background: '#e8f5e9',
+        background: 'var(--surface-secondary, #e8f5e9)',
         padding: '16px 20px',
         fontSize: 12,
         fontFamily: 'system-ui, sans-serif',
         fontWeight: 700,
-        color: '#1b3a1d',
+        color: 'var(--text-primary, #1b3a1d)',
         letterSpacing: '0.07em',
-        borderBottom: '2px solid #c8d8c8',
-        borderTop: '2px solid #c8d8c8',
+        borderBottom: '2px solid var(--border, #c8d8c8)',
+        borderTop: '2px solid var(--border, #c8d8c8)',
         textTransform: 'uppercase'
     },
-    dataRow: { borderBottom: '1px solid #f2f7f2' },
+    dataRow: { borderBottom: '1px solid var(--border, #f2f7f2)' },
 };

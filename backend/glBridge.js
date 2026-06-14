@@ -57,13 +57,18 @@ function accountId(db, code) {
   return row.id;
 }
 
+function clearAccountCache() {
+  for (const key in _accountCache) {
+    delete _accountCache[key];
+  }
+}
+
 // Maps payment method label → account code.
 // Used as a fallback if dynamic bank lookup fails.
 const METHOD_TO_CODE = {
   "cash":         "1000",
   "hbl bank":     "1010",
   "hbl":          "1010",
-  "ubl bank":     "1010",   // map UBL to HBL until you add a UBL account
   "meezan bank":  "1011",
   "meezan":       "1011",
   "jazzcash":     "1013",
@@ -557,4 +562,4 @@ function postExpense(db, expense) {
   }
 }
 
-module.exports = { postSale, postPayment, postPurchase, postSupplierPayment, voidSale, postBankTransfer, postExpense };
+module.exports = { postSale, postPayment, postPurchase, postSupplierPayment, voidSale, postBankTransfer, postExpense, clearAccountCache };

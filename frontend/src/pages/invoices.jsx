@@ -689,20 +689,18 @@ export default function InvoiceHistoryModule() {
                       type="checkbox"
                       onChange={(e) => {
                         if (e.target.checked) {
-                          setSelectedRows(
-                             paginated.map((i) => i.id)
-                          );
+                          setSelectedRows(paginated.map((i) => i.id));
                         } else {
                           setSelectedRows([]);
                         }
                       }}
+                      checked={selectedRows.length > 0 && selectedRows.length === paginated.length}
                     />
                   </th>
                   <th className="px-5 py-3">{t("invoices.invoice_client", "Invoice / Client")}</th>
                   <th className="px-5 py-3">{t("invoices.issue_date", "Issue Date")}</th>
                   <th className="px-5 py-3 text-right">{t("invoices.amount", "Amount")}</th>
                   <th className="px-5 py-3">{t("invoices.status", "Status")}</th>
-                  <th className="px-5 py-3 w-12"></th>
                 </tr>
               </thead>
 
@@ -719,13 +717,12 @@ export default function InvoiceHistoryModule() {
                       <td className="px-5 py-4"><div className="h-4 w-20 bg-neutral-200 rounded-sm" /></td>
                       <td className="px-5 py-4 text-right"><div className="h-4 w-24 bg-neutral-200 rounded-sm ml-auto" /></td>
                       <td className="px-5 py-4"><div className="h-4 w-16 bg-neutral-200 rounded-sm" /></td>
-                      <td className="px-5 py-4"><div className="h-4 w-8 bg-neutral-200 rounded-sm" /></td>
                     </tr>
                   ))
                 ) : filteredInvoices.length === 0 ? (
                   /* EMPTY STATE */
                   <tr>
-                    <td colSpan={6} className="px-5 py-12 text-center">
+                    <td colSpan={5} className="px-5 py-12 text-center">
                       <div className="flex flex-col items-center justify-center space-y-3">
                         <FileText size={36} className="text-neutral-300" />
                         <div>
@@ -748,145 +745,44 @@ export default function InvoiceHistoryModule() {
                   </tr>
                 ) : (
                   paginated.map((invoice) => {
-                    const isExpanded = expandedRows[invoice.id];
-
                     return (
-                      <React.Fragment key={invoice.id}>
-                        <tr
-                          className={`cursor-pointer transition hover:bg-[#f7fbf7] ${isExpanded ? "bg-[#fcfdfc]" : ""}`}
-                          onClick={async () => {
-                            const isOpening = !isExpanded;
-                            setExpandedRows(prev => ({ ...prev, [invoice.id]: isOpening }));
-                            if (isOpening) {
-                              await fetchInvoiceDetails(invoice.id);
-                            }
-                          }}
+                      <tr
+                        key={invoice.id}
+                        className="cursor-pointer transition hover:bg-[#f7fbf7]"
+                        onClick={() => openDrawer(invoice)}
+                      >
+                        <td
+                          className="px-5 py-3"
+                          onClick={(e) => e.stopPropagation()}
                         >
-                          <td
-                            className="px-5 py-3"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={selectedRows.includes(invoice.id)}
-                              onChange={() => toggleSelect(invoice.id)}
-                            />
-                          </td>
+                          <input
+                            type="checkbox"
+                            checked={selectedRows.includes(invoice.id)}
+                            onChange={() => toggleSelect(invoice.id)}
+                          />
+                        </td>
 
-                          <td className="px-5 py-3">
-                            <div className="flex items-center gap-3">
-                              {isExpanded ? <ChevronUp size={14} className="text-[#6a8f6c]" /> : <ChevronDown size={14} className="text-[#6a8f6c]" />}
-                              <div>
-                                <p className="font-semibold text-sm text-[#1b3a1d]">{invoice.invoiceNo || invoice.id}</p>
-                                <p className="text-xs text-neutral-500">{invoice.client}</p>
-                              </div>
-                            </div>
-                          </td>
+                        <td className="px-5 py-3">
+                          <div>
+                            <p className="font-semibold text-sm text-[#1b3a1d]">{invoice.invoiceNo || invoice.id}</p>
+                            <p className="text-xs text-neutral-500">{invoice.client}</p>
+                          </div>
+                        </td>
 
-                          <td className="px-5 py-3 text-xs font-mono">
-                            {formatDate(invoice.issueDate)}
-                          </td>
+                        <td className="px-5 py-3 text-xs font-mono">
+                          {formatDate(invoice.issueDate)}
+                        </td>
 
-                          <td className="px-5 py-3 text-right text-sm font-semibold font-mono text-[#1b3a1d]">
-                            {formatMoney(invoice.total)}
-                          </td>
+                        <td className="px-5 py-3 text-right text-sm font-semibold font-mono text-[#1b3a1d]">
+                          {formatMoney(invoice.total)}
+                        </td>
 
-                          <td className="px-5 py-3 text-xs">
-                            <span className={`px-2 py-0.5 ${statusStyles[invoice.status] || ""}`}>
-                              {t("invoices.status_" + invoice.status.toLowerCase(), invoice.status)}
-                            </span>
-                          </td>
-
-                          <td
-                            className="px-5 py-3"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <div className="group relative inline-block">
-                              <button className="rounded-sm p-1.5 hover:bg-neutral-100 outline-none">
-                                <MoreVertical size={16} />
-                              </button>
-
-                              <div className="invisible absolute right-0 z-20 mt-1 w-52 rounded-sm border border-[#c8d8c8] bg-white p-1.5 opacity-0 shadow-lg transition-all group-hover:visible group-hover:opacity-100">
-                                {[
-                                  { key: "invoices.action_view_details", label: "View Details", icon: FileText, action: (inv) => openDrawer(inv) },
-                                  { key: "invoices.action_print", label: "Print Invoice", icon: Download, action: (inv) => handleDownloadPDF(inv) },
-                                  { key: "invoices.action_mark_paid", label: "Mark as Paid", icon: CheckCircle2, action: (inv) => triggerOnePaid(inv) },
-                                  { key: "invoices.action_return", label: "Return Items", icon: RotateCcw, action: (inv) => {
-                                    setReturnInvoice(inv);
-                                    fetchInvoiceDetails(inv.id);
-                                  } },
-                                  { key: "invoices.action_delete", label: "Delete (Void)", icon: Trash2, action: (inv) => deleteInvoice(inv.id) },
-                                ].map((item) => (
-                                  <button
-                                    key={item.label}
-                                    onClick={() => item.action(invoice)}
-                                    className="flex w-full items-center gap-2.5 rounded-sm px-2.5 py-1.5 text-left text-xs hover:bg-[#f5f8f5] text-neutral-700 outline-none"
-                                  >
-                                    <item.icon size={14} className="text-[#6a8f6c]" />
-                                    {t(item.key, item.label)}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          </td>
-                        </tr>
-
-                        {/* PROPER INLINE EXPANSION */}
-                        {isExpanded && (
-                          <tr className="bg-[#f7fbf7] border-b border-[#c8d8c8]">
-                            <td colSpan={6} className="px-12 py-3">
-                              {!invoice.itemsLoaded ? (
-                                <div className="py-4 text-center text-xs text-[#2e7d32] font-semibold">{t("invoices.loading_details", "Loading details...")}</div>
-                              ) : (
-                                <div className="border border-[#c8d8c8] rounded-sm bg-white p-4">
-                                  <h4 className="font-bold text-[10px] uppercase text-[#1b3a1d] tracking-wider mb-2.5">{t("invoices.invoice_items", "Invoice Items")}</h4>
-                                  <table className="w-full text-xs text-left">
-                                    <thead className="bg-[#f5f8f5] text-[10px] font-bold text-[#6a8f6c] uppercase tracking-wider border-b border-[#c8d8c8]">
-                                      <tr>
-                                        <th className="px-4 py-2">{t("invoices.product_name", "Product Name")}</th>
-                                        <th className="px-4 py-2 text-right">{t("invoices.qty", "Qty")}</th>
-                                        <th className="px-4 py-2 text-right">{t("invoices.unit_price", "Unit Price")}</th>
-                                        <th className="px-4 py-2 text-right">{t("invoices.line_total", "Line Total")}</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-neutral-100">
-                                      {invoice.items.map((item, idx) => (
-                                        <tr key={idx}>
-                                          <td className="px-4 py-2">{item.name}</td>
-                                          <td className="px-4 py-2 text-right font-mono">{item.qty}</td>
-                                          <td className="px-4 py-2 text-right font-mono">{formatMoney(item.price)}</td>
-                                          <td className="px-4 py-2 text-right font-mono font-semibold">{formatMoney(item.lineTotal || (item.qty * item.price))}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                  <div className="mt-3 flex gap-2 justify-end">
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setReturnInvoice(invoice);
-                                        fetchInvoiceDetails(invoice.id);
-                                      }}
-                                      className="text-[11px] font-semibold px-3 py-1.5 rounded-sm border border-[#cde0cd] hover:bg-neutral-50"
-                                    >
-                                      {t("invoices.btn_return_items", "↩ Return Items")}
-                                    </button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        openDrawer(invoice);
-                                      }}
-                                      className="text-[11px] font-semibold px-3 py-1.5 rounded-sm bg-[#2e7d32] text-white hover:opacity-90"
-                                    >
-                                      {t("invoices.btn_full_details", "Full Details")}
-                                    </button>
-                                  </div>
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
+                        <td className="px-5 py-3 text-xs">
+                          <span className={`px-2 py-0.5 ${statusStyles[invoice.status] || ""}`}>
+                            {t("invoices.status_" + invoice.status.toLowerCase(), invoice.status)}
+                          </span>
+                        </td>
+                      </tr>
                     );
                   })
                 )}
@@ -986,6 +882,17 @@ export default function InvoiceHistoryModule() {
               >
                 {t("invoices.action_delete", "Void")}
               </button>
+              {drawerInvoice.status !== "Returned" && (
+                <button
+                  onClick={() => {
+                    setReturnInvoice(drawerInvoice);
+                    setDrawerInvoice(null);
+                  }}
+                  className="flex-1 rounded-sm border border-[#cde0cd] bg-white py-2 px-3 font-semibold text-neutral-700 hover:bg-neutral-50 outline-none cursor-pointer"
+                >
+                  {t("invoices.action_return", "Return Items")}
+                </button>
+              )}
             </div>
 
             {/* Scrollable Content */}

@@ -17,7 +17,7 @@ import JournalPage from "./Journal";
 import CashBookPage from "./CashBook";
 import BanksPage from "./banks";
 import AnalysisPage from "./analysis/AnalysisShell";
-import { getDashboardSummary, getMonthlyReport, getTopDebtors } from "../lib/posApi";
+import { getDashboardSummary, getMonthlyReport, getTopDebtors, getLicenseInfo } from "../lib/posApi";
 import OverviewWorkspace from "./analysis/OverviewWorkspace";
 import SettingsPage from "./settings";
 import ChartOfAccountsPage from "./ChartOfAccounts";
@@ -51,11 +51,30 @@ const STAFF_VISIBLE = ["home", "sales", "invoices", "products", "customers", "se
 export default function Dashboard() {
   const [active, setActive] = useState("home");
   const [showWelcome, setShowWelcome] = useState(true);
+  const [licenseInfo, setLicenseInfo] = useState(null);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
   const [summary, setSummary] = useState(null);
   const [monthlyData, setMonthlyData] = useState([]);
   const [topDebtors, setTopDebtors] = useState([]);
   const [hideFinancials, setHideFinancials] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    return localStorage.getItem("sidebarCollapsed") === "true";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("sidebarCollapsed", sidebarCollapsed);
+  }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 1024) {
+        setSidebarCollapsed(true);
+      }
+    };
+    window.addEventListener("resize", handleResize);
+    handleResize(); // Trigger on mount
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
   
   // Theme, language & zoom level from centralized context
   const {
@@ -91,14 +110,28 @@ export default function Dashboard() {
   useEffect(() => { const t = setTimeout(() => setShowWelcome(false), 1200); return () => clearTimeout(t); }, []);
 
   useEffect(() => {
+    if (active !== "home") return;
     let alive = true;
     getDashboardSummary().then(d => { if (alive) setSummary(d); }).catch(() => { });
     getMonthlyReport().then(d => { if (alive && Array.isArray(d)) setMonthlyData(d); }).catch(() => { });
     getTopDebtors().then(d => { if (alive && Array.isArray(d)) setTopDebtors(d); }).catch(() => { });
     return () => { alive = false; };
-  }, []);
+  }, [active]);
 
   const handleLogout = () => { localStorage.removeItem("user"); navigate("/"); };
+  
+  const fetchLicenseInfo = async () => {
+    try {
+      const info = await getLicenseInfo();
+      setLicenseInfo(info);
+    } catch (err) {
+      console.error("Failed to load license details:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchLicenseInfo();
+  }, []);
 
   const today = new Date().toLocaleDateString("en-PK", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
@@ -132,14 +165,20 @@ export default function Dashboard() {
       {/* ───── Sidebar ───── */}
       <aside style={{ ...s.sidebar, width: sidebarCollapsed ? 56 : 210 }}>
         <div style={s.sidebarTop}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
             <div style={s.logoMark}>CT</div>
-            {!sidebarCollapsed && (
-              <div>
-                <div style={s.brandName}>Cheema Traders</div>
-                <div style={s.brandTag}>Point of Sale</div>
-              </div>
-            )}
+            <div style={{
+              display: "flex",
+              flexDirection: "column",
+              opacity: sidebarCollapsed ? 0 : 1,
+              width: sidebarCollapsed ? 0 : "auto",
+              overflow: "hidden",
+              whiteSpace: "nowrap",
+              transition: "opacity 0.2s ease, width 0.2s ease",
+            }}>
+              <div style={s.brandName}>Cheema Traders</div>
+              <div style={s.brandTag}>Point of Sale</div>
+            </div>
           </div>
           <button onClick={() => setSidebarCollapsed(!sidebarCollapsed)} style={s.collapseBtn}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
@@ -151,7 +190,16 @@ export default function Dashboard() {
         <nav style={s.nav}>
           {Object.entries(visibleNav).map(([section, items]) => (
             <div key={section} style={{ marginBottom: 6 }}>
-              {!sidebarCollapsed && <div style={s.navSection}>{t(`sections.${section}`, SECTION_LABELS[section])}</div>}
+              <div style={{
+                ...s.navSection,
+                opacity: sidebarCollapsed ? 0 : 1,
+                maxHeight: sidebarCollapsed ? 0 : 20,
+                overflow: "hidden",
+                transition: "opacity 0.2s ease, maxHeight 0.2s ease, padding 0.2s ease",
+                padding: sidebarCollapsed ? "0" : "10px 10px 3px",
+              }}>
+                {t(`sections.${section}`, SECTION_LABELS[section])}
+              </div>
               {items.map(item => {
                 const isActive = active === item.id;
                 return (
@@ -161,15 +209,24 @@ export default function Dashboard() {
                     style={{
                       ...s.navItem,
                       ...(isActive ? s.navItemActive : {}),
-                      justifyContent: sidebarCollapsed ? "center" : "flex-start",
-                      padding: sidebarCollapsed ? "9px 0" : "8px 10px",
+                      padding: sidebarCollapsed ? "9px 19px" : "8px 10px",
+                      transition: "all 0.2s ease",
                     }}
                     title={sidebarCollapsed ? t(`nav.${item.id}`, item.label) : undefined}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0, opacity: isActive ? 1 : 0.7 }}>
                       <path d={item.icon} />
                     </svg>
-                    {!sidebarCollapsed && <span>{t(`nav.${item.id}`, item.label)}</span>}
+                    <span style={{
+                      opacity: sidebarCollapsed ? 0 : 1,
+                      width: sidebarCollapsed ? 0 : "auto",
+                      overflow: "hidden",
+                      whiteSpace: "nowrap",
+                      transition: "opacity 0.2s ease, width 0.2s ease",
+                      marginLeft: sidebarCollapsed ? 0 : 8,
+                    }}>
+                      {t(`nav.${item.id}`, item.label)}
+                    </span>
                   </div>
                 );
               })}
@@ -178,27 +235,52 @@ export default function Dashboard() {
         </nav>
 
         <div style={s.sidebarFooter}>
-          {!sidebarCollapsed && (
-            <div style={s.userCard}>
-              <div style={s.avatar}>{(user?.role || "AD").slice(0, 2).toUpperCase()}</div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={s.userName}>{user?.role || "Admin"}</div>
-                <div style={s.userOnline}><span style={s.onlineDot} /> Active</div>
-              </div>
+          <div style={{
+            ...s.userCard,
+            opacity: sidebarCollapsed ? 0 : 1,
+            maxHeight: sidebarCollapsed ? 0 : 60,
+            overflow: "hidden",
+            transition: "opacity 0.2s ease, maxHeight 0.2s ease, padding 0.2s ease, margin 0.2s ease",
+            padding: sidebarCollapsed ? "0" : "6px 8px",
+            marginBottom: sidebarCollapsed ? 0 : 6,
+            border: sidebarCollapsed ? "0 solid transparent" : "1px solid var(--border, #c8e6c9)",
+          }}>
+            <div style={s.avatar}>{(user?.role || "AD").slice(0, 2).toUpperCase()}</div>
+            <div style={{ flex: 1, minWidth: 0, opacity: sidebarCollapsed ? 0 : 1, transition: "opacity 0.2s ease" }}>
+              <div style={s.userName}>{user?.role || "Admin"}</div>
+              <div style={s.userOnline}><span style={s.onlineDot} /> Active</div>
             </div>
-          )}
-          <button onClick={handleLogout} style={s.logoutBtn}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+          </div>
+
+          <button onClick={handleLogout} style={{ ...s.logoutBtn, padding: sidebarCollapsed ? "7px 0" : "7px 12px", transition: "all 0.2s ease" }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}>
               <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z" />
             </svg>
-            {!sidebarCollapsed && t("nav.logout", "Logout")}
+            <span style={{
+              opacity: sidebarCollapsed ? 0 : 1,
+              width: sidebarCollapsed ? 0 : "auto",
+              overflow: "hidden",
+              whiteSpace: "nowrap",
+              transition: "opacity 0.2s ease, width 0.2s ease",
+              marginLeft: sidebarCollapsed ? 0 : 6,
+            }}>
+              {t("nav.logout", "Logout")}
+            </span>
           </button>
-          {!sidebarCollapsed && (
+
+          <div style={{
+            opacity: sidebarCollapsed ? 0 : 1,
+            maxHeight: sidebarCollapsed ? 0 : 40,
+            overflow: "hidden",
+            transition: "opacity 0.2s ease, maxHeight 0.2s ease",
+            textAlign: "center",
+            padding: sidebarCollapsed ? "0" : "8px 0 6px",
+          }}>
             <div style={s.poweredBy}>
               <div>Powered by <strong style={{ color: "#537a55" }}>BitLogic</strong> · 0317-8440437</div>
               {electronVersion && <div style={{ fontSize: 9, opacity: 0.6, marginTop: 2 }}>Electron {electronVersion}</div>}
             </div>
-          )}
+          </div>
         </div>
       </aside>
 
@@ -290,6 +372,50 @@ export default function Dashboard() {
 
               {/* Page content */}
               <div style={s.content}>
+                {active === "home" && licenseInfo && !bannerDismissed && (licenseInfo.status === "unlicensed_grace" || licenseInfo.status === "expired_grace") && (
+                  <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    background: "linear-gradient(90deg, #fff3e0 0%, #ffe0b2 100%)",
+                    borderLeft: "5px solid #ff9800",
+                    padding: "12px 20px",
+                    borderRadius: "12px",
+                    marginBottom: "20px",
+                    boxShadow: "0 4px 12px rgba(255, 152, 0, 0.08)",
+                    color: "#e65100",
+                    fontSize: "14px",
+                    fontWeight: "500",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                        <line x1="12" y1="9" x2="12" y2="13" />
+                        <line x1="12" y1="17" x2="12.01" y2="17" />
+                      </svg>
+                      <span>
+                        {licenseInfo.status === "unlicensed_grace"
+                          ? `Software unlicensed — activate in Settings → License (Grace Period: ${licenseInfo.graceDaysRemaining} days remaining)`
+                          : `License expired on ${licenseInfo.expiryDate}. Please renew. (Grace Period: ${licenseInfo.graceDaysRemaining} days remaining)`}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setBannerDismissed(true)}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: "#e65100",
+                        cursor: "pointer",
+                        fontWeight: "bold",
+                        fontSize: "18px",
+                        padding: "0 6px",
+                        outline: "none"
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
                 {active === "home" && allowedModules.includes("home") && (
                   <HomeView
                     user={user}
@@ -305,7 +431,7 @@ export default function Dashboard() {
                 {active === "products" && allowedModules.includes("products") && <InventoryManagementPage />}
                 {active === "customers" && allowedModules.includes("customers") && <CustomersPage />}
                 {active === "payments" && allowedModules.includes("payments") && <PaymentsPage />}
-                {active === "settings" && allowedModules.includes("settings") && <SettingsPage user={user} />}
+                {active === "settings" && allowedModules.includes("settings") && <SettingsPage user={user} onLicenseUpdate={fetchLicenseInfo} />}
                 {active === "expenses" && allowedModules.includes("expenses") && <ExpensesPage />}
                 {active === "banks" && allowedModules.includes("banks") && <BanksPage />}
                 {active === "cashbook" && allowedModules.includes("cashbook") && <CashBookPage />}
@@ -321,6 +447,91 @@ export default function Dashboard() {
           )}
         </AnimatePresence>
       </div>
+
+      {/* 🔒 Hard Lock Blocker Overlay */}
+      {licenseInfo?.hardLocked && active !== "settings" && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: "rgba(0, 0, 0, 0.85)",
+          backdropFilter: "blur(10px)",
+          zIndex: 99999,
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          fontFamily: "'Inter', sans-serif"
+        }}>
+          <div style={{
+            background: "var(--surface-primary, #ffffff)",
+            padding: "40px",
+            borderRadius: "24px",
+            width: "480px",
+            textAlign: "center",
+            boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.5)",
+            border: "1px solid var(--border, #e0e0e0)"
+          }}>
+            <div style={{
+              width: "70px",
+              height: "70px",
+              borderRadius: "50%",
+              backgroundColor: "#ffebee",
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              margin: "0 auto 24px",
+              color: "#d32f2f"
+            }}>
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+            </div>
+
+            <h2 style={{
+              fontSize: "24px",
+              fontWeight: "700",
+              color: "#c62828",
+              margin: "0 0 12px 0"
+            }}>
+              System Locked
+            </h2>
+
+            <p style={{
+              fontSize: "15px",
+              color: "#555555",
+              lineHeight: "1.6",
+              margin: "0 0 24px 0"
+            }}>
+              {licenseInfo.status === "expired_locked"
+                ? `Your software license expired on ${licenseInfo.expiryDate} and the 7-day grace period has ended.`
+                : "Your software is unlicensed and the 7-day grace period has ended."}
+              <br />
+              Please activate your license to resume normal operations.
+            </p>
+
+            <button
+              onClick={() => setActive("settings")}
+              style={{
+                height: "48px",
+                borderRadius: "12px",
+                border: "none",
+                background: "#43a047",
+                color: "#ffffff",
+                fontSize: "16px",
+                fontWeight: "600",
+                cursor: "pointer",
+                boxShadow: "0 4px 12px rgba(67, 160, 71, 0.2)",
+                width: "100%"
+              }}
+            >
+              Go to Settings &rarr; License
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -792,7 +1003,7 @@ const s = {
     display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
   },
   poweredBy: {
-    textAlign: "center", padding: "8px 0 6px", fontSize: 9.5,
+    textAlign: "center", padding: 0, fontSize: 9.5,
     color: "var(--text-secondary, #8aab8c)", letterSpacing: "0.03em", userSelect: "none",
   },
 

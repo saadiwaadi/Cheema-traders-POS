@@ -242,7 +242,12 @@ function ChartOfAccountsContent() {
       </div>
 
       {msg && (
-        <div style={{ ...s.msg, background: msg.type === 'error' ? '#FEF2F2' : '#F0FDF4', color: msg.type === 'error' ? '#DC2626' : '#15803D', border: `1px solid ${msg.type === 'error' ? '#FCA5A5' : '#86EFAC'}` }}>
+        <div style={{
+          ...s.msg,
+          background: msg.type === 'error' ? 'rgba(198, 40, 40, 0.15)' : 'rgba(46, 125, 50, 0.15)',
+          color: msg.type === 'error' ? 'var(--danger)' : 'var(--success)',
+          border: `1.5px solid ${msg.type === 'error' ? 'var(--danger)' : 'var(--success)'}`
+        }}>
           {msg.text}
         </div>
       )}
@@ -256,17 +261,17 @@ function ChartOfAccountsContent() {
         <div style={s.kpiDivider} />
         <div style={s.kpiItem}>
           <div style={s.kpiLabel}>Active</div>
-          <div style={{...s.kpiValue, color: '#15803D'}}>{activeAccounts}</div>
+          <div style={{...s.kpiValue, color: 'var(--success)'}}>{activeAccounts}</div>
         </div>
         <div style={s.kpiDivider} />
         <div style={s.kpiItem}>
           <div style={s.kpiLabel}>Inactive</div>
-          <div style={{...s.kpiValue, color: '#64748B'}}>{inactiveAccounts}</div>
+          <div style={{...s.kpiValue, color: 'var(--text-secondary)'}}>{inactiveAccounts}</div>
         </div>
         <div style={s.kpiDivider} />
         <div style={s.kpiItem}>
           <div style={s.kpiLabel}>Control Accounts</div>
-          <div style={{...s.kpiValue, color: '#D97706'}}>{controlAccounts}</div>
+          <div style={{...s.kpiValue, color: 'var(--accent)'}}>{controlAccounts}</div>
         </div>
       </div>
 
@@ -364,13 +369,13 @@ function ChartOfAccountsContent() {
                             <span style={s.codeText}>{acc.code}</span>
                           </div>
                         </td>
-                        <td style={{...s.td, color: acc.hasChildren ? '#0F172A' : '#334155', fontWeight: acc.hasChildren ? 600 : 400}}>
+                        <td style={{...s.td, color: acc.hasChildren ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: acc.hasChildren ? 600 : 400}}>
                           {acc.name}
                         </td>
                         <td style={s.td}>
                           <span style={s.typeLabel}>{acc.type}</span>
                         </td>
-                        <td style={{...s.td, textAlign: 'center', color: '#64748B'}}>
+                        <td style={{...s.td, textAlign: 'center', color: 'var(--text-secondary)'}}>
                           {getNormalSide(acc.type)}
                         </td>
                         <td style={s.td}>
@@ -409,7 +414,7 @@ function ChartOfAccountsContent() {
                                 <div style={s.dropdownItem} onClick={(e) => { e.stopPropagation(); handleEditClick(acc); setOpenMenuId(null); }}>
                                   <Edit2 size={14} /> Edit Account
                                 </div>
-                                <div style={{...s.dropdownItem, color: '#DC2626'}} onClick={(e) => { e.stopPropagation(); handleDeleteClick(acc.id, acc.name); setOpenMenuId(null); }}>
+                                <div style={{...s.dropdownItem, color: 'var(--danger)'}} onClick={(e) => { e.stopPropagation(); handleDeleteClick(acc.id, acc.name); setOpenMenuId(null); }}>
                                   <Trash2 size={14} /> Deactivate
                                 </div>
                               </div>
@@ -509,70 +514,70 @@ function ChartOfAccountsContent() {
 }
 
 const s = {
-  page: { background: '#F8FAFC', minHeight: '100%', padding: '24px 32px', fontFamily: 'Inter, system-ui, sans-serif', color: '#0F172A', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' },
+  page: { background: 'var(--bg, #F8FAFC)', minHeight: '100%', padding: '24px 32px', fontFamily: 'Inter, system-ui, sans-serif', color: 'var(--text-primary, #0F172A)', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },
-  title: { margin: 0, fontSize: 24, fontWeight: 600, color: '#0F172A', letterSpacing: '-0.02em' },
-  subtitle: { margin: '4px 0 0', fontSize: 14, color: '#64748B' },
-  btnPrimary: { background: '#15803D', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' },
+  title: { margin: 0, fontSize: 24, fontWeight: 600, color: 'var(--text-primary, #0F172A)', letterSpacing: '-0.02em' },
+  subtitle: { margin: '4px 0 0', fontSize: 14, color: 'var(--text-secondary, #64748B)' },
+  btnPrimary: { background: 'var(--accent, #15803D)', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' },
   msg: { padding: '10px 14px', borderRadius: 6, fontSize: 13, marginBottom: 16 },
   
-  kpiStrip: { display: 'flex', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, padding: '12px 24px', marginBottom: 16, alignItems: 'center', gap: 24 },
+  kpiStrip: { display: 'flex', background: 'var(--surface, #FFFFFF)', border: '1px solid var(--border, #E2E8F0)', borderRadius: 8, padding: '12px 24px', marginBottom: 16, alignItems: 'center', gap: 24 },
   kpiItem: { display: 'flex', flexDirection: 'column', gap: 2 },
-  kpiLabel: { fontSize: 11, fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' },
-  kpiValue: { fontSize: 18, fontWeight: 700, color: '#0F172A', fontFamily: 'monospace' },
-  kpiDivider: { width: 1, height: 24, background: '#E2E8F0' },
+  kpiLabel: { fontSize: 11, fontWeight: 600, color: 'var(--text-secondary, #64748B)', textTransform: 'uppercase', letterSpacing: '0.04em' },
+  kpiValue: { fontSize: 18, fontWeight: 700, color: 'var(--text-primary, #0F172A)', fontFamily: 'monospace' },
+  kpiDivider: { width: 1, height: 24, background: 'var(--border, #E2E8F0)' },
 
   toolbar: { display: 'flex', gap: 12, marginBottom: 16 },
   searchWrap: { position: 'relative', width: 280 },
-  searchIcon: { position: 'absolute', left: 10, top: 9, color: '#94A3B8' },
-  searchInput: { width: '100%', boxSizing: 'border-box', padding: '8px 12px 8px 32px', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: 13, outline: 'none' },
+  searchIcon: { position: 'absolute', left: 10, top: 9, color: 'var(--text-secondary, #94A3B8)' },
+  searchInput: { width: '100%', boxSizing: 'border-box', padding: '8px 12px 8px 32px', border: '1px solid var(--border, #E2E8F0)', borderRadius: 6, fontSize: 13, outline: 'none', background: 'var(--input-bg, #fff)', color: 'var(--input-text, #0F172A)' },
   filterGroup: { display: 'flex', gap: 8 },
-  select: { padding: '8px 12px', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: 13, background: '#fff', color: '#0F172A', outline: 'none', minWidth: 120 },
+  select: { padding: '8px 12px', border: '1px solid var(--border, #E2E8F0)', borderRadius: 6, fontSize: 13, background: 'var(--input-bg, #fff)', color: 'var(--input-text, #0F172A)', outline: 'none', minWidth: 120 },
 
-  tableContainer: { flex: 1, background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'auto' },
+  tableContainer: { flex: 1, background: 'var(--surface, #FFFFFF)', border: '1px solid var(--border, #E2E8F0)', borderRadius: 8, overflow: 'auto' },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: 13 },
-  thead: { position: 'sticky', top: 0, background: '#F8FAFC', zIndex: 10, boxShadow: '0 1px 0 #E2E8F0' },
-  th: { padding: '10px 16px', textAlign: 'left', fontWeight: 600, color: '#475569', borderBottom: '1px solid #E2E8F0', whiteSpace: 'nowrap' },
-  tr: { borderBottom: '1px solid #F1F5F9', ':hover': { background: '#F8FAFC' } },
+  thead: { position: 'sticky', top: 0, background: 'var(--surface-secondary, #F8FAFC)', zIndex: 10, boxShadow: '0 1px 0 var(--border, #E2E8F0)' },
+  th: { padding: '10px 16px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary, #475569)', borderBottom: '1px solid var(--border, #E2E8F0)', whiteSpace: 'nowrap' },
+  tr: { borderBottom: '1px solid var(--border, #F1F5F9)' },
   td: { padding: '8px 16px', verticalAlign: 'middle' },
   
-  categoryRow: { background: '#F1F5F9' },
-  categoryName: { padding: '10px 16px', fontSize: 12, fontWeight: 700, color: '#334155', letterSpacing: '0.05em' },
-  categoryTotal: { padding: '10px 16px', textAlign: 'right', fontWeight: 700, fontFamily: 'monospace', color: '#0F172A', borderBottom: '1px solid #E2E8F0' },
+  categoryRow: { background: 'var(--surface-secondary, #F1F5F9)' },
+  categoryName: { padding: '10px 16px', fontSize: 12, fontWeight: 700, color: 'var(--text-primary, #334155)', letterSpacing: '0.05em' },
+  categoryTotal: { padding: '10px 16px', textAlign: 'right', fontWeight: 700, fontFamily: 'monospace', color: 'var(--text-primary, #0F172A)', borderBottom: '1px solid var(--border, #E2E8F0)' },
 
-  treeToggle: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, cursor: 'pointer', color: '#64748B', marginRight: 4, borderRadius: 4 },
+  treeToggle: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, cursor: 'pointer', color: 'var(--text-secondary, #64748B)', marginRight: 4, borderRadius: 4 },
   treeLeafSpacer: { width: 24 },
-  codeText: { fontFamily: 'monospace', fontWeight: 600, color: '#0F172A' },
-  typeLabel: { textTransform: 'capitalize', color: '#64748B' },
+  codeText: { fontFamily: 'monospace', fontWeight: 600, color: 'var(--text-primary, #0F172A)' },
+  typeLabel: { textTransform: 'capitalize', color: 'var(--text-secondary, #64748B)' },
   
   badgeWrap: { display: 'flex', gap: 4, flexWrap: 'wrap' },
-  badgeActive: { fontSize: 10, fontWeight: 600, background: '#DCFCE7', color: '#15803D', padding: '2px 6px', borderRadius: 4 },
-  badgeInactive: { fontSize: 10, fontWeight: 600, background: '#F1F5F9', color: '#64748B', padding: '2px 6px', borderRadius: 4 },
-  badgeControl: { fontSize: 10, fontWeight: 600, background: '#FEF3C7', color: '#D97706', padding: '2px 6px', borderRadius: 4 },
-  badgeHeader: { fontSize: 10, fontWeight: 600, background: '#E0E7FF', color: '#4338CA', padding: '2px 6px', borderRadius: 4 },
-  badgePostable: { fontSize: 10, fontWeight: 600, border: '1px solid #E2E8F0', color: '#64748B', padding: '1px 5px', borderRadius: 4 },
+  badgeActive: { fontSize: 10, fontWeight: 600, background: 'rgba(21, 128, 61, 0.15)', color: 'var(--success, #15803D)', padding: '2px 6px', borderRadius: 4 },
+  badgeInactive: { fontSize: 10, fontWeight: 600, background: 'var(--surface-secondary, #F1F5F9)', color: 'var(--text-secondary, #64748B)', padding: '2px 6px', borderRadius: 4 },
+  badgeControl: { fontSize: 10, fontWeight: 600, background: 'rgba(217, 119, 6, 0.15)', color: 'var(--accent, #D97706)', padding: '2px 6px', borderRadius: 4 },
+  badgeHeader: { fontSize: 10, fontWeight: 600, background: 'rgba(67, 56, 202, 0.15)', color: '#4338CA', padding: '2px 6px', borderRadius: 4 },
+  badgePostable: { fontSize: 10, fontWeight: 600, border: '1px solid var(--border, #E2E8F0)', color: 'var(--text-secondary, #64748B)', padding: '1px 5px', borderRadius: 4 },
 
-  menuBtn: { background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: 4, borderRadius: 4 },
-  dropdown: { position: 'absolute', right: 0, top: '100%', background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)', zIndex: 20, minWidth: 140, padding: 4 },
-  dropdownItem: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', fontSize: 13, color: '#334155', cursor: 'pointer', borderRadius: 4 },
+  menuBtn: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary, #94A3B8)', padding: 4, borderRadius: 4 },
+  dropdown: { position: 'absolute', right: 0, top: '100%', background: 'var(--surface, #fff)', border: '1px solid var(--border, #E2E8F0)', borderRadius: 6, boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)', zIndex: 20, minWidth: 140, padding: 4 },
+  dropdownItem: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', fontSize: 13, color: 'var(--text-primary, #334155)', cursor: 'pointer', borderRadius: 4 },
 
-  loading: { padding: 40, textAlign: 'center', color: '#64748B', fontSize: 14 },
-  empty: { padding: 40, textAlign: 'center', color: '#64748B' },
+  loading: { padding: 40, textAlign: 'center', color: 'var(--text-secondary, #64748B)', fontSize: 14 },
+  empty: { padding: 40, textAlign: 'center', color: 'var(--text-secondary, #64748B)' },
 
   backdrop: { position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.4)', zIndex: 100 },
-  panel: { position: 'fixed', right: 0, top: 0, bottom: 0, width: 440, background: '#fff', zIndex: 110, display: 'flex', flexDirection: 'column', boxShadow: '-4px 0 20px rgba(0,0,0,0.1)' },
-  panelHeader: { padding: '20px 24px', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+  panel: { position: 'fixed', right: 0, top: 0, bottom: 0, width: 440, background: 'var(--surface, #fff)', borderLeft: '1px solid var(--border)', zIndex: 110, display: 'flex', flexDirection: 'column', boxShadow: '-4px 0 20px rgba(0,0,0,0.1)' },
+  panelHeader: { padding: '20px 24px', borderBottom: '1px solid var(--border, #E2E8F0)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   panelTitle: { margin: 0, fontSize: 18, fontWeight: 600 },
-  closeBtn: { background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#64748B' },
+  closeBtn: { background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-secondary, #64748B)' },
   panelForm: { padding: 24, display: 'flex', flexDirection: 'column', gap: 16, flex: 1, overflowY: 'auto' },
-  sectionTitle: { fontSize: 13, fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 },
+  sectionTitle: { fontSize: 13, fontWeight: 600, color: 'var(--text-secondary, #64748B)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 },
   formGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 },
   field: { display: 'flex', flexDirection: 'column', gap: 6 },
-  label: { fontSize: 13, fontWeight: 500, color: '#334155' },
-  input: { padding: '8px 12px', border: '1px solid #CBD5E1', borderRadius: 6, fontSize: 13, outline: 'none' },
-  divider: { height: 1, background: '#E2E8F0', margin: '8px 0' },
+  label: { fontSize: 13, fontWeight: 500, color: 'var(--text-primary, #334155)' },
+  input: { padding: '8px 12px', border: '1px solid var(--border, #CBD5E1)', background: 'var(--input-bg, #fff)', color: 'var(--input-text, #0F172A)', borderRadius: 6, fontSize: 13, outline: 'none' },
+  divider: { height: 1, background: 'var(--border, #E2E8F0)', margin: '8px 0' },
   checkboxWrap: { display: 'flex', alignItems: 'center', gap: 8 },
-  checkLabel: { fontSize: 13, color: '#334155' },
-  panelActions: { display: 'flex', gap: 12, paddingTop: 16, borderTop: '1px solid #E2E8F0' },
-  btnSecondary: { flex: 1, padding: '8px 16px', background: '#fff', border: '1px solid #CBD5E1', borderRadius: 6, fontSize: 13, fontWeight: 500, cursor: 'pointer' },
+  checkLabel: { fontSize: 13, color: 'var(--text-primary, #334155)' },
+  panelActions: { display: 'flex', gap: 12, paddingTop: 16, borderTop: '1px solid var(--border, #E2E8F0)' },
+  btnSecondary: { flex: 1, padding: '8px 16px', background: 'var(--surface-secondary, #fff)', border: '1px solid var(--border, #CBD5E1)', color: 'var(--text-primary, #334155)', borderRadius: 6, fontSize: 13, fontWeight: 500, cursor: 'pointer' },
 };

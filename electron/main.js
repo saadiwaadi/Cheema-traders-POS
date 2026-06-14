@@ -83,6 +83,7 @@ function registerIpc() {
     "pos:settings:save": async (_, payload) => ({ setting: await store.updateSetting(payload.key, payload.value) }),
     "pos:backup:export": async (_, targetPath) => ({ backupPath: await store.exportBackup(targetPath) }),
     "pos:backup:import": async (_, sourcePath) => ({ dbPath: await store.importBackup(sourcePath) }),
+    "system:reset-data": async () => ({ result: await store.resetDatabase() }),
     "coa:list": () => store.listCoaAccounts(),
     "coa:create": (_, payload) => store.createCoaAccount(payload),
     "coa:update": (_, payload) => store.updateCoaAccount(payload),
@@ -94,10 +95,12 @@ function registerIpc() {
     "journal:list": (_, args) => store.listJournalEntries(args),
     "journal:get": (_, id) => store.getJournalEntry(id),
     "journal:reverse": (_, payload) => store.reverseJournalEntry(payload),
+    "journal:delete": (_, id) => store.deleteJournalEntry(id),
     "journal:next-no": (_, date) => store.nextJournalEntryNo(date),
     "journal:ledger": (_, args) => store.getGeneralLedger(args),
     "pos:expenses:list": (_, args) => store.listExpenses(args || {}),
     "pos:expenses:save": (_, payload) => store.saveExpense(payload),
+    "pos:expenses:delete": (_, id) => store.deleteExpense(id),
     "pos:banks:list": async (_, search) => ({ banks: await store.listBanks(search || "") }),
     "pos:banks:save": async (_, payload) => ({ bank: await store.saveBank(payload) }),
     "pos:banks:history": async (_, id) => ({ history: await store.getBankHistory(id) }),
@@ -115,6 +118,9 @@ function registerIpc() {
     "analysis:inventory": () => store.getInventoryAnalysis(),
     "analysis:customer-dues": () => store.getCustomerDuesAnalysis(),
     "analysis:supplier": () => store.getSupplierAnalysis(),
+    "pos:license:info": () => store.getLicenseInfo(),
+    "pos:license:activate": (_, payload) => store.activateLicense(payload),
+    "analysis:roi-stats": (_, args) => store.getRoiStats(args),
     "db:print-html-report": async (_, html) => {
       let printWindow = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: false, contextIsolation: true } });
       printWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
@@ -139,12 +145,19 @@ function registerIpc() {
       const { dialog } = require("electron");
       return dialog.showOpenDialog(mainWindow, options);
     },
+    "system:delete-backup": async (_, targetPath) => {
+      return store.deleteBackup(targetPath);
+    },
     "db:info": async () => {
       const fs = require("fs/promises");
+      const pathModule = require("path");
       const stat = await fs.stat(store.dbPath);
+      const homeDir = process.env.USERPROFILE || process.env.HOME || "C:";
+      const backupDir = pathModule.join(homeDir, "CheemaTradersPOS", "Backups");
       return {
         path: store.dbPath,
         size: stat.size,
+        backupDir: backupDir,
       };
     },
   };

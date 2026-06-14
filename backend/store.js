@@ -91,20 +91,41 @@ class PosStore {
   }
 
   async close() {
-    const current = this.db;
-    if (!current) return;
-    await new Promise((resolve, reject) => {
-      current.close((err) => {
-        if (err) return reject(err);
-        resolve();
+    if (this.db) {
+      const current = this.db;
+      await new Promise((resolve, reject) => {
+        current.close((err) => {
+          if (err) return reject(err);
+          resolve();
+        });
       });
-    });
-    this.db = null;
+      this.db = null;
+    }
+    if (this.dbBetterInstance) {
+      try {
+        this.dbBetterInstance.close();
+      } catch (err) {
+        console.error("Error closing better-sqlite3 connection:", err);
+      }
+      this.dbBetterInstance = null;
+    }
   }
 
   async _db() {
     if (!this.db) {
       this.db = openDatabase();
+    }
+    try {
+      // Check db_mode setting for connection mode abstraction
+      const modeRow = await get(this.db, "SELECT value FROM settings WHERE key = 'db_mode'");
+      const dbMode = modeRow ? modeRow.value : "local";
+      if (dbMode === "cloud") {
+        console.warn("[Database Mode] Configured for Cloud/Online Sync. Using local DB buffer, cloud syncer placeholder is ready.");
+      } else {
+        console.log("[Database Mode] Running in Local Offline Mode (SQLite).");
+      }
+    } catch (e) {
+      // Settings table might not exist yet during initial migrations
     }
     return this.db;
   }
@@ -771,6 +792,21 @@ class PosStore {
             COUNT(*) OVER(PARTITION BY bt.reference, bt.date, bt.created_at) as count_rows
           FROM bank_transactions bt
         )
+
+        UNION ALL
+
+        SELECT
+          CASE WHEN a.code = '1000' THEN (jl.debit / 100.0) ELSE 0 END AS cash_in,
+          CASE WHEN a.code = '1000' THEN (jl.credit / 100.0) ELSE 0 END AS cash_out,
+          CASE WHEN a.code LIKE '10%' AND a.code != '1000' THEN (jl.debit / 100.0) ELSE 0 END AS bank_in,
+          CASE WHEN a.code LIKE '10%' AND a.code != '1000' THEN (jl.credit / 100.0) ELSE 0 END AS bank_out,
+          je.date AS entry_date
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.entry_id = je.id
+        JOIN accounts a ON jl.account_id = a.id
+        WHERE je.status = 'posted'
+          AND je.source_type = 'manual'
+          AND (a.code = '1000' OR (a.code LIKE '10%' AND a.type = 'asset'))
       )
       WHERE entry_date < ?
       `,
@@ -903,6 +939,25 @@ class PosStore {
           FROM bank_transactions bt
           JOIN bank_accounts ba ON bt.bank_account_id = ba.id
         )
+
+        UNION ALL
+
+        SELECT
+          je.date AS entry_date,
+          'Journal Transfer: ' || je.narration || COALESCE(' - ' || jl.line_memo, '') AS description,
+          je.entry_no AS receipt_number,
+          CASE WHEN a.code = '1000' THEN (jl.debit / 100.0) ELSE 0 END AS cash_in,
+          CASE WHEN a.code = '1000' THEN (jl.credit / 100.0) ELSE 0 END AS cash_out,
+          CASE WHEN a.code LIKE '10%' AND a.code != '1000' THEN (jl.debit / 100.0) ELSE 0 END AS bank_in,
+          CASE WHEN a.code LIKE '10%' AND a.code != '1000' THEN (jl.credit / 100.0) ELSE 0 END AS bank_out,
+          je.created_at
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.entry_id = je.id
+        JOIN accounts a ON jl.account_id = a.id
+        WHERE je.status = 'posted'
+          AND je.source_type = 'manual'
+          AND (a.code = '1000' OR (a.code LIKE '10%' AND a.type = 'asset'))
+          AND (jl.debit > 0 OR jl.credit > 0)
       )
       WHERE entry_date >= ? AND entry_date <= ?
       ORDER BY entry_date ASC, created_at ASC
@@ -1203,6 +1258,7 @@ class PosStore {
         WHERE jl.customer_id = ?
           AND a.code = '1100'
           AND je.status = 'posted'
+          AND je.source_type = 'manual'
 
         ORDER BY date DESC, created_at DESC, sort_key DESC
       `,
@@ -2684,7 +2740,16 @@ class PosStore {
       all(
         db,
         `
-          SELECT id, invoice_no AS invoiceNo, sale_date AS saleDate, total, payment_method AS paymentMethod, customer_name AS customerName
+          SELECT 
+            id, 
+            invoice_no AS invoice_number, 
+            sale_date AS date, 
+            total, 
+            payment_method AS method, 
+            customer_name, 
+            payment_status, 
+            balance_due AS remaining_amount, 
+            amount_paid AS paid_amount
           FROM sales
           WHERE COALESCE(voided_at, '') = ''
           ORDER BY id DESC
@@ -2819,12 +2884,69 @@ class PosStore {
   }
 
   async importBackup(sourcePath) {
-    const closed = this.db ? await this.close().then(() => true).catch(() => false) : true;
-    await fs.copyFile(sourcePath, this.dbPath);
-    if (closed) {
-      this.db = openDatabase();
+    // 1. Close database connections first to release file locks
+    await this.close().catch(() => {});
+
+    // 1.5. Notify the separate background Express server (if active) to release its database connection
+    if (typeof fetch === "function") {
+      try {
+        await fetch("http://localhost:5000/api/pos/backup/close-db", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(1000),
+        }).catch(() => {});
+      } catch (e) {
+        // Ignore if backend is not running or unreachable
+      }
+    }
+
+    // 2. Delete existing WAL/SHM files to prevent corruption from mismatched journals
+    const walPath = this.dbPath + "-wal";
+    const shmPath = this.dbPath + "-shm";
+    try {
+      const fsModule = require("fs/promises");
+      await fsModule.rm(walPath, { force: true });
+      await fsModule.rm(shmPath, { force: true });
+    } catch (e) {
+      console.error("Could not delete WAL/SHM files on import:", e.message);
+      throw new Error("Database files are currently locked by another process (e.g. background server or another app window). Please close other instances and try again.");
+    }
+
+    // 3. Overwrite database file
+    try {
+      await fs.copyFile(sourcePath, this.dbPath);
+    } catch (e) {
+      throw new Error(`Failed to restore database file: ${e.message}. Please check file permissions or close other application windows.`);
+    }
+
+    // 4. Re-open connection
+    this.db = openDatabase();
+
+    // 5. Clear GL bridge account cache
+    try {
+      const glBridge = require('./glBridge');
+      if (glBridge && typeof glBridge.clearAccountCache === 'function') {
+        glBridge.clearAccountCache();
+      }
+    } catch (e) {
+      console.error("Failed to clear glBridge account cache:", e);
     }
     return this.dbPath;
+  }
+
+  async deleteBackup(targetPath) {
+    const homeDir = process.env.USERPROFILE || process.env.HOME || "C:";
+    const backupDir = path.join(homeDir, "CheemaTradersPOS", "Backups");
+    const resolvedTarget = path.resolve(targetPath);
+    const resolvedBackupDir = path.resolve(backupDir);
+
+    if (!resolvedTarget.startsWith(resolvedBackupDir)) {
+      throw new Error("Unauthorized path: Can only delete files inside the Backups directory.");
+    }
+
+    const fsModule = require("fs/promises");
+    await fsModule.rm(resolvedTarget, { force: true });
+    return true;
   }
 
   async getSettings() {
@@ -3078,7 +3200,19 @@ class PosStore {
     const db = await this._db();
     let query = `
       SELECT je.*, 
-        (SELECT COALESCE(SUM(debit), 0) FROM journal_lines WHERE entry_id = je.id) as total_amount
+        (SELECT COALESCE(SUM(debit), 0) FROM journal_lines WHERE entry_id = je.id) as total_amount,
+        (
+          SELECT GROUP_CONCAT(c.name, ', ')
+          FROM journal_lines jl
+          JOIN customers c ON jl.customer_id = c.id
+          WHERE jl.entry_id = je.id
+        ) as customer_names,
+        (
+          SELECT GROUP_CONCAT(s.name, ', ')
+          FROM journal_lines jl
+          JOIN suppliers s ON jl.supplier_id = s.id
+          WHERE jl.entry_id = je.id
+        ) as supplier_names
       FROM journal_entries je
       WHERE 1=1
     `;
@@ -3134,6 +3268,50 @@ class PosStore {
         await this._syncCustomerBalance(db, cid);
       }
       return { id: newId };
+    } catch (err) {
+      throw new Error(err.message);
+    }
+  }
+
+  async deleteJournalEntry(id) {
+    try {
+      const db = await this._db();
+      const dbBetter = this.getBetterDb();
+      
+      const entry = dbBetter.prepare("SELECT * FROM journal_entries WHERE id = ?").get(id);
+      if (!entry) throw new Error("Journal entry not found");
+      
+      const lines = dbBetter.prepare("SELECT * FROM journal_lines WHERE entry_id = ?").all(id);
+      const customerIds = [...new Set(lines.map(l => l.customer_id).filter(Boolean))];
+      
+      const tx = dbBetter.transaction(() => {
+        if (entry.source_type === "expense" && entry.source_id) {
+          dbBetter.prepare("DELETE FROM expenses WHERE id = ?").run(entry.source_id);
+        }
+        dbBetter.prepare("DELETE FROM journal_lines WHERE entry_id = ?").run(id);
+        dbBetter.prepare("DELETE FROM journal_entries WHERE id = ?").run(id);
+      });
+      tx();
+      
+      for (const cid of customerIds) {
+        await this._syncCustomerBalance(db, cid);
+      }
+      return { success: true };
+    } catch (err) {
+      throw new Error(err.message);
+    }
+  }
+
+  async deleteExpense(id) {
+    try {
+      const dbBetter = this.getBetterDb();
+      const entry = dbBetter.prepare("SELECT id FROM journal_entries WHERE source_type = 'expense' AND source_id = ?").get(id);
+      if (entry) {
+        await this.deleteJournalEntry(entry.id);
+      } else {
+        dbBetter.prepare("DELETE FROM expenses WHERE id = ?").run(id);
+      }
+      return { success: true };
     } catch (err) {
       throw new Error(err.message);
     }
@@ -3472,6 +3650,32 @@ class PosStore {
       WHERE payment_date BETWEEN ? AND ?
       GROUP BY payment_date
     `, [from, to]);
+
+    const manualInflows = await all(db, `
+      SELECT je.date AS txn_date, SUM(jl.debit) / 100.0 AS inflow, 0 AS outflow
+      FROM journal_lines jl
+      JOIN journal_entries je ON jl.entry_id = je.id
+      JOIN accounts a ON jl.account_id = a.id
+      WHERE je.status = 'posted'
+        AND je.source_type = 'manual'
+        AND (a.code = '1000' OR (a.code LIKE '10%' AND a.type = 'asset'))
+        AND jl.debit > 0
+        AND je.date BETWEEN ? AND ?
+      GROUP BY je.date
+    `, [from, to]);
+
+    const manualOutflows = await all(db, `
+      SELECT je.date AS txn_date, 0 AS inflow, SUM(jl.credit) / 100.0 AS outflow
+      FROM journal_lines jl
+      JOIN journal_entries je ON jl.entry_id = je.id
+      JOIN accounts a ON jl.account_id = a.id
+      WHERE je.status = 'posted'
+        AND je.source_type = 'manual'
+        AND (a.code = '1000' OR (a.code LIKE '10%' AND a.type = 'asset'))
+        AND jl.credit > 0
+        AND je.date BETWEEN ? AND ?
+      GROUP BY je.date
+    `, [from, to]);
     
     const map = new Map();
     const addTxns = (arr) => {
@@ -3486,6 +3690,8 @@ class PosStore {
     };
     addTxns(inflows);
     addTxns(outflows);
+    addTxns(manualInflows);
+    addTxns(manualOutflows);
     
     let merged = Array.from(map.values());
     merged.sort((a, b) => a.period.localeCompare(b.period));
@@ -3519,10 +3725,13 @@ class PosStore {
     `);
     
     const map = {};
-    const now = new Date();
     for (let i = 6; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const yStr = d.getFullYear();
+      const mStr = String(d.getMonth() + 1).padStart(2, '0');
+      const dStr = String(d.getDate()).padStart(2, '0');
+      const dateStr = `${yStr}-${mStr}-${dStr}`;
       const dayName = d.toLocaleDateString('default', { weekday: 'short' });
       map[dateStr] = { day: dayName, date: dateStr, revenue: 0 };
     }
@@ -3877,6 +4086,361 @@ class PosStore {
       activities
     };
   }
+
+  async resetDatabase() {
+    // 1. Automatically create database backup first
+    const homeDir = process.env.USERPROFILE || process.env.HOME || "C:";
+    const backupDir = path.join(homeDir, "CheemaTradersPOS", "Backups");
+    const now = new Date();
+    const timestamp = now.getFullYear() +
+      String(now.getMonth() + 1).padStart(2, '0') +
+      String(now.getDate()).padStart(2, '0') + "_" +
+      String(now.getHours()).padStart(2, '0') +
+      String(now.getMinutes()).padStart(2, '0') +
+      String(now.getSeconds()).padStart(2, '0');
+    const backupPath = path.join(backupDir, `cheema_traders_pos_auto_backup_before_reset_${timestamp}.db`);
+    
+    // Perform backup
+    await this.exportBackup(backupPath);
+    console.log("Auto-backup successfully created before reset at:", backupPath);
+
+    // 2. Perform DB reset
+    const db = await this._db();
+    
+    await run(db, "PRAGMA foreign_keys = OFF");
+    
+    const tablesToClear = [
+      "sales", "sale_items", "sales_returns", "purchases", "purchase_items",
+      "customer_payments", "customer_withdrawals", "supplier_payments", "expenses",
+      "journal_lines", "journal_entries", "audit_log", "batches", "inventory_movements",
+      "products", "categories", "customers", "suppliers", "bank_accounts",
+      "bank_transactions", "accounting_periods"
+    ];
+    
+    for (const table of tablesToClear) {
+      await run(db, `DELETE FROM ${table}`);
+    }
+    
+    // Clear all users except 'admin'
+    await run(db, "DELETE FROM users WHERE username != 'admin'");
+    
+    // Reset accounts
+    await run(db, "DELETE FROM accounts");
+    
+    // Re-seed default accounts
+    const defaultAccounts = [
+      ['1000', 'Cash in Hand', 'asset', 0],
+      ['1010', 'Bank - HBL', 'asset', 0],
+      ['1011', 'Bank - Meezan', 'asset', 0],
+      ['1100', 'Accounts Receivable', 'asset', 1],
+      ['1200', 'Inventory', 'asset', 0],
+      ['2000', 'Accounts Payable', 'liability', 1],
+      ['2200', 'Sales Tax Payable', 'liability', 0],
+      ['3000', "Owner's Capital", 'equity', 0],
+      ['3900', 'Opening Balance Equity', 'equity', 0],
+      ['3950', 'Retained Earnings', 'equity', 0],
+      ['4000', 'Sales Revenue', 'revenue', 0],
+      ['4100', 'Sales Returns', 'revenue', 0],
+      ['5000', 'Cost of Goods Sold', 'expense', 0],
+      ['6000', 'Salaries', 'expense', 0],
+      ['6100', 'Rent', 'expense', 0],
+      ['6200', 'Utilities', 'expense', 0],
+      ['6900', 'Misc Expense', 'expense', 0],
+    ];
+    
+    for (const acc of defaultAccounts) {
+      await run(db, "INSERT INTO accounts (code, name, type, is_control) VALUES (?, ?, ?, ?)", acc);
+    }
+    
+    // Clear autoincrement sequences
+    await run(db, "DELETE FROM sqlite_sequence");
+    
+    await run(db, "PRAGMA foreign_keys = ON");
+    
+    // Clear the account cache in glBridge so old IDs are not used for new transactions
+    try {
+      const glBridge = require('./glBridge');
+      if (glBridge && typeof glBridge.clearAccountCache === 'function') {
+        glBridge.clearAccountCache();
+      }
+    } catch (e) {
+      console.error("Failed to clear glBridge account cache:", e);
+    }
+
+    // Force-close better-sqlite3 connection instance so it opens a fresh handle on the next query
+    if (this.dbBetterInstance) {
+      try {
+        this.dbBetterInstance.close();
+      } catch (err) {
+        console.error("Error closing better-sqlite3 connection:", err);
+      }
+      this.dbBetterInstance = null;
+    }
+
+    return { backupPath };
+  }
+
+  async getLicenseInfo() {
+    const db = await this._db();
+
+    // 1. Read activation_key.json
+    const fs = require("fs/promises");
+    const activationKeyPath = path.resolve(__dirname, "..", "activation_key.json");
+    let fileBiz = "";
+    let fileKey = "";
+    try {
+      let fileExists = false;
+      try {
+        await fs.access(activationKeyPath);
+        fileExists = true;
+      } catch {}
+
+      if (fileExists) {
+        const content = await fs.readFile(activationKeyPath, "utf8");
+        const json = JSON.parse(content);
+        fileBiz = json.businessName || "";
+        fileKey = json.licenseKey || "";
+      } else {
+        await fs.writeFile(activationKeyPath, JSON.stringify({ businessName: "", licenseKey: "" }, null, 2), "utf8");
+      }
+    } catch (err) {
+      console.error("Failed to read/write activation_key.json:", err);
+    }
+
+    // 2. Read DB settings
+    const keyRow = await get(db, `SELECT value FROM settings WHERE key = 'license_key'`);
+    const bizRow = await get(db, `SELECT value FROM settings WHERE key = 'license_business'`);
+    const dbKey = keyRow?.value || "";
+    const dbBiz = bizRow?.value || "";
+
+    let key = dbKey;
+    let licensee = dbBiz;
+
+    // 3. Bidirectional Sync
+    // If file has non-empty values that differ from DB, use them and write to DB
+    if (fileKey && (fileKey !== dbKey || fileBiz !== dbBiz)) {
+      key = fileKey;
+      licensee = fileBiz;
+      await run(db, `INSERT OR REPLACE INTO settings (key, value) VALUES ('license_key', ?)`, [fileKey]);
+      await run(db, `INSERT OR REPLACE INTO settings (key, value) VALUES ('license_business', ?)`, [fileBiz]);
+    }
+    // If file is empty but DB has a key, write DB values to file
+    else if (!fileKey && dbKey) {
+      try {
+        await fs.writeFile(activationKeyPath, JSON.stringify({ businessName: dbBiz, licenseKey: dbKey }, null, 2), "utf8");
+      } catch (err) {
+        console.error("Failed to sync DB to activation_key.json:", err);
+      }
+    }
+
+    // 4. Check/Initialize first_launch_date in settings
+    let launchDateRow = await get(db, `SELECT value FROM settings WHERE key = 'first_launch_date'`);
+    if (!launchDateRow) {
+      const todayStr = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+      await run(db, `INSERT OR REPLACE INTO settings (key, value) VALUES ('first_launch_date', ?)`, [todayStr]);
+      launchDateRow = { value: todayStr };
+    }
+    const firstLaunchDateStr = launchDateRow.value;
+
+    // 5. Check validation and expiry
+    const verifier = require("./licenseVerifier");
+
+    let licensed = false;
+    let hardLocked = false;
+    let status = "unlicensed_locked";
+    let graceDaysRemaining = 0;
+    let expiryDate = "N/A";
+    let daysRemaining = 0;
+
+    const launchDate = new Date(firstLaunchDateStr);
+    const launchTimestampMs = isNaN(launchDate.getTime()) ? Date.now() : launchDate.getTime();
+    const launchAgeHours = (Date.now() - launchTimestampMs) / (1000 * 60 * 60);
+    const launchAgeDays = launchAgeHours / 24;
+    const launchGraceDaysRemaining = Math.max(0, 7 - launchAgeDays);
+
+    const verifyResult = await verifier.verifyOnLaunch(licensee, key, firstLaunchDateStr);
+
+    if (verifyResult.allowed) {
+      status = verifyResult.status;
+      licensed = status === "active";
+      hardLocked = false;
+
+      const val = verifier.validateLicenseKey(licensee, key);
+      if (val.valid) {
+        expiryDate = val.expiryDateStr || "N/A";
+        daysRemaining = val.daysRemaining || 0;
+
+        if (status === "expired_grace") {
+          const expiryTimestampMs = val.expiryDate.getTime();
+          const expiryAgeHours = (Date.now() - expiryTimestampMs) / (1000 * 60 * 60);
+          const expiryAgeDays = expiryAgeHours / 24;
+          graceDaysRemaining = Math.max(0, 7 - expiryAgeDays);
+        } else {
+          graceDaysRemaining = daysRemaining;
+        }
+      } else {
+        graceDaysRemaining = launchGraceDaysRemaining;
+      }
+    } else {
+      licensed = false;
+      hardLocked = true;
+      status = verifyResult.status || "unlicensed_locked";
+      graceDaysRemaining = 0;
+
+      const val = verifier.validateLicenseKey(licensee, key);
+      if (val.valid) {
+        expiryDate = val.expiryDateStr || "N/A";
+        daysRemaining = val.daysRemaining || 0;
+      }
+    }
+
+    // Mask key
+    let maskedKey = "";
+    if (key) {
+      const parts = key.split("-");
+      if (parts.length >= 4) {
+        maskedKey = `${parts[0]}-${parts[1]}-••••-••••-${parts[parts.length - 1]}`;
+      } else {
+        maskedKey = key.slice(0, 8) + "••••••••" + key.slice(key.length - 4);
+      }
+    }
+
+    return {
+      licensed,
+      licensee,
+      key: maskedKey,
+      rawKey: key,
+      expiryDate,
+      daysRemaining,
+      graceDaysRemaining,
+      hardLocked,
+      status,
+      firstLaunchDate: firstLaunchDateStr
+    };
+  }
+
+  async activateLicense({ licensee, key }) {
+    const db = await this._db();
+
+    const verifier = require("./licenseVerifier");
+    const validation = verifier.validateLicenseKey(licensee, key);
+    if (!validation.valid) {
+      throw new Error("Invalid license key format or checksum mismatch.");
+    }
+
+    await this.updateSetting("license_business", licensee);
+    await this.updateSetting("license_key", key);
+
+    // Save to activation_key.json
+    try {
+      const fs = require("fs/promises");
+      const activationKeyPath = path.resolve(__dirname, "..", "activation_key.json");
+      await fs.writeFile(activationKeyPath, JSON.stringify({ businessName: licensee, licenseKey: key }, null, 2), "utf8");
+    } catch (err) {
+      console.error("Failed to sync to activation_key.json:", err);
+    }
+
+    return {
+      success: true,
+      licensee,
+      key
+    };
+  }
+
+  async getRoiStats(args = {}) {
+    const db = await this._db();
+    
+    const getStatsForRange = async (days, startDate = null, endDate = null) => {
+      let fromStr, toStr;
+      
+      if (startDate && endDate) {
+        fromStr = startDate;
+        toStr = endDate;
+      } else {
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - days);
+        
+        const yStr = cutoffDate.getFullYear();
+        const mStr = String(cutoffDate.getMonth() + 1).padStart(2, '0');
+        const dStr = String(cutoffDate.getDate()).padStart(2, '0');
+        fromStr = `${yStr}-${mStr}-${dStr}`;
+        
+        const today = new Date();
+        const yToday = today.getFullYear();
+        const mToday = String(today.getMonth() + 1).padStart(2, '0');
+        const dToday = String(today.getDate()).padStart(2, '0');
+        toStr = `${yToday}-${mToday}-${dToday}`;
+      }
+      
+      // Revenue
+      const revRow = await get(db, `
+        SELECT COALESCE(SUM(total), 0) AS value 
+        FROM sales 
+        WHERE sale_date >= ? AND sale_date <= ? AND COALESCE(voided_at, '') = ''
+      `, [fromStr, toStr]);
+      
+      // COGS (Account code 5000)
+      const cogsRow = await get(db, `
+        SELECT COALESCE(SUM(jl.debit - jl.credit), 0) AS value
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.entry_id = je.id
+        JOIN accounts a ON jl.account_id = a.id
+        WHERE je.date >= ? AND je.date <= ? AND je.status = 'posted' AND a.code = '5000'
+      `, [fromStr, toStr]);
+      
+      // Expenses
+      const expRow = await get(db, `
+        SELECT COALESCE(SUM(amount), 0) AS value 
+        FROM expenses 
+        WHERE expense_date >= ? AND expense_date <= ?
+      `, [fromStr, toStr]);
+      
+      const revenue = Number(revRow?.value || 0);
+      const cogs = Number(cogsRow?.value || 0) / 100.0;
+      const expenses = Number(expRow?.value || 0);
+      
+      const totalCost = cogs + expenses;
+      const netProfit = revenue - totalCost;
+      const roi = totalCost > 0 ? (netProfit / totalCost) * 100 : 0;
+      
+      return {
+        revenue,
+        cogs,
+        expenses,
+        totalCost,
+        netProfit,
+        roi
+      };
+    };
+    
+    const weekly = await getStatsForRange(7);
+    const monthly = await getStatsForRange(30);
+    const yearly = await getStatsForRange(365);
+    
+    let custom = null;
+    if (args && args.from && args.to) {
+      custom = await getStatsForRange(null, args.from, args.to);
+    }
+    
+    // Also fetch Owner's Capital balance (Account code 3000)
+    const capitalRow = await get(db, `
+      SELECT COALESCE(SUM(jl.credit - jl.debit), 0) AS value
+      FROM journal_lines jl
+      JOIN journal_entries je ON jl.entry_id = je.id
+      JOIN accounts a ON jl.account_id = a.id
+      WHERE je.status = 'posted' AND a.code = '3000'
+    `);
+    
+    const capital = Number(capitalRow?.value || 0) / 100.0;
+    
+    return {
+      weekly,
+      monthly,
+      yearly,
+      custom,
+      capital
+    };
+  }
 }
 
 // ── VERBATIM FUNCTIONS ────────────────────────────────────────
@@ -3940,9 +4504,10 @@ function reverseEntry(db, entryId, date, reason) {
 function nextEntryNo(db, date) {
   const year = date.slice(0, 4);
   const row = db.prepare(
-    `SELECT entry_no FROM journal_entries WHERE entry_no LIKE ? ORDER BY id DESC LIMIT 1`
+    `SELECT entry_no FROM journal_entries WHERE entry_no LIKE ? ORDER BY entry_no DESC LIMIT 1`
   ).get(`JV-${year}-%`);
-  const n = row ? parseInt(row.entry_no.split('-')[2], 10) + 1 : 1;
+  const parsed = row ? parseInt(row.entry_no.split('-')[2], 10) : 0;
+  const n = isNaN(parsed) ? 1 : parsed + 1;
   return `JV-${year}-${String(n).padStart(5, '0')}`;
 }
 

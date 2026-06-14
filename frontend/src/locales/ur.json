@@ -325,6 +325,22 @@
     "recent_backups_path": "محفوظ کردہ راستہ",
     "recent_backups_time": "تیاری کا وقت",
     "copy_path_tooltip": "محفوظ کردہ راستہ کلپ بورڈ پر کاپی کریں",
-    "copied_tooltip": "کاپی ہو گیا!"
+    "copied_tooltip": "کاپی ہو گیا!",
+    "danger_zone_title": "خطرناک زون",
+    "reset_data_title": "تمام سسٹم ڈیٹا ری سیٹ کریں",
+    "reset_warning": "انتباہ: یہ مستقل طور پر تمام فروخت، انوینٹری، گاہکوں، سپلائرز، بینکوں اور لین دین کو حذف کر دے گا۔ حذف کرنے سے پہلے ڈیٹا بیس کا بیک اپ خود بخود محفوظ ہو جائے گا۔",
+    "reset_btn": "تمام ڈیٹا ری سیٹ کریں",
+    "reset_confirm_title": "سسٹم ری سیٹ کی تصدیق کریں",
+    "reset_line_action": "عمل",
+    "reset_line_action_val": "تمام ڈیٹا بیس ری سیٹ کریں",
+    "reset_line_backup": "خودکار بیک اپ",
+    "reset_line_backup_val": "جی ہاں (حذف کرنے سے پہلے)",
+    "reset_line_failsafe": "محفوظ مقام (Fail-Safe)",
+    "reset_line_preserve": "محفوظ رہے گا",
+    "reset_line_preserve_val": "ایڈمن صارف کا اکاؤنٹ",
+    "reset_confirm_btn": "جی ہاں، سب کچھ ری سیٹ کریں",
+    "reset_cancel_btn": "منسوخ کریں",
+    "reset_success": "تمام ڈیٹا کامیابی سے ری سیٹ ہو گیا! خودکار بیک اپ یہاں محفوظ کیا گیا: {path}",
+    "reset_failed": "ڈیٹا بیس ری سیٹ کرنے میں ناکامی: {error}"
   }
 }

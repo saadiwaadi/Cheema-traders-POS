@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, PlusCircle, ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
-import * as XLSX from "xlsx";
+import XLSX from "xlsx-js-style";
 import SuccessNotification from "../components/SuccessNotification";
 import WarningNotification from "../components/Warningnotification";
 import {
@@ -14,6 +14,12 @@ import {
 } from "../lib/posApi";
 
 const BUSINESS_NAME = "Cheema Traders";
+
+const formatMoney = (num) =>
+  `Rs. ${(Number(num) || 0).toLocaleString("en-PK", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 
 export default function SuppliersPage() {
   const [isAddPanelOpen, setIsAddPanelOpen] = useState(false);
@@ -600,11 +606,7 @@ function SupplierHistoryView({ supplier, onRefresh }) {
   });
 
   const visibleRowsWithBalance = useMemo(() => {
-    let running = 0;
-    return [...visibleRows].reverse().map((h) => {
-      running += h.balance_change;
-      return { ...h, runningBalance: running };
-    }).reverse();
+    return visibleRows;
   }, [visibleRows]);
 
   const currentBalance = statementRows.length > 0 ? statementRows[0].runningBalance : Number(supplier.openingBalance || supplier.opening_balance || 0);
@@ -639,53 +641,266 @@ function SupplierHistoryView({ supplier, onRefresh }) {
   };
 
   const handleExportExcel = () => {
-    const headers = [
-      ["SUPPLIER ACCOUNT STATEMENT"],
-      [`Supplier Name: ${supplier.name}`],
-      [`Phone: ${supplier.phone || "-"}`],
-      [`Statement Period: ${fromDate || "Inception"} to ${toDate || "Today"}`],
-      [`Current Balance: Rs ${Math.abs(currentBalance).toLocaleString()} ${currentBalance > 0 ? "Cr" : currentBalance < 0 ? "Dr" : ""}`],
-      [],
-      ["S.No", "Date", "Description", "Reference", "Payment Method", "Status", "Purchased Amount (Rs)", "Paid Amount (Rs)", "Remaining Amount (Rs)", "Running Balance (Rs)"]
-    ];
+    const wb = XLSX.utils.book_new();
+    const ws = {};
 
-    const data = [...visibleRows].reverse().map((h, i) => [
-      i + 1,
-      h.date,
-      h.type === 'Opening' ? 'Opening Balance' : h.type === 'Purchase' ? 'Purchase Invoice' : 'Payment Made',
-      h.type === 'Opening' ? '-' : (h.reference || '-'),
-      h.method || '-',
-      h.type === 'Opening' ? '-' : (h.type === 'Purchase' ? h.payment_status : 'Paid'),
-      h.type === 'Purchase' || (h.type === 'Opening' && h.total_amount > 0) ? Number(h.total_amount || 0) : 0,
-      h.type === 'Payment' || (h.type === 'Opening' && h.paid_amount > 0) ? Number(h.paid_amount || 0) : Number(h.paid_amount || 0),
-      h.type === 'Purchase' ? Number(h.remaining_amount || 0) : 0,
-      h.runningBalance
-    ]);
+    const colors = {
+      primary: "1B5E20",
+      primaryLight: "E8F5E9",
+      border: "D3D3D3",
+      textDark: "1A1A1A",
+      textMuted: "555555",
+      danger: "C62828",
+      success: "2E7D32"
+    };
 
+    const fontName = "Segoe UI";
+
+    const sTitle = {
+      font: { name: fontName, sz: 16, bold: true, color: { rgb: "FFFFFF" } },
+      fill: { fgColor: { rgb: colors.primary } },
+      alignment: { horizontal: "center", vertical: "center" }
+    };
+
+    const sSub = {
+      font: { name: fontName, sz: 10, italic: true, color: { rgb: "FFFFFF" } },
+      fill: { fgColor: { rgb: colors.primary } },
+      alignment: { horizontal: "center", vertical: "center" }
+    };
+
+    const sContact = {
+      font: { name: fontName, sz: 9, color: { rgb: "FFFFFF" } },
+      fill: { fgColor: { rgb: colors.primary } },
+      alignment: { horizontal: "center", vertical: "center" }
+    };
+
+    const sMetaLabel = {
+      font: { name: fontName, sz: 10, bold: true, color: { rgb: colors.primary } },
+      fill: { fgColor: { rgb: "F4FAF4" } },
+      border: {
+        top: { style: "thin", color: { rgb: colors.border } },
+        bottom: { style: "thin", color: { rgb: colors.border } },
+        left: { style: "thin", color: { rgb: colors.border } },
+        right: { style: "thin", color: { rgb: colors.border } }
+      },
+      alignment: { horizontal: "left", vertical: "center" }
+    };
+
+    const sMetaVal = {
+      font: { name: fontName, sz: 10, color: { rgb: colors.textDark } },
+      fill: { fgColor: { rgb: "F4FAF4" } },
+      border: {
+        top: { style: "thin", color: { rgb: colors.border } },
+        bottom: { style: "thin", color: { rgb: colors.border } },
+        left: { style: "thin", color: { rgb: colors.border } },
+        right: { style: "thin", color: { rgb: colors.border } }
+      },
+      alignment: { horizontal: "left", vertical: "center" }
+    };
+
+    const sTableHeader = {
+      font: { name: fontName, sz: 10, bold: true, color: { rgb: "FFFFFF" } },
+      fill: { fgColor: { rgb: "2E7D32" } },
+      border: {
+        top: { style: "thin", color: { rgb: colors.border } },
+        bottom: { style: "medium", color: { rgb: colors.primary } },
+        left: { style: "thin", color: { rgb: colors.border } },
+        right: { style: "thin", color: { rgb: colors.border } }
+      },
+      alignment: { horizontal: "left", vertical: "center" }
+    };
+
+    const sTableHeaderRight = {
+      ...sTableHeader,
+      alignment: { horizontal: "right", vertical: "center" }
+    };
+
+    const sTableHeaderCenter = {
+      ...sTableHeader,
+      alignment: { horizontal: "center", vertical: "center" }
+    };
+
+    const sData = {
+      font: { name: fontName, sz: 9.5, color: { rgb: colors.textDark } },
+      border: {
+        bottom: { style: "thin", color: { rgb: "EAEAEA" } },
+        left: { style: "thin", color: { rgb: "EAEAEA" } },
+        right: { style: "thin", color: { rgb: "EAEAEA" } }
+      },
+      alignment: { horizontal: "left", vertical: "center" }
+    };
+
+    const sDataCenter = {
+      ...sData,
+      alignment: { horizontal: "center", vertical: "center" }
+    };
+
+    const sDataRight = {
+      ...sData,
+      alignment: { horizontal: "right", vertical: "center" }
+    };
+
+    const sDataNum = {
+      ...sDataRight,
+      numFmt: "#,##0.00"
+    };
+
+    const sDataDr = {
+      ...sDataNum,
+      font: { name: fontName, sz: 9.5, color: { rgb: colors.success }, bold: true }
+    };
+
+    const sDataCr = {
+      ...sDataNum,
+      font: { name: fontName, sz: 9.5, color: { rgb: colors.danger }, bold: true }
+    };
+
+    const sTotalLabel = {
+      font: { name: fontName, sz: 10, bold: true, color: { rgb: colors.primary } },
+      fill: { fgColor: { rgb: colors.primaryLight } },
+      border: {
+        top: { style: "thin", color: { rgb: colors.primary } },
+        bottom: { style: "double", color: { rgb: colors.primary } },
+        left: { style: "thin", color: { rgb: colors.border } },
+        right: { style: "thin", color: { rgb: colors.border } }
+      },
+      alignment: { horizontal: "right", vertical: "center" }
+    };
+
+    const sTotalNum = {
+      font: { name: fontName, sz: 10, bold: true, color: { rgb: colors.textDark } },
+      fill: { fgColor: { rgb: colors.primaryLight } },
+      border: {
+        top: { style: "thin", color: { rgb: colors.primary } },
+        bottom: { style: "double", color: { rgb: colors.primary } },
+        left: { style: "thin", color: { rgb: colors.border } },
+        right: { style: "thin", color: { rgb: colors.border } }
+      },
+      alignment: { horizontal: "right", vertical: "center" },
+      numFmt: "#,##0.00"
+    };
+
+    let r = 0;
+    
+    const writeCell = (row, col, val, type = 's', style = {}) => {
+      const cellRef = XLSX.utils.encode_cell({ r: row, c: col });
+      ws[cellRef] = { v: val, t: type, s: style };
+    };
+
+    // Header Letterhead
+    writeCell(r, 0, BUSINESS_NAME, 's', sTitle);
+    r++;
+    writeCell(r, 0, "AGRO INPUTS & FERTILIZER DISTRIBUTORS", 's', sSub);
+    r++;
+    writeCell(r, 0, "Main Bazar, Sahiwal, Pakistan | Tel: +92 300 7890123 | Email: info@cheematraders.com", 's', sContact);
+    r++;
+    r++; // Empty row
+
+    // Meta Info Block
+    writeCell(r, 0, "Supplier Name:", 's', sMetaLabel);
+    writeCell(r, 1, supplier.name, 's', sMetaVal);
+    writeCell(r, 2, "", 's', sMetaVal);
+    writeCell(r, 3, "", 's', sMetaVal);
+    writeCell(r, 4, "Statement Period:", 's', sMetaLabel);
+    writeCell(r, 5, `${fromDate || "Inception"} to ${toDate || "Today"}`, 's', sMetaVal);
+    writeCell(r, 6, "", 's', sMetaVal);
+    writeCell(r, 7, "", 's', sMetaVal);
+    r++;
+
+    writeCell(r, 0, "Phone Number:", 's', sMetaLabel);
+    writeCell(r, 1, supplier.phone || "-", 's', sMetaVal);
+    writeCell(r, 2, "", 's', sMetaVal);
+    writeCell(r, 3, "", 's', sMetaVal);
+    writeCell(r, 4, "Current Balance:", 's', sMetaLabel);
+    const balanceStr = `PKR ${Math.abs(currentBalance).toLocaleString("en-PK", { minimumFractionDigits: 2 })} ${currentBalance > 0 ? "(Cr)" : currentBalance < 0 ? "(Dr)" : ""}`;
+    writeCell(r, 5, balanceStr, 's', currentBalance > 0 ? { ...sMetaVal, font: { ...sMetaVal.font, color: { rgb: colors.danger }, bold: true } } : currentBalance < 0 ? { ...sMetaVal, font: { ...sMetaVal.font, color: { rgb: colors.success }, bold: true } } : sMetaVal);
+    writeCell(r, 6, "", 's', sMetaVal);
+    writeCell(r, 7, "", 's', sMetaVal);
+    r++;
+    r++; // Empty row
+
+    // Table Headers
+    const tableHeaders = ["S.No", "Date", "Description/Reference", "Payment Method", "Status", "Debit (PKR)", "Credit (PKR)", "Running Balance (PKR)"];
+    tableHeaders.forEach((h, c) => {
+      let st = sTableHeader;
+      if (c === 0 || c === 1 || c === 4) st = sTableHeaderCenter;
+      else if (c >= 5) st = sTableHeaderRight;
+      writeCell(r, c, h, 's', st);
+    });
+    r++;
+
+    // Table Data
+    let sNo = 1;
     const currentBilled = visibleRows.filter(h => h.type === 'Purchase').reduce((sum, h) => sum + Number(h.total_amount || 0), 0);
     const currentPaid = visibleRows.filter(h => h.type !== 'Opening').reduce((sum, h) => sum + Number(h.paid_amount || 0), 0);
-    const currentRemaining = visibleRows.filter(h => h.type === 'Purchase').reduce((sum, h) => sum + Number(h.remaining_amount || 0), 0);
 
-    data.push([]);
-    data.push(["TOTALS", "", "", "", "", "", currentBilled, currentPaid, currentRemaining, ""]);
+    [...visibleRows].reverse().forEach((h) => {
+      const isPurchase = h.type === 'Purchase';
+      const isOpening = h.type === 'Opening';
+      const desc = isOpening 
+        ? 'Opening Balance' 
+        : isPurchase 
+          ? `Purchase Invoice${h.reference ? ` (${h.reference})` : ""}` 
+          : `Payment Made${h.reference ? ` (${h.reference})` : ""}`;
 
-    const worksheet = XLSX.utils.aoa_to_sheet([...headers, ...data]);
-    worksheet["!cols"] = [
-      { wch: 6 },  // S.No
-      { wch: 12 }, // Date
-      { wch: 20 }, // Description
-      { wch: 15 }, // Reference
-      { wch: 15 }, // Method
-      { wch: 12 }, // Status
-      { wch: 22 }, // Purchased
-      { wch: 18 }, // Paid
-      { wch: 20 }, // Remaining
-      { wch: 22 }  // Running Balance
+      const status = isOpening ? "-" : isPurchase ? h.payment_status || "Unpaid" : "Paid";
+      
+      const debit = isOpening 
+        ? (h.balance_change < 0 ? Math.abs(h.balance_change) : 0)
+        : (isPurchase ? 0 : Number(h.paid_amount || 0));
+        
+      const credit = isOpening
+        ? (h.balance_change > 0 ? h.balance_change : 0)
+        : (isPurchase ? Number(h.total_amount || 0) : 0);
+
+      writeCell(r, 0, sNo++, 'n', sDataCenter);
+      writeCell(r, 1, h.date, 's', sDataCenter);
+      writeCell(r, 2, desc, 's', sData);
+      writeCell(r, 3, h.method || "-", 's', sData);
+      writeCell(r, 4, status, 's', sDataCenter);
+      writeCell(r, 5, debit, 'n', sDataNum);
+      writeCell(r, 6, credit, 'n', sDataNum);
+      writeCell(r, 7, h.runningBalance, 'n', h.runningBalance > 0 ? sDataCr : h.runningBalance < 0 ? sDataDr : sDataNum);
+      r++;
+    });
+
+    // Totals Row
+    writeCell(r, 0, "", 's', sTotalLabel);
+    writeCell(r, 1, "", 's', sTotalLabel);
+    writeCell(r, 2, "", 's', sTotalLabel);
+    writeCell(r, 3, "", 's', sTotalLabel);
+    writeCell(r, 4, "TOTALS", 's', sTotalLabel);
+    writeCell(r, 5, currentPaid, 'n', sTotalNum);
+    writeCell(r, 6, currentBilled, 'n', sTotalNum);
+    writeCell(r, 7, currentBalance, 'n', sTotalNum);
+    r++;
+
+    ws["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 7 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 7 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: 7 } },
+      { s: { r: 4, c: 1 }, e: { r: 4, c: 3 } },
+      { s: { r: 4, c: 5 }, e: { r: 4, c: 7 } },
+      { s: { r: 5, c: 1 }, e: { r: 5, c: 3 } },
+      { s: { r: 5, c: 5 }, e: { r: 5, c: 7 } },
+      { s: { r: r - 1, c: 0 }, e: { r: r - 1, c: 4 } }
     ];
 
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Statement");
-    XLSX.writeFile(workbook, `Statement_${supplier.name.replace(/\s+/g, '_')}.xlsx`);
+    ws["!cols"] = [
+      { wch: 8 },
+      { wch: 12 },
+      { wch: 35 },
+      { wch: 18 },
+      { wch: 12 },
+      { wch: 18 },
+      { wch: 18 },
+      { wch: 22 }
+    ];
+
+    ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: r - 1, c: 7 } });
+
+    XLSX.utils.book_append_sheet(wb, ws, "Account Statement");
+    XLSX.writeFile(wb, `Statement_${supplier.name.replace(/\s+/g, '_')}.xlsx`);
   };
 
   const handlePrintStatement = async () => {
@@ -697,113 +912,414 @@ function SupplierHistoryView({ supplier, onRefresh }) {
       .filter((h) => h.type !== "Opening")
       .reduce((s, h) => s + Number(h.paid_amount || 0), 0);
 
-    const currentPending = visibleRowsWithBalance
-      .filter((h) => h.type === "Purchase")
-      .reduce((s, h) => s + Number(h.remaining_amount || 0), 0);
+    const earliest = visibleRows[visibleRows.length - 1]; // visibleRows is newest-first
+    const openingBF = earliest 
+      ? earliest.runningBalance - earliest.balance_change 
+      : (fromDate 
+          ? (statementRows.find(h => h.date < fromDate)?.runningBalance || Number(supplier.openingBalance || supplier.opening_balance || 0)) 
+          : Number(supplier.openingBalance || supplier.opening_balance || 0)
+        );
+    const closing = visibleRows.length ? visibleRows[0].runningBalance : Number(supplier.openingBalance || supplier.opening_balance || 0);
 
-    const tableRowsHtml = [...visibleRowsWithBalance].reverse().map((h, i) => {
+    let rowsHtml = "";
+    let sNo = 1;
+
+    if (fromDate) {
+      rowsHtml += `
+        <tr class="bf-row">
+          <td>BF</td>
+          <td>${new Date(fromDate + "T00:00:00").toLocaleDateString("en-PK", { day: "2-digit", month: "short", year: "numeric" })}</td>
+          <td colspan="3"><strong>Balance Brought Forward (B/F)</strong></td>
+          <td class="num">${openingBF < 0 ? formatMoney(Math.abs(openingBF)) : "-"}</td>
+          <td class="num">${openingBF > 0 ? formatMoney(openingBF) : "-"}</td>
+          <td class="num bold">${formatMoney(Math.abs(openingBF))} ${openingBF > 0 ? "Cr" : openingBF < 0 ? "Dr" : ""}</td>
+        </tr>
+      `;
+    }
+
+    const tableRowsHtml = [...visibleRowsWithBalance].reverse().map((h) => {
       const isPurchase = h.type === "Purchase";
       const isOpening = h.type === "Opening";
       const status = isOpening ? "-" : isPurchase ? h.payment_status || "Unpaid" : "Paid";
-      const statusColor = status === "Paid" ? "#2e7d32" : status === "Partial" ? "#8a6d00" : status === "-" ? "#555" : "#c62828";
-      const statusBg = status === "Paid" ? "#e8f5e9" : status === "Partial" ? "#fff8e1" : status === "-" ? "#f5f5f5" : "#fdecec";
+      const statusColor = status === "Paid" ? "#16a34a" : status === "Partial" ? "#d97706" : status === "-" ? "#64748b" : "#dc2626";
+      const statusBg = status === "Paid" ? "#f0fdf4" : status === "Partial" ? "#fef3c7" : status === "-" ? "#f1f5f9" : "#fef2f2";
+
+      const debit = isOpening 
+        ? (h.balance_change < 0 ? Math.abs(h.balance_change) : 0)
+        : Number(h.paid_amount || 0);
+        
+      const credit = isOpening
+        ? (h.balance_change > 0 ? h.balance_change : 0)
+        : (isPurchase ? Number(h.total_amount || 0) : 0);
+
+      const desc = isOpening 
+        ? "Opening Balance" 
+        : isPurchase 
+          ? `Purchase Invoice ${h.reference ? `<span class="ref-no">(${h.reference})</span>` : ""}` 
+          : `Payment Made ${h.reference ? `<span class="ref-no">(${h.reference})</span>` : ""}`;
+
+      const runningBalFormatted = formatMoney(Math.abs(h.runningBalance));
+      const runningIndicator = h.runningBalance > 0 ? "Cr" : h.runningBalance < 0 ? "Dr" : "";
 
       return `
-        <tr style="border-bottom: 1px solid #c8d8c8;">
-          <td style="padding: 10px; color: #555;">${i + 1}</td>
-          <td style="padding: 10px; font-weight: 500;">${new Date(h.date + "T00:00:00").toLocaleDateString("en-PK", { day: "2-digit", month: "short", year: "numeric" })}</td>
-          <td style="padding: 10px;"><strong>${isOpening ? "Opening Balance" : isPurchase ? "Purchase Invoice" : "Payment Made"}</strong> ${h.reference && !isOpening ? `<span style="color:#666; font-size:10px; margin-left:6px; font-family: monospace;">(${h.reference})</span>` : ""}</td>
-          <td style="padding: 10px; color: #555;">${h.method || "-"}</td>
-          <td style="padding: 10px;"><span style="padding: 3px 8px; border-radius: 3px; font-size: 9px; font-weight: 700; text-transform: uppercase; background: ${statusBg}; color: ${statusColor}; border-left: ${status === "-" ? "none" : `3px solid ${statusColor}`};">${status}</span></td>
-          <td style="padding: 10px; text-align: right; font-family: monospace;">${isOpening && h.total_amount > 0 ? `Rs ${h.total_amount.toLocaleString()}` : isPurchase ? `Rs ${Number(h.total_amount || 0).toLocaleString()}` : "-"}</td>
-          <td style="padding: 10px; text-align: right; font-family: monospace; color: #2e7d32;">${isOpening && h.paid_amount > 0 ? `Rs ${h.paid_amount.toLocaleString()}` : !isOpening && Number(h.paid_amount) > 0 ? `Rs ${Number(h.paid_amount || 0).toLocaleString()}` : "-"}</td>
-          <td style="padding: 10px; text-align: right; font-family: monospace; color: ${isPurchase && Number(h.remaining_amount) > 0 ? "#c62828" : "#555"};">${isPurchase ? `Rs ${Number(h.remaining_amount || 0).toLocaleString()}` : "-"}</td>
-          <td style="padding: 10px; text-align: right; font-family: monospace; font-weight: 700; color: ${h.runningBalance > 0 ? "#c62828" : h.runningBalance < 0 ? "#1b5e20" : "#555"};">Rs ${Math.abs(h.runningBalance).toLocaleString()} ${h.runningBalance > 0 ? "Cr" : h.runningBalance < 0 ? "Dr" : ""}</td>
+        <tr>
+          <td class="muted">${sNo++}</td>
+          <td>${new Date(h.date + "T00:00:00").toLocaleDateString("en-PK", { day: "2-digit", month: "short", year: "numeric" })}</td>
+          <td><strong>${desc}</strong></td>
+          <td>${h.method || "-"}</td>
+          <td><span style="padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: 700; text-transform: uppercase; background: ${statusBg}; color: ${statusColor}; border: 1px solid ${statusColor}40;">${status}</span></td>
+          <td class="num">${debit > 0 ? formatMoney(debit) : "-"}</td>
+          <td class="num text-success">${credit > 0 ? formatMoney(credit) : "-"}</td>
+          <td class="num bold ${h.runningBalance > 0 ? 'text-danger' : h.runningBalance < 0 ? 'text-success' : ''}">${runningBalFormatted} ${runningIndicator}</td>
         </tr>
       `;
     }).join("");
+
+    rowsHtml += tableRowsHtml;
 
     const html = `
       <html>
         <head>
           <title>Supplier Statement - ${supplier.name}</title>
           <style>
-            body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; padding: 40px; color: #1a1a1a; background: #fff; font-size: 11px; line-height: 1.4; }
-            .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #1b5e20; padding-bottom: 16px; margin-bottom: 20px; }
-            .company-name { font-size: 26px; font-weight: 800; color: #1b5e20; text-transform: uppercase; letter-spacing: 0.5px; }
-            .company-sub { font-size: 10px; color: #6a8f6c; margin-top: 4px; text-transform: uppercase; font-weight: 700; letter-spacing: 1px; }
-            .doc-title { text-align: right; }
-            .doc-title h2 { margin: 0; font-size: 18px; font-weight: 800; color: #1b3a1d; text-transform: uppercase; letter-spacing: 0.5px; }
-            .doc-title p { margin: 4px 0 0 0; color: #555; font-size: 11px; }
-            .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; background: #f4faf4; border: 1px solid #c8d8c8; border-radius: 4px; padding: 14px 18px; }
-            .meta-block { display: flex; flex-direction: column; gap: 4px; }
-            .meta-label { font-size: 9px; font-weight: 700; color: #6a8f6c; text-transform: uppercase; letter-spacing: 0.5px; }
-            .meta-value { font-size: 13px; font-weight: 700; color: #1b3a1d; }
-            .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
-            .summary-box { border: 1px solid #c8d8c8; border-radius: 4px; padding: 12px 14px; background: #fff; }
-            .summary-box.highlight { background: #f0f9f0; border-color: #2e7d32; border-left: 4px solid #2e7d32; }
-            .summary-label { font-size: 9px; font-weight: 700; color: #6a8f6c; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
-            .summary-val { font-size: 15px; font-weight: 700; color: #1b3a1d; font-family: monospace; }
-            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-            thead tr { background: #1b5e20; color: #fff; }
-            th { padding: 10px; text-align: left; font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; border: none; }
-            th.num, td.num { text-align: right; }
-            td { padding: 10px; color: #222; border-bottom: 1px solid #e8e8e8; }
-            tr:nth-child(even) { background: #fafdfa; }
+            @page {
+              size: A4;
+              margin: 15mm;
+            }
+            @media print {
+              body { padding: 0; color: #1e293b; background: #fff; }
+              thead { display: table-header-group; }
+              tfoot { display: table-footer-group; }
+              .no-print { display: none; }
+              .page-break { page-break-before: always; }
+              .summary-box { background: #f8fafc !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+              .summary-box.highlight { background: #f0fdf4 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+              thead tr { background: #1b5e20 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+              tr.bf-row { background: #f8fafc !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            }
+            body {
+              font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+              color: #1e293b;
+              background: #fff;
+              font-size: 11px;
+              line-height: 1.5;
+              margin: 0;
+              padding: 20px;
+            }
+            .header-container {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+              border-bottom: 2px solid #e2e8f0;
+              padding-bottom: 20px;
+              margin-bottom: 25px;
+            }
+            .brand-section {
+              display: flex;
+              align-items: center;
+              gap: 12px;
+            }
+            .logo-mark {
+              width: 42px;
+              height: 42px;
+              border-radius: 8px;
+              background: linear-gradient(135deg, #1b5e20, #2e7d32);
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              font-size: 18px;
+              font-weight: 800;
+              color: #fff;
+              letter-spacing: 0.5px;
+            }
+            .company-title-block {
+              display: flex;
+              flex-direction: column;
+            }
+            .company-name {
+              font-size: 24px;
+              font-weight: 800;
+              color: #1b5e20;
+              line-height: 1.1;
+              letter-spacing: -0.5px;
+            }
+            .company-sub {
+              font-size: 9.5px;
+              color: #64748b;
+              font-weight: 700;
+              text-transform: uppercase;
+              letter-spacing: 1px;
+              margin-top: 3px;
+            }
+            .company-details {
+              font-size: 9px;
+              color: #64748b;
+              margin-top: 5px;
+              line-height: 1.4;
+            }
+            .doc-title-section {
+              text-align: right;
+            }
+            .doc-title {
+              margin: 0;
+              font-size: 20px;
+              font-weight: 800;
+              color: #0f172a;
+              text-transform: uppercase;
+              letter-spacing: 0.5px;
+            }
+            .doc-sub {
+              margin: 4px 0 0 0;
+              color: #64748b;
+              font-size: 11px;
+              font-weight: 500;
+            }
+            .doc-period {
+              margin: 4px 0 0 0;
+              font-size: 10.5px;
+              font-weight: 600;
+              color: #1b5e20;
+              background: #f0fdf4;
+              padding: 2px 8px;
+              border-radius: 4px;
+              display: inline-block;
+            }
+            .meta-grid {
+              display: grid;
+              grid-template-columns: 1.5fr 1fr;
+              gap: 20px;
+              margin-bottom: 25px;
+            }
+            .party-card {
+              border: 1px solid #e2e8f0;
+              border-radius: 6px;
+              padding: 12px 16px;
+              background: #fff;
+            }
+            .card-title {
+              font-size: 9px;
+              font-weight: 700;
+              color: #64748b;
+              text-transform: uppercase;
+              letter-spacing: 0.5px;
+              margin-bottom: 6px;
+              border-bottom: 1px solid #f1f5f9;
+              padding-bottom: 4px;
+            }
+            .party-name {
+              font-size: 14px;
+              font-weight: 700;
+              color: #0f172a;
+              margin-bottom: 4px;
+            }
+            .party-info {
+              font-size: 10px;
+              color: #475569;
+              margin: 2px 0;
+            }
+            .summary-grid {
+              display: grid;
+              grid-template-columns: repeat(4, 1fr);
+              gap: 12px;
+              margin-bottom: 25px;
+            }
+            .summary-box {
+              border: 1px solid #e2e8f0;
+              border-radius: 6px;
+              padding: 12px 14px;
+              background: #f8fafc;
+              border-left: 3.5px solid #64748b;
+            }
+            .summary-box.debit-accent { border-left-color: #ef4444; }
+            .summary-box.credit-accent { border-left-color: #22c55e; }
+            .summary-box.highlight {
+              background: #f0fdf4;
+              border-color: #1b5e20;
+              border-left-width: 4px;
+              border-left-color: #1b5e20;
+            }
+            .summary-label {
+              font-size: 9px;
+              font-weight: 700;
+              color: #64748b;
+              text-transform: uppercase;
+              letter-spacing: 0.5px;
+              margin-bottom: 4px;
+            }
+            .summary-val {
+              font-size: 14px;
+              font-weight: 800;
+              color: #0f172a;
+              font-family: 'Consolas', 'Courier New', monospace;
+            }
+            .summary-box.highlight .summary-val {
+              font-size: 15px;
+              color: #1b5e20;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 15px;
+            }
+            thead tr {
+              background: #1b5e20;
+              color: #fff;
+            }
+            th {
+              padding: 9px 10px;
+              text-align: left;
+              font-weight: 700;
+              font-size: 9.5px;
+              text-transform: uppercase;
+              letter-spacing: 0.5px;
+            }
+            th.num, td.num {
+              text-align: right;
+            }
+            td {
+              padding: 9px 10px;
+              color: #334155;
+              border-bottom: 1px solid #e2e8f0;
+              font-size: 10.5px;
+            }
+            tr:nth-child(even) {
+              background: #f8fafc;
+            }
+            tr.bf-row {
+              background: #f1f5f9;
+              font-weight: 600;
+            }
+            .bold { font-weight: 700; }
+            .muted { color: #64748b; }
+            .text-success { color: #16a34a; }
+            .text-danger { color: #dc2626; }
+            .ref-no {
+              color: #64748b;
+              font-size: 9px;
+              font-family: 'Consolas', monospace;
+              margin-left: 4px;
+            }
+            .footer-container {
+              margin-top: 50px;
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-end;
+              border-top: 1px solid #e2e8f0;
+              padding-top: 20px;
+              font-size: 9px;
+              color: #64748b;
+              page-break-inside: avoid;
+            }
+            .sig-block {
+              text-align: center;
+              width: 180px;
+            }
+            .sig-line {
+              border-top: 1.5px solid #475569;
+              margin-bottom: 5px;
+              padding-top: 6px;
+              font-weight: 700;
+              color: #334155;
+              text-transform: uppercase;
+              letter-spacing: 0.5px;
+            }
+            .footer-stamp {
+              max-width: 320px;
+              line-height: 1.4;
+            }
           </style>
         </head>
         <body>
-          <div class="header">
+          <div class="header-container">
             <div>
-              <div class="company-name">${BUSINESS_NAME}</div>
-              <div class="company-sub">Supplier Account Statement</div>
+              <div class="brand-section">
+                <div class="logo-mark">CT</div>
+                <div class="company-title-block">
+                  <div class="company-name">${BUSINESS_NAME}</div>
+                  <div class="company-sub">Agro Inputs & Fertilizer Distributors</div>
+                </div>
+              </div>
+              <div class="company-details">
+                Main Bazar, Sahiwal, Pakistan<br>
+                Tel: +92 300 7890123 | Email: info@cheematraders.com
+              </div>
             </div>
-            <div class="doc-title">
-              <h2>Account Statement</h2>
-              <p>Printed: ${new Date().toLocaleDateString("en-PK", { day: "2-digit", month: "long", year: "numeric" })}</p>
-              ${(fromDate || toDate) ? `<p>Period: ${fromDate || "Inception"} - ${toDate || "Today"}</p>` : ""}
-            </div>
-          </div>
-          <div class="meta">
-            <div class="meta-block">
-              <span class="meta-label">Supplier Name</span>
-              <span class="meta-value">${supplier.name}</span>
-            </div>
-            <div class="meta-block">
-              <span class="meta-label">Phone</span>
-              <span class="meta-value">${supplier.phone || "-"}</span>
-            </div>
-            <div class="meta-block">
-              <span class="meta-label">Current Balance</span>
-              <span class="meta-value" style="color: ${currentBalance > 0 ? "#c62828" : currentBalance < 0 ? "#1b5e20" : "#333"}">
-                ${currentBalance === 0 ? "Settled - Rs 0" : currentBalance > 0 ? `Cr - Rs ${Math.abs(currentBalance).toLocaleString()}` : `Dr - Rs ${Math.abs(currentBalance).toLocaleString()}`}
-              </span>
+            <div class="doc-title-section">
+              <h1 class="doc-title">Account Statement</h1>
+              <div class="doc-sub">Generated: ${new Date().toLocaleDateString("en-PK", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
+              <div class="doc-period">Period: ${fromDate || "Inception"} &mdash; ${toDate || "Today"}</div>
             </div>
           </div>
-          <div class="summary">
-            <div class="summary-box"><div class="summary-label">Total Purchased</div><div class="summary-val">Rs ${currentBilled.toLocaleString()}</div></div>
-            <div class="summary-box"><div class="summary-label">Total Paid</div><div class="summary-val" style="color: #1b5e20;">Rs ${currentReceived.toLocaleString()}</div></div>
-            <div class="summary-box"><div class="summary-label">Pending Cr</div><div class="summary-val" style="color: ${currentPending > 0 ? "#c62828" : "#1b5e20"};">Rs ${currentPending.toLocaleString()}</div></div>
-            <div class="summary-box highlight"><div class="summary-label">Net Balance</div><div class="summary-val" style="color: ${currentBalance > 0 ? "#c62828" : "#1b5e20"};">${currentBalance === 0 ? "Rs 0" : `Rs ${Math.abs(currentBalance).toLocaleString()}`}</div></div>
+
+          <div class="meta-grid">
+            <div class="party-card">
+              <div class="card-title">Statement For Supplier</div>
+              <div class="party-name">${supplier.name}</div>
+              ${supplier.phone ? `<div class="party-info"><strong>Phone:</strong> ${supplier.phone}</div>` : ""}
+              ${supplier.address ? `<div class="party-info"><strong>Address:</strong> ${supplier.address}</div>` : ""}
+            </div>
+            <div class="party-card">
+              <div class="card-title">Account Summary</div>
+              <div class="party-info">
+                <strong>Status:</strong> 
+                ${closing === 0 ? "Settled" : closing > 0 ? '<span class="text-danger bold">Outstanding Payable (Cr)</span>' : '<span class="text-success bold">Debit Balance (Dr)</span>'}
+              </div>
+              <div class="party-info">
+                <strong>Final Balance:</strong> 
+                <span class="bold ${closing > 0 ? 'text-danger' : closing < 0 ? 'text-success' : ''}">
+                  ${formatMoney(Math.abs(closing))} ${closing > 0 ? "Cr" : closing < 0 ? "Dr" : ""}
+                </span>
+              </div>
+            </div>
           </div>
+
+          <div class="summary-grid">
+            <div class="summary-box">
+              <div class="summary-label">Opening Balance</div>
+              <div class="summary-val">${formatMoney(Math.abs(openingBF))} ${openingBF > 0 ? "Cr" : openingBF < 0 ? "Dr" : ""}</div>
+            </div>
+            <div class="summary-box debit-accent">
+              <div class="summary-label">Total Payments (Dr)</div>
+              <div class="summary-val">${formatMoney(currentReceived)}</div>
+            </div>
+            <div class="summary-box credit-accent">
+              <div class="summary-label">Total Purchased (Cr)</div>
+              <div class="summary-val text-success">${formatMoney(currentBilled)}</div>
+            </div>
+            <div class="summary-box highlight">
+              <div class="summary-label">Closing Balance</div>
+              <div class="summary-val">${formatMoney(Math.abs(closing))} ${closing > 0 ? "Cr" : closing < 0 ? "Dr" : ""}</div>
+            </div>
+          </div>
+
           <table>
             <thead>
               <tr>
-                <th style="width: 28px;">#</th>
-                <th style="width: 85px;">Date</th>
+                <th style="width: 25px;">#</th>
+                <th style="width: 80px;">Date</th>
                 <th>Description</th>
-                <th>Method</th>
-                <th style="width: 85px;">Status</th>
-                <th class="num" style="width: 100px;">Purchased</th>
-                <th class="num" style="width: 100px;">Paid</th>
-                <th class="num" style="width: 100px;">Remaining</th>
-                <th class="num" style="width: 100px;">Balance</th>
+                <th style="width: 80px;">Method</th>
+                <th style="width: 75px;">Status</th>
+                <th class="num" style="width: 100px;">Debit (Dr)</th>
+                <th class="num" style="width: 100px;">Credit (Cr)</th>
+                <th class="num" style="width: 120px;">Balance</th>
               </tr>
             </thead>
             <tbody>
-              ${tableRowsHtml}
+              ${rowsHtml}
             </tbody>
           </table>
+
+          <div class="footer-container">
+            <div class="footer-stamp">
+              <strong>Cheema Traders POS System</strong><br>
+              This is a computer-generated statement and does not require a physical stamp. For any discrepancies, contact us within 7 days of statement receipt.
+            </div>
+            <div class="sig-block">
+              <div class="sig-line">Authorized Signature</div>
+              <span class="muted">Cheema Traders</span>
+            </div>
+          </div>
         </body>
       </html>
     `;

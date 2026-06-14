@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { Search, PlusCircle, List, FileDown } from "lucide-react";
-import { saveExpense, listExpenses } from "../lib/posApi";
+import { Search, PlusCircle, List, FileDown, Trash2 } from "lucide-react";
+import { saveExpense, listExpenses, deleteExpense } from "../lib/posApi";
 import SuccessNotification from "../components/SuccessNotification";
 import WarningNotification from "../components/Warningnotification";
 import * as XLSX from "xlsx";
@@ -225,6 +225,18 @@ function ExpenseLogTab() {
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
 
+  const handleDelete = async (id) => {
+    if (window.confirm("Are you sure you want to delete this expense? This action will permanently delete the expense and automatically delete/revert its associated ledger transactions.")) {
+      try {
+        await deleteExpense(id);
+        const res = await listExpenses({ from: fromDate, to: toDate });
+        if (res?.expenses) setExpenses(res.expenses);
+      } catch (err) {
+        alert("Failed to delete expense: " + err.message);
+      }
+    }
+  };
+
   useEffect(() => {
     async function load() {
       setLoading(true);
@@ -352,19 +364,20 @@ function ExpenseLogTab() {
                           <th style={{ width: 180 }}>Debit (To)</th>
                           <th style={{ width: 180 }}>Credit (From)</th>
                           <th style={{ textAlign: 'right', color: '#1b3a1d', width: 120 }}>Amount</th>
+                          <th style={{ textAlign: 'center', width: 70 }}>Actions</th>
                       </tr>
                   </thead>
                   <tbody>
                       {loading ? (
                           [...Array(4)].map((_, i) => (
                             <tr key={i}>
-                              {[...Array(6)].map((_, j) => (
+                              {[...Array(7)].map((_, j) => (
                                 <td key={j}><div className="skeleton" style={{ height: 14, borderRadius: 2, background: '#e8f0e8', animation: 'pulse 1.5s infinite' }} /></td>
                               ))}
                             </tr>
                           ))
                       ) : filtered.length === 0 ? (
-                          <tr><td colSpan={6} style={{ textAlign: 'center', padding: 36, color: '#708571', fontSize: 13 }}>
+                          <tr><td colSpan={7} style={{ textAlign: 'center', padding: 36, color: '#708571', fontSize: 13 }}>
                               No expenses recorded yet.
                           </td></tr>
                       ) : filtered.map((e, idx) => {
@@ -376,7 +389,7 @@ function ExpenseLogTab() {
                               <React.Fragment key={e.id || idx}>
                                   {showDateRow && (
                                       <tr>
-                                          <td colSpan={6} style={st.dateSeparator}>
+                                          <td colSpan={7} style={st.dateSeparator}>
                                               {new Date(eDate + 'T00:00:00').toLocaleDateString('en-PK', {
                                                   weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
                                               })}
@@ -401,6 +414,15 @@ function ExpenseLogTab() {
                                       </td>
                                       <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 14, fontWeight: 700, color: '#1b3a1d' }}>
                                           Rs {Number(e.amount || 0).toLocaleString()}
+                                      </td>
+                                      <td style={{ textAlign: 'center' }}>
+                                          <button 
+                                              onClick={() => handleDelete(e.id)} 
+                                              style={{ background: 'none', border: 'none', color: '#c62828', cursor: 'pointer', padding: 4 }}
+                                              title="Delete Expense"
+                                          >
+                                              <Trash2 size={16} />
+                                          </button>
                                       </td>
                                   </tr>
                               </React.Fragment>

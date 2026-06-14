@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { Trash2 } from "lucide-react";
 import { fmtPKR, drcr } from "../lib/money";
 
 const ipc = typeof window !== "undefined" ? window.ipc : null;
@@ -31,6 +32,15 @@ export default function JournalPage() {
   ]);
   const [formError, setFormError] = useState("");
   const [formSuccess, setFormSuccess] = useState("");
+
+  // Direct Subledger Transfer Mode State
+  const [entryMode, setEntryMode] = useState("standard"); // "standard" | "transfer"
+  const [transferType, setTransferType] = useState("receive_payment"); 
+  const [transferHeaderAccountId, setTransferHeaderAccountId] = useState("");
+  const [transferSubledgerId, setTransferSubledgerId] = useState("");
+  const [transferAmount, setTransferAmount] = useState("");
+  const [transferDate, setTransferDate] = useState(new Date().toISOString().split("T")[0]);
+  const [transferNarration, setTransferNarration] = useState("");
 
   // Reversal Prompt State (inside Detail view)
   const [isReversing, setIsReversing] = useState(false);
@@ -98,6 +108,18 @@ export default function JournalPage() {
       setVouchers(list || []);
     } catch (err) {
       console.error("Failed to load vouchers:", err);
+    }
+  };
+
+  const handleDeleteVoucher = async (id) => {
+    if (window.confirm("Are you sure you want to delete this journal entry? This action will permanently delete the entry, its transaction lines, and revert all debits/credits. If this entry originated from an Expense, the expense record will also be deleted.")) {
+      try {
+        await ipc.invoke("journal:delete", id);
+        setViewingVoucher(null);
+        loadVouchers();
+      } catch (err) {
+        alert("Failed to delete journal entry: " + err.message);
+      }
     }
   };
 
@@ -250,6 +272,125 @@ export default function JournalPage() {
 
     } catch (err) {
       setFormError(err.message || "Failed to save journal voucher.");
+    }
+  };
+
+  const handleSaveTransfer = async (e) => {
+    e.preventDefault();
+    setFormError("");
+    setFormSuccess("");
+
+    if (!ipc) {
+      setFormError("Electron IPC is not available.");
+      return;
+    }
+
+    try {
+      const amt = Number(transferAmount);
+      if (!amt || amt <= 0) {
+        throw new Error("Amount must be greater than 0.");
+      }
+      if (!transferHeaderAccountId) {
+        throw new Error("Please select a Cash/Bank account.");
+      }
+      if (!transferSubledgerId) {
+        throw new Error("Please select a Customer or Supplier.");
+      }
+
+      const bankAcc = accounts.find(a => String(a.id) === String(transferHeaderAccountId));
+      if (!bankAcc) throw new Error("Cash/Bank account not found.");
+
+      const arAcc = accounts.find(a => a.code === "1100");
+      const apAcc = accounts.find(a => a.code === "2000");
+      if (!arAcc || !apAcc) throw new Error("Control accounts (AR/AP) not found in COA.");
+
+      let lines = [];
+      const amtPaisa = Math.round(amt * 100);
+
+      if (transferType === "receive_payment") {
+        lines.push({
+          accountId: bankAcc.id,
+          debit: amtPaisa,
+          credit: 0,
+          memo: transferNarration || "Customer payment received"
+        });
+        lines.push({
+          accountId: arAcc.id,
+          debit: 0,
+          credit: amtPaisa,
+          customerId: Number(transferSubledgerId),
+          supplierId: null,
+          memo: transferNarration || "Customer payment received"
+        });
+      } else if (transferType === "send_refund") {
+        lines.push({
+          accountId: arAcc.id,
+          debit: amtPaisa,
+          credit: 0,
+          customerId: Number(transferSubledgerId),
+          supplierId: null,
+          memo: transferNarration || "Customer refund sent"
+        });
+        lines.push({
+          accountId: bankAcc.id,
+          debit: 0,
+          credit: amtPaisa,
+          memo: transferNarration || "Customer refund sent"
+        });
+      } else if (transferType === "send_payment") {
+        lines.push({
+          accountId: apAcc.id,
+          debit: amtPaisa,
+          credit: 0,
+          supplierId: Number(transferSubledgerId),
+          customerId: null,
+          memo: transferNarration || "Payment to supplier"
+        });
+        lines.push({
+          accountId: bankAcc.id,
+          debit: 0,
+          credit: amtPaisa,
+          memo: transferNarration || "Payment to supplier"
+        });
+      } else if (transferType === "receive_refund") {
+        lines.push({
+          accountId: bankAcc.id,
+          debit: amtPaisa,
+          credit: 0,
+          memo: transferNarration || "Refund received from supplier"
+        });
+        lines.push({
+          accountId: apAcc.id,
+          debit: 0,
+          credit: amtPaisa,
+          supplierId: Number(transferSubledgerId),
+          customerId: null,
+          memo: transferNarration || "Refund received from supplier"
+        });
+      }
+
+      const payload = {
+        date: transferDate,
+        narration: transferNarration || null,
+        source_type: "manual",
+        source_id: null,
+        lines
+      };
+
+      await ipc.invoke("journal:create", payload);
+
+      setFormSuccess("Direct subledger transfer saved and posted successfully!");
+      setTransferAmount("");
+      setTransferNarration("");
+      setTransferSubledgerId("");
+
+      setTimeout(() => {
+        setFormSuccess("");
+        setActiveTab("vouchers");
+      }, 1500);
+
+    } catch (err) {
+      setFormError(err.message || "Failed to post transfer.");
     }
   };
 
@@ -421,6 +562,16 @@ export default function JournalPage() {
                           </td>
                           <td style={st.td}>
                             <div>{v.narration || "No Narration"}</div>
+                            {v.customer_names && (
+                              <div style={{ fontSize: 11, color: "var(--success)", marginTop: 4 }}>
+                                <strong>Customer:</strong> {v.customer_names}
+                              </div>
+                            )}
+                            {v.supplier_names && (
+                              <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 4 }}>
+                                <strong>Supplier:</strong> {v.supplier_names}
+                              </div>
+                            )}
                             {v.reversed_by && (
                               <div style={{ color: "var(--danger)", fontSize: 11, marginTop: 4 }}>
                                 Reversed by {v.reversed_by}
@@ -435,12 +586,27 @@ export default function JournalPage() {
                           <td style={{ ...st.td, ...st.num }}>
                             {fmtPKR(v.total_amount)}
                           </td>
-                          <td style={{ ...st.td, textAlign: "center" }}>
+                          <td style={{ ...st.td, textAlign: "center", display: "flex", justifyContent: "center", alignItems: "center", gap: 8 }}>
                             <button
                               onClick={() => handleViewVoucher(v.id)}
                               style={st.viewBtn}
                             >
                               View Detail
+                            </button>
+                            <button
+                              onClick={() => handleDeleteVoucher(v.id)}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                color: "var(--danger)",
+                                cursor: "pointer",
+                                padding: 6,
+                                display: "inline-flex",
+                                alignItems: "center"
+                              }}
+                              title="Delete Journal Entry"
+                            >
+                              <Trash2 size={16} />
                             </button>
                           </td>
                         </tr>
@@ -457,110 +623,355 @@ export default function JournalPage() {
         {/* TAB 3: NEW JOURNAL VOUCHER (JV) ENTRY SCREEN */}
         {/* ======================================================== */}
         {activeTab === "new-voucher" && (
-          <form onSubmit={handleSaveJV} style={st.voucherForm}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            {/* Mode Toggle Tabs */}
+            <div style={{ display: "flex", gap: 12, background: "var(--sidebar-bg)", padding: 4, borderRadius: 6, width: "fit-content" }}>
+              <button
+                type="button"
+                onClick={() => { setEntryMode("standard"); setFormError(""); setFormSuccess(""); }}
+                style={entryMode === "standard" ? st.activeModeBtn : st.modeBtn}
+              >
+                Standard JV (Multi-Line Grid)
+              </button>
+              <button
+                type="button"
+                onClick={() => { setEntryMode("transfer"); setFormError(""); setFormSuccess(""); }}
+                style={entryMode === "transfer" ? st.activeModeBtn : st.modeBtn}
+              >
+                Direct Subledger Transfer
+              </button>
+            </div>
+
             {/* Form status notices */}
             {formError && <div style={st.errorBanner}>{formError}</div>}
             {formSuccess && <div style={st.successBanner}>{formSuccess}</div>}
 
-            <div style={st.card}>
-              <div style={st.formHeaderRow}>
-                <div style={st.formHeaderField}>
-                  <label style={st.label}>Voucher No (Auto-Preview)</label>
-                  <input
-                    type="text"
-                    style={{ ...st.input, background: "var(--sidebar-bg)", color: "var(--text-secondary)", fontWeight: "bold" }}
-                    value={jvEntryNoPreview}
-                    readOnly
-                  />
+            {entryMode === "standard" ? (
+              <form onSubmit={handleSaveJV} style={st.voucherForm}>
+                <div style={st.card}>
+                  <div style={st.formHeaderRow}>
+                    <div style={st.formHeaderField}>
+                      <label style={st.label}>Voucher No (Auto-Preview)</label>
+                      <input
+                        type="text"
+                        style={{ ...st.input, background: "var(--sidebar-bg)", color: "var(--text-secondary)", fontWeight: "bold" }}
+                        value={jvEntryNoPreview}
+                        readOnly
+                      />
+                    </div>
+
+                    <div style={st.formHeaderField}>
+                      <label style={st.label}>Voucher Date</label>
+                      <input
+                        type="date"
+                        required
+                        style={st.input}
+                        value={jvDate}
+                        onChange={(e) => setJvDate(e.target.value)}
+                      />
+                    </div>
+
+                    <div style={{ ...st.formHeaderField, flex: 2 }}>
+                      <label style={st.label}>Narration / Description</label>
+                      <input
+                        type="text"
+                        placeholder="Enter journal voucher general narration..."
+                        style={st.input}
+                        value={jvNarration}
+                        onChange={(e) => setJvNarration(e.target.value)}
+                      />
+                    </div>
+                  </div>
                 </div>
 
-                <div style={st.formHeaderField}>
-                  <label style={st.label}>Voucher Date</label>
-                  <input
-                    type="date"
-                    required
-                    style={st.input}
-                    value={jvDate}
-                    onChange={(e) => setJvDate(e.target.value)}
-                  />
+                {/* LINES GRID */}
+                <div style={{ ...st.card, padding: 0, overflow: "visible" }}>
+                  <div style={st.gridHeader}>
+                    <span style={{ width: "35%", paddingLeft: 12 }}>Account Selection</span>
+                    <span style={{ width: "20%", textAlign: "right" }}>Debit (PKR)</span>
+                    <span style={{ width: "20%", textAlign: "right" }}>Credit (PKR)</span>
+                    <span style={{ width: "20%", paddingLeft: 12 }}>Line Memo</span>
+                    <span style={{ width: "5%", textAlign: "center" }}></span>
+                  </div>
+
+                  <div style={st.gridBody}>
+                    {jvLines.map((line, idx) => (
+                      <div key={idx} style={st.gridRow}>
+                        {/* Account Select with unique TabIndex */}
+                        <div style={{ width: "35%", display: "flex", flexDirection: "column", gap: 4 }}>
+                          <select
+                            style={{ ...st.select, width: "100%" }}
+                            value={line.accountId}
+                            onChange={(e) => {
+                              const newAccountId = e.target.value;
+                              handleLineChange(idx, "accountId", newAccountId);
+                              const acc = accounts.find(a => String(a.id) === String(newAccountId));
+                              if (acc?.code === "1100") {
+                                handleLineChange(idx, "supplierId", "");
+                              } else if (acc?.code === "2000") {
+                                handleLineChange(idx, "customerId", "");
+                              }
+                            }}
+                            required
+                            ref={(el) => (inputRefs.current[idx * 3] = el)}
+                          >
+                            <option value="">Choose Account...</option>
+                            {accounts.map(acc => (
+                              <option key={acc.id} value={acc.id} disabled={!acc.is_active}>
+                                {acc.code} — {acc.name} ({acc.type.toUpperCase()})
+                              </option>
+                            ))}
+                          </select>
+
+                          {line.accountId && (
+                            <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                              {accounts.find(a => String(a.id) === String(line.accountId))?.code === "1100" ? (
+                                <select
+                                  style={{ ...st.select, width: "100%", borderColor: "var(--success)", background: "rgba(46, 125, 50, 0.05)", padding: "4px 8px", fontSize: 12 }}
+                                  value={line.customerId || ""}
+                                  onChange={(e) => {
+                                    handleLineChange(idx, "customerId", e.target.value);
+                                    handleLineChange(idx, "supplierId", "");
+                                  }}
+                                  required
+                                >
+                                  <option value="">-- Required Customer --</option>
+                                  {customers.map(c => (
+                                    <option key={c.id} value={c.id}>
+                                      {c.name} {c.phone ? `(${c.phone})` : ""}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : accounts.find(a => String(a.id) === String(line.accountId))?.code === "2000" ? (
+                                <select
+                                  style={{ ...st.select, width: "100%", borderColor: "var(--danger)", background: "rgba(239, 68, 68, 0.05)", padding: "4px 8px", fontSize: 12 }}
+                                  value={line.supplierId || ""}
+                                  onChange={(e) => {
+                                    handleLineChange(idx, "supplierId", e.target.value);
+                                    handleLineChange(idx, "customerId", "");
+                                  }}
+                                  required
+                                >
+                                  <option value="">-- Required Supplier --</option>
+                                  {suppliers.map(s => (
+                                    <option key={s.id} value={s.id}>
+                                      {s.name} {s.phone ? `(${s.phone})` : ""}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : null}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Debit Input */}
+                        <div style={{ width: "20%" }}>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="0.00"
+                            style={{ ...st.input, textAlign: "right", fontFamily: "monospace" }}
+                            value={line.debit}
+                            onChange={(e) => handleLineChange(idx, "debit", e.target.value)}
+                            ref={(el) => (inputRefs.current[idx * 3 + 1] = el)}
+                          />
+                        </div>
+
+                        {/* Credit Input */}
+                        <div style={{ width: "20%" }}>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="0.00"
+                            style={{ ...st.input, textAlign: "right", fontFamily: "monospace" }}
+                            value={line.credit}
+                            onChange={(e) => handleLineChange(idx, "credit", e.target.value)}
+                            ref={(el) => (inputRefs.current[idx * 3 + 2] = el)}
+                          />
+                        </div>
+
+                        {/* Memo */}
+                        <div style={{ width: "20%" }}>
+                          <input
+                            type="text"
+                            placeholder="Memo..."
+                            style={st.input}
+                            value={line.memo}
+                            onChange={(e) => handleLineChange(idx, "memo", e.target.value)}
+                          />
+                        </div>
+
+                        {/* Remove Action */}
+                        <div style={{ width: "5%", textAlign: "center" }}>
+                          <button
+                            type="button"
+                            onClick={() => removeLine(idx)}
+                            style={st.removeBtn}
+                            disabled={jvLines.length <= 2}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Add Row Action */}
+                  <div style={st.gridFooterActions}>
+                    <button
+                      type="button"
+                      onClick={addLine}
+                      style={st.addBtn}
+                    >
+                      + Add Line
+                    </button>
+                  </div>
                 </div>
 
-                <div style={{ ...st.formHeaderField, flex: 2 }}>
-                  <label style={st.label}>Narration / Description</label>
-                  <input
-                    type="text"
-                    placeholder="Enter journal voucher general narration..."
-                    style={st.input}
-                    value={jvNarration}
-                    onChange={(e) => setJvNarration(e.target.value)}
-                  />
+                {/* STICKY VOUCHER FOOTER */}
+                <div style={st.stickyFooter}>
+                  <div style={st.stickyFooterInfo}>
+                    <div style={st.footerMetric}>
+                      <span style={st.footerLabel}>Total Debit:</span>
+                      <span style={{ ...st.footerValue, color: "#2e7d32" }}>
+                        {fmtPKR(totalDr)}
+                      </span>
+                    </div>
+
+                    <div style={st.footerMetric}>
+                      <span style={st.footerLabel}>Total Credit:</span>
+                      <span style={{ ...st.footerValue, color: "#c62828" }}>
+                        {fmtPKR(totalCr)}
+                      </span>
+                    </div>
+
+                    <div style={st.footerMetric}>
+                      <span style={st.footerLabel}>Difference:</span>
+                      <span style={{
+                        ...st.footerValue,
+                        color: difference === 0 ? "#2e7d32" : "#c62828"
+                      }}>
+                        {fmtPKR(Math.abs(difference))} {difference !== 0 && "Out of Balance"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div style={st.stickyFooterActions}>
+                    {difference !== 0 && (
+                      <button
+                        type="button"
+                        onClick={handleAutoFill}
+                        style={st.balanceBtn}
+                      >
+                        Auto-fill Balance
+                      </button>
+                    )}
+                    <button
+                      type="submit"
+                      disabled={difference !== 0 || jvLines.some(l => !l.accountId)}
+                      style={{
+                        ...st.saveBtn,
+                        opacity: (difference !== 0 || jvLines.some(l => !l.accountId)) ? 0.5 : 1,
+                        cursor: (difference !== 0 || jvLines.some(l => !l.accountId)) ? "not-allowed" : "pointer"
+                      }}
+                    >
+                      Save & Post Voucher
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </div>
+              </form>
+            ) : (
+              <form onSubmit={handleSaveTransfer} style={st.voucherForm}>
+                <div style={st.card}>
+                  <div style={st.cardHeader}>
+                    <h3 style={st.cardTitle}>Direct Subledger Fund Transfer</h3>
+                    <span style={st.subText}>Transfer money directly between cash/bank and customer/supplier subledger accounts.</span>
+                  </div>
 
-            {/* LINES GRID */}
-            <div style={{ ...st.card, padding: 0, overflow: "visible" }}>
-              <div style={st.gridHeader}>
-                <span style={{ width: "35%", paddingLeft: 12 }}>Account Selection</span>
-                <span style={{ width: "20%", textAlign: "right" }}>Debit (PKR)</span>
-                <span style={{ width: "20%", textAlign: "right" }}>Credit (PKR)</span>
-                <span style={{ width: "20%", paddingLeft: 12 }}>Line Memo</span>
-                <span style={{ width: "5%", textAlign: "center" }}></span>
-              </div>
-
-              <div style={st.gridBody}>
-                {jvLines.map((line, idx) => (
-                  <div key={idx} style={st.gridRow}>
-                    {/* Account Select with unique TabIndex */}
-                    <div style={{ width: "35%", display: "flex", flexDirection: "column", gap: 4 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
+                    {/* Transfer Type */}
+                    <div style={st.filterGroup}>
+                      <label style={st.label}>Transfer Type</label>
                       <select
-                        style={{ ...st.select, width: "100%" }}
-                        value={line.accountId}
+                        style={st.select}
+                        value={transferType}
                         onChange={(e) => {
-                          const newAccountId = e.target.value;
-                          handleLineChange(idx, "accountId", newAccountId);
-                          // Clear subledger values if account changes
-                          const acc = accounts.find(a => String(a.id) === String(newAccountId));
-                          if (acc?.code !== "1100") handleLineChange(idx, "customerId", "");
-                          if (acc?.code !== "2000") handleLineChange(idx, "supplierId", "");
+                          setTransferType(e.target.value);
+                          setTransferSubledgerId("");
                         }}
                         required
-                        ref={(el) => (inputRefs.current[idx * 3] = el)}
                       >
-                        <option value="">Choose Account...</option>
-                        {accounts.map(acc => (
-                          <option key={acc.id} value={acc.id} disabled={!acc.is_active}>
-                            {acc.code} — {acc.name} ({acc.type.toUpperCase()})
-                          </option>
-                        ))}
+                        <option value="receive_payment">Receive Payment from Customer</option>
+                        <option value="send_refund">Send Refund to Customer</option>
+                        <option value="send_payment">Send Payment to Supplier</option>
+                        <option value="receive_refund">Receive Refund from Supplier</option>
                       </select>
+                    </div>
 
-                      {/* Customer Selector */}
-                      {accounts.find(a => String(a.id) === String(line.accountId))?.code === "1100" && (
+                    {/* Date */}
+                    <div style={st.filterGroup}>
+                      <label style={st.label}>Date</label>
+                      <input
+                        type="date"
+                        required
+                        style={st.input}
+                        value={transferDate}
+                        onChange={(e) => setTransferDate(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginBottom: 20 }}>
+                    {/* Header Account (Cash/Bank) */}
+                    <div style={st.filterGroup}>
+                      <label style={st.label}>Cash / Bank Account</label>
+                      <select
+                        style={st.select}
+                        value={transferHeaderAccountId}
+                        onChange={(e) => setTransferHeaderAccountId(e.target.value)}
+                        required
+                      >
+                        <option value="">Choose Cash/Bank Account...</option>
+                        {accounts
+                          .filter(a => a.code.startsWith("10") && a.type === "asset")
+                          .map(acc => (
+                            <option key={acc.id} value={acc.id}>
+                              {acc.code} — {acc.name}
+                            </option>
+                          ))
+                        }
+                      </select>
+                    </div>
+
+                    {/* Subledger Entity (Customer or Supplier) */}
+                    <div style={st.filterGroup}>
+                      <label style={st.label}>
+                        {transferType.includes("customer") || ["receive_payment", "send_refund"].includes(transferType) ? "Customer" : "Supplier"}
+                      </label>
+                      {transferType.includes("customer") || ["receive_payment", "send_refund"].includes(transferType) ? (
                         <select
-                          style={{ ...st.select, width: "100%", borderColor: "var(--success)", background: "rgba(46, 125, 50, 0.1)", padding: "6px 10px" }}
-                          value={line.customerId || ""}
-                          onChange={(e) => handleLineChange(idx, "customerId", e.target.value)}
+                          style={st.select}
+                          value={transferSubledgerId}
+                          onChange={(e) => setTransferSubledgerId(e.target.value)}
                           required
                         >
-                          <option value="">-- Select Customer --</option>
+                          <option value="">Select Customer...</option>
                           {customers.map(c => (
                             <option key={c.id} value={c.id}>
                               {c.name} {c.phone ? `(${c.phone})` : ""}
                             </option>
                           ))}
                         </select>
-                      )}
-
-                      {/* Supplier Selector */}
-                      {accounts.find(a => String(a.id) === String(line.accountId))?.code === "2000" && (
+                      ) : (
                         <select
-                          style={{ ...st.select, width: "100%", borderColor: "var(--danger)", background: "rgba(239, 68, 68, 0.1)", padding: "6px 10px" }}
-                          value={line.supplierId || ""}
-                          onChange={(e) => handleLineChange(idx, "supplierId", e.target.value)}
+                          style={st.select}
+                          value={transferSubledgerId}
+                          onChange={(e) => setTransferSubledgerId(e.target.value)}
                           required
                         >
-                          <option value="">-- Select Supplier --</option>
+                          <option value="">Select Supplier...</option>
                           {suppliers.map(s => (
                             <option key={s.id} value={s.id}>
                               {s.name} {s.phone ? `(${s.phone})` : ""}
@@ -570,124 +981,49 @@ export default function JournalPage() {
                       )}
                     </div>
 
-                    {/* Debit Input */}
-                    <div style={{ width: "20%" }}>
+                    {/* Amount */}
+                    <div style={st.filterGroup}>
+                      <label style={st.label}>Amount (PKR)</label>
                       <input
                         type="number"
                         step="0.01"
-                        min="0"
+                        min="0.01"
                         placeholder="0.00"
-                        style={{ ...st.input, textAlign: "right", fontFamily: "monospace" }}
-                        value={line.debit}
-                        onChange={(e) => handleLineChange(idx, "debit", e.target.value)}
-                        ref={(el) => (inputRefs.current[idx * 3 + 1] = el)}
-                      />
-                    </div>
-
-                    {/* Credit Input */}
-                    <div style={{ width: "20%" }}>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        placeholder="0.00"
-                        style={{ ...st.input, textAlign: "right", fontFamily: "monospace" }}
-                        value={line.credit}
-                        onChange={(e) => handleLineChange(idx, "credit", e.target.value)}
-                        ref={(el) => (inputRefs.current[idx * 3 + 2] = el)}
-                      />
-                    </div>
-
-                    {/* Memo */}
-                    <div style={{ width: "20%" }}>
-                      <input
-                        type="text"
-                        placeholder="Memo..."
                         style={st.input}
-                        value={line.memo}
-                        onChange={(e) => handleLineChange(idx, "memo", e.target.value)}
+                        value={transferAmount}
+                        onChange={(e) => setTransferAmount(e.target.value)}
+                        required
                       />
-                    </div>
-
-                    {/* Remove Action */}
-                    <div style={{ width: "5%", textAlign: "center" }}>
-                      <button
-                        type="button"
-                        onClick={() => removeLine(idx)}
-                        style={st.removeBtn}
-                        disabled={jvLines.length <= 2}
-                      >
-                        ✕
-                      </button>
                     </div>
                   </div>
-                ))}
-              </div>
 
-              {/* Add Row Action */}
-              <div style={st.gridFooterActions}>
-                <button
-                  type="button"
-                  onClick={addLine}
-                  style={st.addBtn}
-                >
-                  + Add Line
-                </button>
-              </div>
-            </div>
-
-            {/* STICKY VOUCHER FOOTER */}
-            <div style={st.stickyFooter}>
-              <div style={st.stickyFooterInfo}>
-                <div style={st.footerMetric}>
-                  <span style={st.footerLabel}>Total Debit:</span>
-                  <span style={{ ...st.footerValue, color: "#2e7d32" }}>
-                    {fmtPKR(totalDr)}
-                  </span>
+                  {/* Narration */}
+                  <div style={st.filterGroup}>
+                    <label style={st.label}>Narration / Memo</label>
+                    <textarea
+                      placeholder="Describe this transfer transaction..."
+                      style={{ ...st.input, height: 80, resize: "none" }}
+                      value={transferNarration}
+                      onChange={(e) => setTransferNarration(e.target.value)}
+                    />
+                  </div>
                 </div>
 
-                <div style={st.footerMetric}>
-                  <span style={st.footerLabel}>Total Credit:</span>
-                  <span style={{ ...st.footerValue, color: "#c62828" }}>
-                    {fmtPKR(totalCr)}
-                  </span>
-                </div>
-
-                <div style={st.footerMetric}>
-                  <span style={st.footerLabel}>Difference:</span>
-                  <span style={{
-                    ...st.footerValue,
-                    color: difference === 0 ? "#2e7d32" : "#c62828"
-                  }}>
-                    {fmtPKR(Math.abs(difference))} {difference !== 0 && "Out of Balance"}
-                  </span>
-                </div>
-              </div>
-
-              <div style={st.stickyFooterActions}>
-                {difference !== 0 && (
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
                   <button
-                    type="button"
-                    onClick={handleAutoFill}
-                    style={st.balanceBtn}
+                    type="submit"
+                    style={{
+                      ...st.saveBtn,
+                      background: "var(--success)",
+                      cursor: "pointer"
+                    }}
                   >
-                    Auto-fill Balance
+                    Post Transfer Entry
                   </button>
-                )}
-                <button
-                  type="submit"
-                  disabled={difference !== 0 || jvLines.some(l => !l.accountId)}
-                  style={{
-                    ...st.saveBtn,
-                    opacity: (difference !== 0 || jvLines.some(l => !l.accountId)) ? 0.5 : 1,
-                    cursor: (difference !== 0 || jvLines.some(l => !l.accountId)) ? "not-allowed" : "pointer"
-                  }}
-                >
-                  Save & Post Voucher
-                </button>
-              </div>
-            </div>
-          </form>
+                </div>
+              </form>
+            )}
+          </div>
         )}
       </div>
 
@@ -773,7 +1109,25 @@ export default function JournalPage() {
 
               {/* REVERSAL SECTION */}
               {!viewingVoucher.reversed_by && !isReversing && (
-                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 24 }}>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 24 }}>
+                  <button
+                    onClick={() => handleDeleteVoucher(viewingVoucher.id)}
+                    style={{
+                      padding: "10px 18px",
+                      background: "rgba(239, 68, 68, 0.1)",
+                      border: "1px solid var(--danger)",
+                      color: "var(--danger)",
+                      borderRadius: 4,
+                      cursor: "pointer",
+                      fontWeight: 600,
+                      fontSize: 13,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6
+                    }}
+                  >
+                    <Trash2 size={14} /> Delete Voucher
+                  </button>
                   <button
                     onClick={() => setIsReversing(true)}
                     style={st.reverseActionBtn}
@@ -933,5 +1287,7 @@ const st = {
 
   errorBanner: { background: "rgba(239, 68, 68, 0.15)", borderLeft: "4px solid var(--danger)", color: "var(--danger)", padding: 12, borderRadius: 4, fontSize: 14, marginBottom: 16 },
   successBanner: { background: "rgba(46, 125, 50, 0.15)", borderLeft: "4px solid var(--success)", color: "var(--success)", padding: 12, borderRadius: 4, fontSize: 14, marginBottom: 16 },
-  subledgerBadge: { fontSize: 11, color: "var(--text-secondary)", fontStyle: "italic", background: "var(--sidebar-bg)", padding: "2px 6px", borderRadius: 4, marginLeft: 6 }
+  subledgerBadge: { fontSize: 11, color: "var(--text-secondary)", fontStyle: "italic", background: "var(--sidebar-bg)", padding: "2px 6px", borderRadius: 4, marginLeft: 6 },
+  modeBtn: { padding: "8px 16px", border: "none", background: "none", borderRadius: 4, cursor: "pointer", fontWeight: 600, color: "var(--text-secondary)", fontSize: 13 },
+  activeModeBtn: { padding: "8px 16px", border: "none", background: "var(--success)", color: "#fff", borderRadius: 4, cursor: "pointer", fontWeight: 600, fontSize: 13 }
 };

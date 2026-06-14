@@ -493,6 +493,10 @@ db.serialize(() => {
     INSERT OR IGNORE INTO users (username, password, pin, role)
     VALUES ('admin', '1267', '1234', 'admin')
   `);
+  db.run(`
+    INSERT OR IGNORE INTO users (username, password, pin, role)
+    VALUES ('Saad', '123612', '1236', 'admin')
+  `);
 
   db.run(`
     UPDATE products

@@ -325,6 +325,22 @@
     "recent_backups_path": "Saved Path",
     "recent_backups_time": "Time Created",
     "copy_path_tooltip": "Copy saved path to clipboard",
-    "copied_tooltip": "Copied!"
+    "copied_tooltip": "Copied!",
+    "danger_zone_title": "Danger Zone",
+    "reset_data_title": "Reset All System Data",
+    "reset_warning": "WARNING: This will permanently delete all sales, inventory, customers, suppliers, banks, and transactions. A database backup will be automatically saved prior to deletion.",
+    "reset_btn": "Reset All Data",
+    "reset_confirm_title": "Confirm System Reset",
+    "reset_line_action": "Action",
+    "reset_line_action_val": "Reset All Databases",
+    "reset_line_backup": "Auto-Backup",
+    "reset_line_backup_val": "Yes (Prior to clear)",
+    "reset_line_failsafe": "Fail-Safe Location",
+    "reset_line_preserve": "Preserved",
+    "reset_line_preserve_val": "Admin User Account",
+    "reset_confirm_btn": "Yes, Reset Everything",
+    "reset_cancel_btn": "Cancel",
+    "reset_success": "All data reset successfully! Auto-backup saved to: {path}",
+    "reset_failed": "Failed to reset database: {error}"
   }
 }

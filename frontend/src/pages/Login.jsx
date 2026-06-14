@@ -18,7 +18,7 @@ function Login() {
       setShowSplash(false);
     }, 2200);
 
-    const loadUsers = async () => {
+    const checkUsers = async () => {
       try {
         const data = await listActiveUsers();
         if (data?.users) {
@@ -32,11 +32,11 @@ function Login() {
           setIsCustomUser(true);
         }
       } catch (err) {
-        console.error("Failed to load active users:", err);
+        console.error("Failed to load startup info:", err);
         setIsCustomUser(true);
       }
     };
-    loadUsers();
+    checkUsers();
 
     return () => clearTimeout(splashTimer);
   }, []);

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { Trash2 } from "lucide-react";
 import { fmtPKR, drcr } from "../lib/money";
 
 const ipc = typeof window !== "undefined" ? window.ipc : null;
@@ -56,6 +57,17 @@ export default function LedgerPage() {
       setExpandedEntries(new Set()); // Reset expanded dropdowns when reloading/filtering
     } catch (err) {
       console.error("Failed to load ledger:", err);
+    }
+  };
+
+  const handleDeleteEntry = async (id) => {
+    if (window.confirm("Are you sure you want to delete this ledger transaction? This action will permanently delete the journal entry, all of its lines, and revert all debits/credits. If this entry originated from an Expense, the expense record will also be deleted.")) {
+      try {
+        await ipc.invoke("journal:delete", id);
+        loadLedger();
+      } catch (err) {
+        alert("Failed to delete transaction entry: " + err.message);
+      }
     }
   };
 
@@ -244,14 +256,24 @@ export default function LedgerPage() {
                             </td>
                             <td style={{ ...st.td, fontFamily: "monospace" }}>{row.account_code}</td>
                             <td style={st.td}>{row.account_name}</td>
-                            <td style={st.td}>
-                              <div style={{ fontSize: 13, color: "var(--text-primary)" }}>{row.narration}</div>
-                              {row.line_memo && (
-                                <div style={{ fontSize: 11, color: "var(--text-secondary)", fontStyle: "italic" }}>
-                                  Line Memo: {row.line_memo}
-                                </div>
-                              )}
-                            </td>
+                             <td style={st.td}>
+                               <div style={{ fontSize: 13, color: "var(--text-primary)" }}>{row.narration}</div>
+                               {row.customer_name && (
+                                 <div style={{ fontSize: 11, color: "var(--success)", marginTop: 4 }}>
+                                   <strong>Customer:</strong> {row.customer_name}
+                                 </div>
+                               )}
+                               {row.supplier_name && (
+                                 <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 4 }}>
+                                   <strong>Supplier:</strong> {row.supplier_name}
+                                 </div>
+                               )}
+                               {row.line_memo && (
+                                 <div style={{ fontSize: 11, color: "var(--text-secondary)", fontStyle: "italic", marginTop: 4 }}>
+                                   Line Memo: {row.line_memo}
+                                 </div>
+                               )}
+                             </td>
                             <td style={{ ...st.td, ...st.num, color: "var(--success)" }}>
                               {row.debit > 0 ? fmtPKR(row.debit) : "—"}
                             </td>
@@ -277,7 +299,8 @@ export default function LedgerPage() {
                                   {!detail ? (
                                     <div style={{ fontSize: 13, color: "var(--text-secondary)", padding: 8 }}>Loading entry details...</div>
                                   ) : (
-                                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                                    <>
+                                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
                                       <thead>
                                         <tr style={{ borderBottom: "1.5px solid var(--success)" }}>
                                           <th style={{ ...st.th, padding: "6px 8px", fontSize: 11, width: "15%" }}>Account Code</th>
@@ -310,6 +333,30 @@ export default function LedgerPage() {
                                         })}
                                       </tbody>
                                     </table>
+                                    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12, borderTop: "1.5px solid var(--border)", paddingTop: 12 }}>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDeleteEntry(row.entry_id);
+                                        }}
+                                        style={{
+                                          padding: "8px 14px",
+                                          background: "rgba(239, 68, 68, 0.1)",
+                                          border: "1.5px solid var(--danger)",
+                                          color: "var(--danger)",
+                                          borderRadius: 4,
+                                          cursor: "pointer",
+                                          fontWeight: 600,
+                                          fontSize: 13,
+                                          display: "flex",
+                                          alignItems: "center",
+                                          gap: 6
+                                        }}
+                                      >
+                                        <Trash2 size={14} /> Delete Transaction
+                                      </button>
+                                    </div>
+                                  </>
                                   )}
                                 </div>
                               </td>
