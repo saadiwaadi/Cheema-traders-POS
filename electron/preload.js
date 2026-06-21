@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld("pos", {
   getDashboardSummary: () => invoke("pos:dashboard"),
   listProducts: (args) => invoke("pos:products:list", args),
   saveProduct: (payload) => invoke("pos:products:save", payload),
+  deleteProduct: (id) => invoke("pos:products:delete", id),
   listBatches: (args) => invoke("pos:batches:list", args),
   saveBatch: (payload) => invoke("pos:batches:save", payload),
   updateBatch: (id, payload) => invoke("pos:batches:update", id, payload),

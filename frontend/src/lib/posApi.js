@@ -112,6 +112,15 @@ export async function saveProduct(payload) {
   });
 }
 
+export async function deleteProduct(id) {
+  if (usingIpc()) {
+    if (window.ipc) return window.ipc.invoke("pos:products:delete", id);
+  }
+  return httpJson(`/products/${id}`, {
+    method: "DELETE",
+  });
+}
+
 export async function updateProductRetailPrice(productId, retailPrice) {
   if (usingIpc()) {
     return window.ipc.invoke("pos:products:update-retail-price", productId, retailPrice);

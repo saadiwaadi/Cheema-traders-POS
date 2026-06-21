@@ -562,4 +562,39 @@ function postExpense(db, expense) {
   }
 }
 
-module.exports = { postSale, postPayment, postPurchase, postSupplierPayment, voidSale, postBankTransfer, postExpense, clearAccountCache };
+/* ═══════════════════════════════════════════════════════════════
+   8. REVERSE PURCHASE ITEM
+   Fires when an individual item/batch is deleted from a purchase.
+   ═══════════════════════════════════════════════════════════════ */
+function reversePurchaseItem(db, itemAmount, supplierId, invoiceNo, batchId) {
+  const amountPaisa = toPaisa(itemAmount);
+  if (amountPaisa === 0) return;
+
+  const date = new Date().toISOString().slice(0, 10);
+
+  try {
+    writeEntry(db, {
+      date,
+      narration: `Item Deleted / Reversal — ${invoiceNo || 'PUR'}`,
+      source_type: "void_purchase_item",
+      source_id: batchId,
+      lines: [
+        {
+          accountId: accountId(db, "2000"), // Accounts Payable
+          debit: amountPaisa, credit: 0,
+          supplierId: supplierId || null,
+          memo: `Item reversed — ${invoiceNo}`,
+        },
+        {
+          accountId: accountId(db, "1200"), // Inventory
+          debit: 0, credit: amountPaisa,
+          memo: `Inventory reversed`,
+        }
+      ]
+    });
+  } catch (err) {
+    console.error("[glBridge] reversePurchaseItem failed:", err.message);
+  }
+}
+
+module.exports = { postSale, postPayment, postPurchase, postSupplierPayment, voidSale, postBankTransfer, postExpense, reversePurchaseItem, clearAccountCache };

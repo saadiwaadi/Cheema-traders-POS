@@ -145,6 +145,15 @@ router.patch("/products/:id/retail-price", async (req, res) => {
   }
 });
 
+router.delete("/products/:id", async (req, res) => {
+  try {
+    const result = await store.deleteProduct(Number(req.params.id));
+    return res.json(result);
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
 router.post("/products/adjust-stock", async (req, res) => {
   try {
     const { productId, batchId, quantityChange, reason, notes, adjustedBy } = req.body;

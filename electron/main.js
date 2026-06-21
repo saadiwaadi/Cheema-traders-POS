@@ -53,6 +53,7 @@ function registerIpc() {
     "pos:dashboard": () => store.getDashboardSummary(),
     "pos:products:list": async (_, args) => ({ products: await store.listProducts(args || {}) }),
     "pos:products:save": async (_, payload) => ({ product: await store.saveProduct(payload) }),
+    "pos:products:delete": async (_, id) => ({ result: await store.deleteProduct(id) }),
     "pos:products:update-retail-price": async (_, id, price) => ({ result: await store.updateProductRetailPrice(id, price) }),
     "pos:products:adjust-stock": async (_, payload) => ({ result: await store.adjustStock(payload.productId, payload.batchId, payload.quantityChange, payload.reason, payload.notes, payload.adjustedBy) }),
     "pos:stock-adjustments:list": async (_, args) => ({ adjustments: await store.listStockAdjustments(args || {}) }),

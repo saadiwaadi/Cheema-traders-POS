@@ -3,6 +3,7 @@ import * as api from "../lib/posApi";
 import { useThemeLanguage } from "../context/ThemeLanguageContext";
 import { Printer, FileDown, Edit2, Trash2, X, ChevronDown, Check, AlertTriangle } from "lucide-react";
 import * as XLSX from "xlsx";
+import WarningNotification from "../components/Warningnotification";
 
 export default function InventoryManagementPage() {
   const { t } = useThemeLanguage();
@@ -112,6 +113,7 @@ function StockViewTab({ refreshKey }) {
   const [suppliers, setSuppliers] = useState([]);
   const [editingBatch, setEditingBatch] = useState(null);
   const [viewingProduct, setViewingProduct] = useState(null);
+  const [warnData, setWarnData] = useState(null);
 
   // Category and Expiry filter states
   const [selectedCategory, setSelectedCategory] = useState("All");
@@ -226,6 +228,21 @@ function StockViewTab({ refreshKey }) {
     } else {
       group.costPriceRange = minCost === maxCost ? `Rs ${minCost.toFixed(2)}` : `Rs ${minCost.toFixed(2)} - Rs ${maxCost.toFixed(2)}`;
     }
+
+    const activeExpiries = [...new Set(
+      group.batches
+        .filter(b => b.quantityRemaining > 0 && b.expiryDate)
+        .map(b => b.expiryDate)
+    )].sort();
+
+    if (activeExpiries.length === 0) {
+      group.expiryDisplay = "—";
+    } else if (activeExpiries.length === 1) {
+      group.expiryDisplay = activeExpiries[0];
+    } else {
+      group.expiryDisplay = "Multiple";
+    }
+
     return group;
   });
 
@@ -286,7 +303,7 @@ function StockViewTab({ refreshKey }) {
             <span style={{ flex: 1, textAlign: "right" }}>{t("inventory.qty_remaining", "Total Qty")}</span>
             <span style={{ flex: 1.5, textAlign: "right" }}>{t("inventory.cost_price", "Cost Range")}</span>
             <span style={{ flex: 1.2, textAlign: "right" }}>{t("inventory.retail_price", "Retail Checkout Price")}</span>
-            <span style={{ flex: 1, textAlign: "center" }}>{t("inventory.status", "Status")}</span>
+            <span style={{ flex: 1, textAlign: "center" }}>{t("inventory.expiry_date", "Expiry Date")}</span>
             <span style={{ width: 120, textAlign: "center" }}>{t("inventory.actions", "Batches")}</span>
           </div>
 
@@ -316,15 +333,15 @@ function StockViewTab({ refreshKey }) {
                     <span style={{ flex: 1.2, textAlign: "right", color: "#2e7d32", fontWeight: 600, fontFamily: "IBM Plex Mono, monospace" }}>
                       Rs {p.currentRetailPrice.toFixed(2)}
                     </span>
-                    <div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
+                    <div style={{ flex: 1, display: "flex", justifyContent: "center", alignItems: "center" }}>
                       {p.totalQty === 0 ? (
                         <div style={{ ...st.statusBadge, background: "#ffebee", color: "#c62828", border: "1px solid #ffcdd2" }}>
                           {t("inventory.out_of_stock", "OUT OF STOCK")}
                         </div>
                       ) : (
-                        <div style={{ ...st.statusBadge, ...(isLowStock ? st.badgeDanger : st.badgeSuccess) }}>
-                          {isLowStock ? t("inventory.low_stock", "Low Stock") : t("inventory.healthy", "Healthy")}
-                        </div>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: p.expiryDisplay === "—" ? "#999" : (p.expiryDisplay === "Multiple" ? "#d97706" : "#2e7d32") }}>
+                          {p.expiryDisplay}
+                        </span>
                       )}
                     </div>
                     <div style={{ width: 120, display: "flex", gap: 6, justifyContent: "center" }}>
@@ -359,6 +376,26 @@ function StockViewTab({ refreshKey }) {
           onClose={() => setViewingProduct(null)}
           onEditBatch={(b) => setEditingBatch(b)}
           onDeleteBatch={handleDeleteBatch}
+          onDeleteProduct={() => {
+            setWarnData({
+              title: "Confirm Product Deletion",
+              lines: [
+                { label: "Product", value: currentViewingProduct.productName },
+                { label: "Action", value: "Delete completely from inventory", mono: true }
+              ],
+              confirmLabel: "Yes, Delete Product",
+              cancelLabel: "Cancel",
+              onConfirm: async () => {
+                try {
+                  await api.deleteProduct(currentViewingProduct.productId);
+                  setViewingProduct(null);
+                  loadData();
+                } catch (err) {
+                  alert("Failed to delete product: " + err.message);
+                }
+              }
+            });
+          }}
         />
       )}
 
@@ -373,11 +410,21 @@ function StockViewTab({ refreshKey }) {
           }}
         />
       )}
+
+      <WarningNotification
+        visible={!!warnData}
+        title={warnData?.title}
+        lines={warnData?.lines}
+        onConfirm={warnData?.onConfirm}
+        confirmLabel={warnData?.confirmLabel}
+        cancelLabel={warnData?.cancelLabel}
+        onClose={() => setWarnData(null)}
+      />
     </div>
   );
 }
 
-function ProductBatchesModal({ product, suppliers, onClose, onEditBatch, onDeleteBatch }) {
+function ProductBatchesModal({ product, suppliers, onClose, onEditBatch, onDeleteBatch, onDeleteProduct }) {
   const { t } = useThemeLanguage();
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -392,11 +439,11 @@ function ProductBatchesModal({ product, suppliers, onClose, onEditBatch, onDelet
   }, [onClose]);
 
   // Filter batches by date range
-  const filteredBatches = product.batches.filter((b) => {
+  const filteredBatches = product.batches ? product.batches.filter((b) => {
     if (fromDate && b.purchaseDate && b.purchaseDate < fromDate) return false;
     if (toDate && b.purchaseDate && b.purchaseDate > toDate) return false;
     return true;
-  });
+  }) : [];
 
   const handlePrint = () => {
     const printWindow = window.open("", "_blank");
@@ -522,7 +569,20 @@ function ProductBatchesModal({ product, suppliers, onClose, onEditBatch, onDelet
             </h3>
             <span style={{ fontSize: 12, color: "#666" }}>Category: {product.category}</span>
           </div>
-          <button style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#666", display: "flex", alignItems: "center" }} onClick={onClose}><X size={20} /></button>
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <button 
+              onClick={onDeleteProduct}
+              title="Delete entire product"
+              style={{
+                display: "flex", alignItems: "center", gap: 6,
+                padding: "6px 12px", background: "#ffebee", color: "#c62828",
+                border: "1px solid #ffcdd2", borderRadius: 4, fontSize: 12, fontWeight: 600, cursor: "pointer"
+              }}
+            >
+              <Trash2 size={16} /> Delete Product
+            </button>
+            <button style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#666", display: "flex", alignItems: "center" }} onClick={onClose}><X size={20} /></button>
+          </div>
         </div>
 
         {/* Product Meta Grid */}
@@ -609,7 +669,6 @@ function ProductBatchesModal({ product, suppliers, onClose, onEditBatch, onDelet
             <span style={{ flex: 1, textAlign: "right" }}>Sale Price</span>
             <span style={{ flex: 1.2, textAlign: "center" }}>Expiry Date</span>
             <span style={{ flex: 1.2, textAlign: "center" }}>Purchase Date</span>
-            <span style={{ width: 80, textAlign: "center" }}>Status</span>
             <span style={{ width: 90, textAlign: "center" }}>Actions</span>
           </div>
 
@@ -625,11 +684,6 @@ function ProductBatchesModal({ product, suppliers, onClose, onEditBatch, onDelet
                 <span style={{ flex: 1, textAlign: "right", color: "#666" }}>Rs {b.salePrice.toFixed(2)}</span>
                 <span style={{ flex: 1.2, textAlign: "center" }}>{b.expiryDate || "—"}</span>
                 <span style={{ flex: 1.2, textAlign: "center" }}>{b.purchaseDate || "—"}</span>
-                <div style={{ width: 80, display: "flex", justifyContent: "center" }}>
-                  <div style={{ ...st.statusBadge, ...(b.expiryStatus === "expired" ? st.badgeDanger : b.expiryStatus === "expiring" ? st.badgeWarning : st.badgeSuccess), fontSize: 9, padding: "2px 6px" }}>
-                    {b.expiryStatus}
-                  </div>
-                </div>
                 <div style={{ width: 90, display: "flex", gap: 6, justifyContent: "center" }}>
                   <button
                     title="Edit"
@@ -1453,7 +1507,7 @@ function SumRow({ label, value }) {
   );
 }
 
-function PurchaseBatchesModal({ purchase, onClose }) {
+function PurchaseBatchesModal({ purchase, onClose, onRefresh }) {
   const { t } = useThemeLanguage();
 
   // Handle escape key
@@ -1464,6 +1518,17 @@ function PurchaseBatchesModal({ purchase, onClose }) {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
+
+  const handleDeleteItem = async (batchId) => {
+    if (!window.confirm("Are you sure you want to delete this purchase item? This will reverse the GL entry and adjust inventory/supplier balances.")) return;
+    try {
+      await api.deleteBatch(batchId);
+      if (onRefresh) onRefresh();
+      onClose();
+    } catch (err) {
+      alert("Failed to delete item: " + err.message);
+    }
+  };
 
   return (
     <div 
@@ -1499,15 +1564,25 @@ function PurchaseBatchesModal({ purchase, onClose }) {
           <div style={{ fontSize: 12, fontWeight: 700, color: "#6a8f6c", display: "flex", borderBottom: "1px solid #e8f0e8", paddingBottom: 6 }}>
             <span style={{ flex: 2 }}>Product Name</span>
             <span style={{ flex: 1, textAlign: "right" }}>Qty</span>
+            <span style={{ width: 40, textAlign: "center" }}>Act</span>
           </div>
           
           {(!purchase.items || purchase.items.length === 0) ? (
             <div style={{ padding: 20, textAlign: "center", color: "#666", fontSize: 13 }}>No batches found.</div>
           ) : (
             purchase.items.map((item, i) => (
-              <div key={i} style={{ display: "flex", fontSize: 13, borderBottom: "1px solid #f0f0f0", paddingBottom: 8, paddingTop: 4 }}>
+              <div key={i} style={{ display: "flex", fontSize: 13, borderBottom: "1px solid #f0f0f0", paddingBottom: 8, paddingTop: 4, alignItems: "center" }}>
                 <span style={{ flex: 2, color: "#333", fontWeight: 500 }}>{item.productName}</span>
                 <span style={{ flex: 1, textAlign: "right", color: "#2e7d32", fontWeight: 600 }}>{item.qty} {item.unit || ""}</span>
+                <div style={{ width: 40, display: "flex", justifyContent: "center" }}>
+                  <button
+                    title="Delete item"
+                    style={{ background: "#ffebee", border: "none", color: "#c62828", borderRadius: 4, padding: "4px", cursor: "pointer", display: "flex" }}
+                    onClick={() => handleDeleteItem(item.batchId)}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
             ))
           )}
@@ -1844,6 +1919,10 @@ function StockHistoryTab({ onChanged, onEditBatches }) {
         <PurchaseBatchesModal
           purchase={viewPurchaseBatches}
           onClose={() => setViewPurchaseBatches(null)}
+          onRefresh={() => {
+            loadHistory();
+            if (onChanged) onChanged();
+          }}
         />
       )}
     </div>

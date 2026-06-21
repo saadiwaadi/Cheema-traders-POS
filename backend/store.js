@@ -1786,6 +1786,27 @@ class PosStore {
     return { id: result.lastID, ...payload };
   }
 
+  async deleteProduct(id) {
+    return this.transaction(async (db) => {
+      // 1. Block if active stock exists to prevent GL desync
+      const stockCheck = await get(db, `SELECT COALESCE(SUM(quantity_remaining), 0) as totalStock FROM batches WHERE product_id = ? AND COALESCE(deleted_at, '') = ''`, [id]);
+      if (stockCheck && stockCheck.totalStock > 0) {
+        throw new Error(`Cannot delete product: There are still ${stockCheck.totalStock} active items in stock. Please adjust or delete the remaining batches first to reverse the financial records.`);
+      }
+
+      // 2. Soft-delete the product and unclaim the SKU so it can be reused without SQLITE_CONSTRAINT_UNIQUE errors
+      await run(db, `
+        UPDATE products 
+        SET deleted_at = CURRENT_TIMESTAMP, 
+            updated_at = CURRENT_TIMESTAMP,
+            sku = CASE WHEN sku IS NOT NULL AND sku != '' THEN sku || '_del_' || id ELSE NULL END
+        WHERE id = ?
+      `, [id]);
+      await this.audit("product", id, "delete", null, null);
+      return { id };
+    });
+  }
+
   async ensureProductByName(name, fallback = {}) {
     const db = await this._db();
     const productName = String(name || "").trim();
@@ -2044,22 +2065,65 @@ class PosStore {
   }
 
   async deleteBatch(id) {
-    return this.transaction(async (db) => {
-      const old = await get(db, `SELECT product_id, quantity_remaining, deleted_at FROM batches WHERE id = ?`, [id]);
+    const result = await this.transaction(async (db) => {
+      const old = await get(db, `SELECT product_id, quantity_remaining, quantity_received, cost_price, supplier_id, purchase_reference, deleted_at FROM batches WHERE id = ?`, [id]);
       if (!old) throw new Error("Batch not found");
       if (old.deleted_at) throw new Error("Batch already deleted");
 
-      await run(
-        db,
-        `UPDATE batches SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-        [id]
-      );
+      if (old.quantity_remaining === old.quantity_received) {
+        await run(db, `DELETE FROM batches WHERE id = ?`, [id]);
+      } else {
+        await run(
+          db,
+          `UPDATE batches SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, quantity_remaining = 0 WHERE id = ?`,
+          [id]
+        );
+      }
 
+      // Reverse inventory movement
+      await run(db, `DELETE FROM inventory_movements WHERE batch_id = ? AND movement_type = 'purchase'`, [id]);
 
+      // If no other active batches remain for this product, soft-delete the product so it vanishes from inventory and billing dropdowns
+      const otherBatches = await get(db, `SELECT COUNT(*) as count FROM batches WHERE product_id = ? AND COALESCE(deleted_at, '') = ''`, [old.product_id]);
+      if (otherBatches.count === 0) {
+        await run(db, `UPDATE products SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [old.product_id]);
+      }
+
+      let glData = null;
+      // Handle Purchase reversal
+      const pi = await get(db, `SELECT purchase_id, line_total FROM purchase_items WHERE batch_id = ?`, [id]);
+      if (pi) {
+        const purchase = await get(db, `SELECT id, subtotal, amount_paid, invoice_no FROM purchases WHERE id = ?`, [pi.purchase_id]);
+        if (purchase) {
+          await run(db, `DELETE FROM purchase_items WHERE batch_id = ?`, [id]);
+          
+          const newSubtotal = Math.max(0, purchase.subtotal - pi.line_total);
+          const newBalanceDue = newSubtotal - purchase.amount_paid;
+          
+          await run(db, `UPDATE purchases SET subtotal = ?, balance_due = ? WHERE id = ?`, [newSubtotal, newBalanceDue, purchase.id]);
+
+          glData = {
+            lineTotal: pi.line_total, 
+            supplierId: old.supplier_id, 
+            invoiceNo: purchase.invoice_no 
+          };
+        }
+      }
 
       await this.audit("batch", id, "delete", old, null);
-      return { id };
+      return { id, glData };
     });
+
+    if (result.glData) {
+      try {
+        const { reversePurchaseItem } = require('./glBridge');
+        const dbBetter = this.getBetterDb();
+        reversePurchaseItem(dbBetter, result.glData.lineTotal, result.glData.supplierId, result.glData.invoiceNo, result.id);
+      } catch (err) {
+        console.error("Failed to reverse GL for deleted batch", err);
+      }
+    }
+    return { id: result.id };
   }
 
   async createPurchase(input) {
@@ -2258,6 +2322,7 @@ class PosStore {
           SELECT 
             pi.product_name AS productName,
             pi.quantity AS qty,
+            pi.batch_id AS batchId,
             pr.unit AS unit
           FROM purchase_items pi
           LEFT JOIN products pr ON pr.id = pi.product_id
