@@ -9,7 +9,8 @@ import {
   listSuppliers,
   saveSupplierPayment,
   getCustomerHistory,
-  getSupplierHistory
+  getSupplierHistory,
+  listBanks
 } from "../lib/posApi";
 
 const st = {
@@ -233,11 +234,10 @@ const st = {
   },
 };
 
-const PAYMENT_METHODS = ["Cash", "HBL Bank", "UBL Bank", "Meezan Bank", "JazzCash", "EasyPaisa"];
-
 export default function PaymentsPage() {
   const [customers, setCustomers] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
+  const [banks, setBanks] = useState([]);
   const [customersLoading, setCustomersLoading] = useState(true);
   const [suppliersLoading, setSuppliersLoading] = useState(true);
   const [successData, setSuccessData] = useState(null);
@@ -293,10 +293,20 @@ export default function PaymentsPage() {
     }
   }, []);
 
+  const loadBanks = useCallback(async () => {
+    try {
+      const res = await listBanks();
+      if (res?.banks) setBanks(res.banks);
+    } catch (e) {
+      console.error("Failed to load banks", e);
+    }
+  }, []);
+
   useEffect(() => {
     loadCustomers();
     loadSuppliers();
-  }, [loadCustomers, loadSuppliers]);
+    loadBanks();
+  }, [loadCustomers, loadSuppliers, loadBanks]);
 
   // Card 1: Pay
   const [payAmount, setPayAmount] = useState("");
@@ -655,7 +665,10 @@ export default function PaymentsPage() {
 
               <label style={st.fieldLabel}>Payment Method</label>
               <select style={st.select} value={payMethod} onChange={e => setPayMethod(e.target.value)}>
-                {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                <option value="Cash">Cash</option>
+                {banks.map(b => (
+                  <option key={b.id} value={b.name}>{b.name}</option>
+                ))}
               </select>
 
               <label style={st.fieldLabel}>Date</label>
@@ -702,7 +715,10 @@ export default function PaymentsPage() {
 
               <label style={st.fieldLabel}>Payment Method</label>
               <select style={st.select} value={drawMethod} onChange={e => setDrawMethod(e.target.value)}>
-                {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                <option value="Cash">Cash</option>
+                {banks.map(b => (
+                  <option key={b.id} value={b.name}>{b.name}</option>
+                ))}
               </select>
 
               <label style={st.fieldLabel}>Date</label>

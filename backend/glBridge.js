@@ -63,25 +63,13 @@ function clearAccountCache() {
   }
 }
 
-// Maps payment method label → account code.
-// Used as a fallback if dynamic bank lookup fails.
-const METHOD_TO_CODE = {
-  "cash":         "1000",
-  "hbl bank":     "1010",
-  "hbl":          "1010",
-  "meezan bank":  "1011",
-  "meezan":       "1011",
-  "jazzcash":     "1013",
-  "jazz cash":    "1013",
-  "easypaisa":    "1014",
-  "easy paisa":   "1014",
-};
-
 function methodAccountId(db, method) {
   const methodStr = String(method || "cash").trim();
   const key = methodStr.toLowerCase();
   
-  if (key === "cih") return accountId(db, "1000");
+  if (key === "cih" || key === "cash" || key === "cash in hand") {
+    return accountId(db, "1000");
+  }
 
   // 1. If method is a numeric bank_id
   if (!isNaN(methodStr) && Number(methodStr) > 0) {
@@ -100,9 +88,7 @@ function methodAccountId(db, method) {
   accRow = db.prepare(`SELECT id FROM accounts WHERE name = ? COLLATE NOCASE`).get(`Bank - ${methodStr}`);
   if (accRow) return accRow.id;
 
-  // 3. Fallback to hardcoded map
-  const code = METHOD_TO_CODE[key] || "1000"; // default to Cash if unknown
-  return accountId(db, code);
+  throw new Error(`Payment method '${method}' has no linked ledger account.\nGo to Chart of Accounts to create or link it before continuing.`);
 }
 
 // ─── Entry number sequence ────────────────────────────────────
@@ -238,7 +224,7 @@ function postSale(db, sale) {
     });
   } catch (err) {
     console.error("[glBridge] postSale failed:", err.message, { saleId: sale.id });
-    // Do NOT re-throw — a GL posting failure must never roll back the sale itself.
+    throw err;
   }
 }
 
@@ -286,6 +272,7 @@ function postPayment(db, payment) {
     });
   } catch (err) {
     console.error("[glBridge] postPayment failed:", err.message, { paymentId: payment.id });
+    throw err;
   }
 }
 
@@ -417,6 +404,7 @@ function postSupplierPayment(db, supplierPayment) {
     });
   } catch (err) {
     console.error("[glBridge] postSupplierPayment failed:", err.message, { id: supplierPayment.id });
+    throw err;
   }
 }
 
@@ -515,7 +503,7 @@ function postBankTransfer(db, transfer) {
    Fires after an expense is saved.
    ═══════════════════════════════════════════════════════════════ */
 function postExpense(db, expense) {
-  // expense: { id, expenseDate, category, description, amount, paymentMethod }
+  // expense: { id, expenseDate, category, description, amount, paymentMethod, moneyFrom, moneyTo }
   if (alreadyPosted(db, "expense", expense.id)) return;
 
   const amountPaisa = toPaisa(expense.amount);
@@ -523,10 +511,11 @@ function postExpense(db, expense) {
 
   const date = (expense.expenseDate || expense.created_at || new Date().toISOString()).slice(0, 10);
 
-  // Attempt to find the specific expense category account. If not found, use a default Misc Expense (e.g. 6900).
+  // Attempt to find the specific expense category/account. If not found, use a default Misc Expense (e.g. 6900).
   let expenseAccountId;
   try {
-    const accRow = db.prepare(`SELECT id FROM accounts WHERE name = ? COLLATE NOCASE`).get(expense.category);
+    const targetName = expense.moneyTo || expense.category;
+    const accRow = db.prepare(`SELECT id FROM accounts WHERE name = ? COLLATE NOCASE`).get(targetName);
     if (accRow) {
       expenseAccountId = accRow.id;
     } else {
@@ -536,30 +525,26 @@ function postExpense(db, expense) {
     expenseAccountId = accountId(db, "6900");
   }
 
-  try {
-    writeEntry(db, {
-      date,
-      narration: `Expense: ${expense.category} - ${expense.description || ''}`,
-      source_type: "expense",
-      source_id:   expense.id,
-      lines: [
-        {
-          // Dr Expense Account
-          accountId: expenseAccountId,
-          debit: amountPaisa, credit: 0,
-          memo: expense.description || "Expense",
-        },
-        {
-          // Cr Cash / Bank
-          accountId: methodAccountId(db, expense.paymentMethod || expense.moneyFrom),
-          debit: 0, credit: amountPaisa,
-          memo: `Payment for ${expense.category}`,
-        },
-      ],
-    });
-  } catch (err) {
-    console.error("[glBridge] postExpense failed:", err.message, { expense });
-  }
+  writeEntry(db, {
+    date,
+    narration: `Expense: ${expense.category} - ${expense.description || ''}`,
+    source_type: "expense",
+    source_id:   expense.id,
+    lines: [
+      {
+        // Dr Expense Account
+        accountId: expenseAccountId,
+        debit: amountPaisa, credit: 0,
+        memo: expense.description || "Expense",
+      },
+      {
+        // Cr Cash / Bank
+        accountId: methodAccountId(db, expense.paymentMethod || expense.moneyFrom),
+        debit: 0, credit: amountPaisa,
+        memo: `Payment for ${expense.category}`,
+      },
+    ],
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -597,4 +582,53 @@ function reversePurchaseItem(db, itemAmount, supplierId, invoiceNo, batchId) {
   }
 }
 
-module.exports = { postSale, postPayment, postPurchase, postSupplierPayment, voidSale, postBankTransfer, postExpense, reversePurchaseItem, clearAccountCache };
+/* ═══════════════════════════════════════════════════════════════
+   9. POST WITHDRAWAL (Customer advance draw / loan)
+   Fires when a customer withdrawal is processed.
+   ═══════════════════════════════════════════════════════════════ */
+function postWithdrawal(db, withdrawal) {
+  if (alreadyPosted(db, "withdrawal", withdrawal.id)) return;
+
+  const amountPaisa = toPaisa(withdrawal.amount);
+  if (amountPaisa === 0) return;
+
+  const date = (withdrawal.withdrawal_date || withdrawal.created_at || "").slice(0, 10);
+  const type = String(withdrawal.type || "advance_draw").trim();
+  const customerName = withdrawal.customerName || `Customer ID ${withdrawal.customer_id}`;
+  
+  const isLoan = type === "loan";
+  const narration = isLoan 
+    ? `Loan Disbursement — ${customerName}`
+    : `Advance Draw — ${customerName}`;
+    
+  const memo = isLoan ? "Loan Disbursement" : "Advance Draw";
+
+  try {
+    writeEntry(db, {
+      date,
+      narration,
+      source_type: "withdrawal",
+      source_id:   withdrawal.id,
+      lines: [
+        {
+          // Dr Accounts Receivable (increases receivable / reduces advance credit)
+          accountId: accountId(db, "1100"),
+          debit: amountPaisa, credit: 0,
+          customerId: withdrawal.customer_id ?? null,
+          memo: memo,
+        },
+        {
+          // Cr Cash / Bank (money goes out)
+          accountId: methodAccountId(db, withdrawal.payment_method),
+          debit: 0, credit: amountPaisa,
+          memo: memo,
+        },
+      ],
+    });
+  } catch (err) {
+    console.error("[glBridge] postWithdrawal failed:", err.message, { withdrawalId: withdrawal.id });
+    throw err;
+  }
+}
+
+module.exports = { postSale, postPayment, postPurchase, postSupplierPayment, voidSale, postBankTransfer, postExpense, reversePurchaseItem, clearAccountCache, postWithdrawal };

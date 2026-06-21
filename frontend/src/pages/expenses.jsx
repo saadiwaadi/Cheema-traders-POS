@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Search, PlusCircle, List, FileDown, Trash2 } from "lucide-react";
-import { saveExpense, listExpenses, deleteExpense } from "../lib/posApi";
+import { saveExpense, listExpenses, deleteExpense, listBanks } from "../lib/posApi";
 import SuccessNotification from "../components/SuccessNotification";
 import WarningNotification from "../components/Warningnotification";
 import * as XLSX from "xlsx";
@@ -89,22 +89,32 @@ export default function ExpensesPage() {
 function RecordExpenseTab({ onSaved }) {
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("Utility");
-  const [moneyFrom, setMoneyFrom] = useState("Main Cash Drawer");
-  const [moneyToOption, setMoneyToOption] = useState("WAPDA (Electricity)");
-  const [moneyToCustom, setMoneyToCustom] = useState("");
+  const [moneyFrom, setMoneyFrom] = useState("Cash");
+  const [moneyTo, setMoneyTo] = useState("Utilities");
   const [description, setDescription] = useState("");
   const [expenseDate, setExpenseDate] = useState(new Date().toISOString().split("T")[0]);
+  const [banks, setBanks] = useState([]);
 
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    async function loadBanks() {
+      try {
+        const res = await listBanks();
+        if (res?.banks) setBanks(res.banks);
+      } catch (e) {
+        console.error("Failed to load banks", e);
+      }
+    }
+    loadBanks();
+  }, []);
 
   const handleSave = async () => {
     setErrorMsg("");
     if (!amount || Number(amount) <= 0) return setErrorMsg("Amount is required");
     if (!description.trim()) return setErrorMsg("Description is required");
-    
-    const moneyTo = moneyToOption === "Other" ? moneyToCustom : moneyToOption;
-    if (!moneyTo.trim()) return setErrorMsg("Debit account / vendor is required");
+    if (!moneyTo.trim()) return setErrorMsg("Debit account is required");
 
     setSaving(true);
     try {
@@ -116,23 +126,6 @@ function RecordExpenseTab({ onSaved }) {
       setSaving(false);
     }
   };
-
-  const getMoneyToOptions = (cat) => {
-    switch (cat) {
-      case "Utility": return ["WAPDA (Electricity)", "Sui Gas", "PTCL/Internet", "Water Supply", "Other"];
-      case "Rent": return ["Landlord (Shop Rent)", "Warehouse Rent", "Other"];
-      case "Maintenance": return ["Electrician", "Plumber", "IT Support", "Store Maintenance", "Other"];
-      case "Salary/Wages": return ["Staff Salary", "Daily Wages", "Advance Salary", "Other"];
-      case "Transport": return ["Fuel & Travel", "Delivery Charges", "Freight", "Other"];
-      default: return ["General Expense", "Other"];
-    }
-  };
-
-  useEffect(() => {
-    const opts = getMoneyToOptions(category);
-    setMoneyToOption(opts[0]);
-    setMoneyToCustom("");
-  }, [category]);
 
   return (
     <div style={{ ...st.card, maxWidth: 900 }}>
@@ -169,28 +162,21 @@ function RecordExpenseTab({ onSaved }) {
         <div style={st.fieldWrap}>
           <label style={st.fieldLabel}>Credit (Money From)</label>
           <select style={st.input} value={moneyFrom} onChange={e => setMoneyFrom(e.target.value)}>
-            <option>Main Cash Drawer</option>
-            <option>HBL Bank Account</option>
-            <option>Petty Cash</option>
-            <option>Owner's Equity</option>
+            <option value="Cash">Cash</option>
+            {banks.map(b => (
+              <option key={b.id} value={b.name}>{b.name}</option>
+            ))}
           </select>
-          <span style={st.fieldHint}>Asset or liability account decreasing.</span>
+          <span style={st.fieldHint}>Asset account decreasing (Cash or Bank).</span>
         </div>
 
         <div style={st.fieldWrap}>
           <label style={st.fieldLabel}>Debit (Money To)</label>
-          <select style={st.input} value={moneyToOption} onChange={e => setMoneyToOption(e.target.value)}>
-            {getMoneyToOptions(category).map(o => <option key={o} value={o}>{o}</option>)}
+          <select style={st.input} value={moneyTo} onChange={e => setMoneyTo(e.target.value)}>
+            <option value="Utilities">Utilities</option>
+            <option value="Misc Expense">Misc Expense</option>
           </select>
-          {moneyToOption === "Other" && (
-            <input 
-              style={{...st.input, marginTop: 8}} 
-              placeholder="Specify vendor / account..." 
-              value={moneyToCustom} 
-              onChange={e => setMoneyToCustom(e.target.value)} 
-            />
-          )}
-          <span style={st.fieldHint}>Expense account or vendor receiving the funds.</span>
+          <span style={st.fieldHint}>Expense account receiving the funds.</span>
         </div>
       </div>
 

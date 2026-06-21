@@ -3,7 +3,7 @@ const path = require("path");
 const sqlite3 = require("sqlite3").verbose();
 const Database = require("better-sqlite3");
 const dbModule = require("./db");
-const { postSale, postPayment, postPurchase, postSupplierPayment, voidSale, postBankTransfer, postExpense } = require('./glBridge');
+const { postSale, postPayment, postPurchase, postSupplierPayment, voidSale, postBankTransfer, postExpense, postWithdrawal } = require('./glBridge');
 
 const dbPath = dbModule.filename || path.resolve(__dirname, "..", "database", "pos.db");
 
@@ -482,33 +482,37 @@ class PosStore {
     );
   }
 
-
   async saveSupplierPayment(input) {
-    const db = await this._db();
     if (!input.supplierId || !input.amount) throw new Error("Supplier ID and amount are required");
-    
-    const result = await run(db, 
-      `INSERT INTO supplier_payments (supplier_id, payment_date, amount, payment_method, notes)
-       VALUES (?, ?, ?, ?, ?)`,
-      [input.supplierId, input.date || new Date().toISOString().split('T')[0], input.amount, input.method || 'Cash', input.notes || null]
-    );
 
-    try {
-      const dbBetter = this.getBetterDb();
+    const dbBetter = this.getBetterDb();
+    const result = dbBetter.transaction(() => {
+      const paymentDate = input.date || new Date().toISOString().split('T')[0];
+      const paymentMethod = input.method || 'Cash';
+      
+      const insertResult = dbBetter.prepare(
+        `INSERT INTO supplier_payments (supplier_id, payment_date, amount, payment_method, notes)
+         VALUES (?, ?, ?, ?, ?)`
+      ).run(input.supplierId, paymentDate, input.amount, paymentMethod, input.notes || null);
+
+      const paymentId = insertResult.lastInsertRowid;
+
       postSupplierPayment(dbBetter, {
-        id:             result.lastID,
+        id:             paymentId,
         supplier_id:    input.supplierId,
         amount:         input.amount,
-        payment_method: input.method || 'Cash',
-        payment_date:   input.date || new Date().toISOString().slice(0, 10),
+        payment_method: paymentMethod,
+        payment_date:   paymentDate,
       });
-    } catch (err) {
-      console.error("[GL] postSupplierPayment failed:", err.message);
-    }
 
-    await this._syncSupplierBalance(db, input.supplierId);
+      this._syncSupplierBalanceSync(dbBetter, input.supplierId);
 
-    return { id: result.lastID };
+      return { id: paymentId };
+    })();
+
+    this._notifyUpdate("supplier:updated", input.supplierId);
+
+    return result;
   }
 
   // ============================================================================
@@ -1415,8 +1419,6 @@ class PosStore {
   }
 
   async saveWithdrawal(input) {
-    const db = await this._db();
-
     const customerId = Number(input.customerId);
     const amount = Number(input.amount);
     const type = String(input.type || 'advance_draw').trim();
@@ -1428,11 +1430,12 @@ class PosStore {
     if (!Number.isFinite(amount) || amount <= 0) throw new Error('Amount must be greater than 0');
     if (!['advance_draw', 'loan'].includes(type)) throw new Error('Invalid withdrawal type');
 
-    return this.transaction(async (db) => {
-      const customer = await get(db,
-        `SELECT id, cached_balance, opening_balance FROM customers WHERE id = ? AND deleted_at IS NULL`,
-        [customerId]
-      );
+    const dbBetter = this.getBetterDb();
+
+    return dbBetter.transaction(() => {
+      const customer = dbBetter.prepare(
+        `SELECT id, name, cached_balance, opening_balance FROM customers WHERE id = ? AND deleted_at IS NULL`
+      ).get(customerId);
       if (!customer) throw new Error('Customer not found');
 
       if (type === 'advance_draw') {
@@ -1447,52 +1450,61 @@ class PosStore {
         }
 
         let remaining = amount;
-        const advances = await all(db,
+        const advances = dbBetter.prepare(
           `SELECT id, unapplied_amount FROM customer_payments
            WHERE customer_id = ? AND unapplied_amount > 0 AND type = 'advance'
-           ORDER BY payment_date ASC, created_at ASC`,
-          [customerId]
-        );
+           ORDER BY payment_date ASC, created_at ASC`
+        ).all(customerId);
 
         for (const adv of advances) {
           if (remaining <= 0) break;
           const deduct = Math.min(remaining, adv.unapplied_amount);
-          await run(db,
+          dbBetter.prepare(
             `UPDATE customer_payments
              SET unapplied_amount = MAX(unapplied_amount - ?, 0)
-             WHERE id = ?`,
-            [deduct, adv.id]
-          );
+             WHERE id = ?`
+          ).run(deduct, adv.id);
           remaining -= deduct;
         }
 
         if (remaining > 0 && customer.opening_balance < 0) {
           const fromOpening = Math.min(remaining, Math.abs(customer.opening_balance));
-          await run(db,
-            `UPDATE customers SET opening_balance = opening_balance + ? WHERE id = ?`,
-            [fromOpening, customerId]
-          );
+          dbBetter.prepare(
+            `UPDATE customers SET opening_balance = opening_balance + ? WHERE id = ?`
+          ).run(fromOpening, customerId);
         }
       }
 
-      const result = await run(db,
+      const result = dbBetter.prepare(
         `INSERT INTO customer_withdrawals
            (customer_id, withdrawal_date, amount, type, payment_method, notes, status)
-         VALUES (?, ?, ?, ?, ?, ?, 'completed')`,
-        [customerId, withdrawalDate, amount, type, paymentMethod, notes]
-      );
+         VALUES (?, ?, ?, ?, ?, ?, 'completed')`
+      ).run(customerId, withdrawalDate, amount, type, paymentMethod, notes);
 
-      await this._syncCustomerBalance(db, customerId);
+      const withdrawalId = result.lastInsertRowid;
+
+      this._syncCustomerBalanceSync(dbBetter, customerId);
+
+      // Post to General Ledger
+      postWithdrawal(dbBetter, {
+        id:              withdrawalId,
+        customer_id:     customerId,
+        customerName:    customer.name,
+        amount:          amount,
+        type:            type,
+        payment_method:  paymentMethod,
+        withdrawal_date: withdrawalDate,
+      });
 
       return {
-        id: result.lastID,
+        id: withdrawalId,
         customerId,
         amount,
         type,
         paymentMethod,
         withdrawalDate,
       };
-    });
+    })();
   }
 
   async saveCustomerPayment(input) {
@@ -1511,19 +1523,20 @@ class PosStore {
       throw new Error("Amount must be greater than 0");
     }
 
-    const result = await this.transaction(async (db) => {
-      let customerId = input.customerId ? Number(input.customerId) : null;
+    const dbBetter = this.getBetterDb();
+    let customerId = input.customerId ? Number(input.customerId) : null;
+
+    const result = dbBetter.transaction(() => {
       let isWalkIn = false;
       let selectedSale = null;
 
       if (saleId) {
-        selectedSale = await get(
-          db,
+        selectedSale = dbBetter.prepare(
           `SELECT id, amount_paid, balance_due, payment_status, paid_at, customer_id
            FROM sales
-           WHERE id = ? AND COALESCE(voided_at, '') = ''`,
-          [saleId]
-        );
+           WHERE id = ? AND COALESCE(voided_at, '') = ''`
+        ).get(saleId);
+        
         if (!selectedSale) {
           throw new Error("Sale not found or voided");
         }
@@ -1542,7 +1555,7 @@ class PosStore {
       let remainingToApply = amount;
       let appliedAmount = 0;
 
-      const applyToSale = async (sale) => {
+      const applyToSale = (sale) => {
         if (!sale || remainingToApply <= 0) return;
 
         const currentDue = Number(sale.balance_due || 0);
@@ -1565,24 +1578,22 @@ class PosStore {
           paidAt = null;
         }
 
-        await run(
-          db,
+        dbBetter.prepare(
           `UPDATE sales
            SET amount_paid = ?,
                balance_due = ?,
                payment_status = ?,
                paid_at = ?,
                updated_at = CURRENT_TIMESTAMP
-           WHERE id = ?`,
-          [nextAmountPaid, nextBalanceDue, nextStatus, paidAt, sale.id]
-        );
+           WHERE id = ?`
+        ).run(nextAmountPaid, nextBalanceDue, nextStatus, paidAt, sale.id);
 
         remainingToApply -= applied;
         appliedAmount += applied;
       };
 
       if (isWalkIn) {
-        await applyToSale(selectedSale);
+        applyToSale(selectedSale);
         return {
           id: 0,
           customerId: null,
@@ -1596,25 +1607,23 @@ class PosStore {
 
       if (type !== "advance") {
         if (selectedSale) {
-          await applyToSale(selectedSale);
+          applyToSale(selectedSale);
         }
 
         if (remainingToApply > 0) {
-          const openSales = await all(
-            db,
+          const openSales = dbBetter.prepare(
             `SELECT id, amount_paid, balance_due, payment_status, paid_at
              FROM sales
              WHERE customer_id = ?
                AND balance_due > 0
                AND COALESCE(voided_at, '') = ''
                AND (? IS NULL OR id <> ?)
-             ORDER BY sale_date ASC, id ASC`,
-            [customerId, saleId, saleId]
-          );
+             ORDER BY sale_date ASC, id ASC`
+          ).all(customerId, saleId, saleId);
 
           for (const sale of openSales) {
             if (remainingToApply <= 0) break;
-            await applyToSale(sale);
+            applyToSale(sale);
           }
         }
       } else {
@@ -1624,18 +1633,27 @@ class PosStore {
 
       const unappliedAmount = Math.max(0, remainingToApply);
 
-      const insertResult = await run(
-        db,
+      const insertResult = dbBetter.prepare(
         `INSERT INTO customer_payments
            (customer_id, sale_id, payment_date, amount, applied_amount, unapplied_amount, payment_method, notes, type)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [customerId, saleId, paymentDate, amount, appliedAmount, unappliedAmount, paymentMethod, notes, type]
-      );
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(customerId, saleId, paymentDate, amount, appliedAmount, unappliedAmount, paymentMethod, notes, type);
 
-      await this._syncCustomerBalance(db, customerId);
+      const paymentId = insertResult.lastInsertRowid;
+
+      this._syncCustomerBalanceSync(dbBetter, customerId);
+
+      postPayment(dbBetter, {
+        id:             paymentId,
+        customer_id:    customerId,
+        payment_date:   paymentDate,
+        amount:         amount,
+        payment_method: paymentMethod,
+        type:           type,
+      });
 
       return {
-        id: insertResult.lastID,
+        id: paymentId,
         customerId,
         saleId,
         amount,
@@ -1643,20 +1661,10 @@ class PosStore {
         unappliedAmount,
         type,
       };
-    });
+    })();
 
-    try {
-      const dbBetter = this.getBetterDb();
-      postPayment(dbBetter, {
-        id:             result.id,
-        customer_id:    result.customerId,
-        payment_date:   paymentDate,       // already in scope above this block
-        amount:         result.amount,
-        payment_method: paymentMethod,     // already in scope above this block
-        type:           result.type,
-      });
-    } catch (err) {
-      console.error("[GL] postPayment failed:", err.message);
+    if (customerId) {
+      this._notifyUpdate("customer:updated", customerId);
     }
 
     return result;
@@ -2393,8 +2401,13 @@ class PosStore {
     const items = Array.isArray(input.items) ? input.items : [];
     if (!items.length) throw new Error("At least one sale item is required");
 
-    const result = await this.transaction(async (db) => {
-      const invoiceNo = String(input.invoiceNo || "").trim() || await this.nextInvoiceNo(db, saleDate);
+    const dbBetter = this.getBetterDb();
+    
+    // We need to know customerId to notify later
+    const customerId = input.customerId || null;
+
+    const result = dbBetter.transaction(() => {
+      const invoiceNo = String(input.invoiceNo || "").trim() || this.nextInvoiceNoSync(dbBetter, saleDate);
       let subtotal = 0;
       let discountTotal = 0;
       let total = 0;
@@ -2403,28 +2416,26 @@ class PosStore {
       const paymentMethod = String(input.paymentMethod || "Cash").trim() || "Cash";
       const paymentStatus = input.paymentStatus || (paymentMethod === "Credit" ? "Credit" : "Paid");
 
-      const saleResult = await run(
-        db,
+      const saleResult = dbBetter.prepare(
         `
           INSERT INTO sales
           (invoice_no, sale_date, customer_id, customer_name, phone, payment_method, payment_status, subtotal, discount_total, total, amount_paid, balance_due, credit_applied, notes)
           VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, 0, ?, ?)
-        `,
-        [
-          invoiceNo,
-          saleDate,
-          input.customerId || null,
-          String(input.customerName || "").trim() || null,
-          String(input.phone || "").trim() || null,
-          paymentMethod,
-          paymentStatus,
-          amountPaid,
-          creditApplied,
-          String(input.notes || "").trim() || null,
-        ]
+        `
+      ).run(
+        invoiceNo,
+        saleDate,
+        customerId,
+        String(input.customerName || "").trim() || null,
+        String(input.phone || "").trim() || null,
+        paymentMethod,
+        paymentStatus,
+        amountPaid,
+        creditApplied,
+        String(input.notes || "").trim() || null
       );
 
-      const saleId = saleResult.lastID;
+      const saleId = saleResult.lastInsertRowid;
       const auditItems = [];
 
       for (const rawItem of items) {
@@ -2433,13 +2444,13 @@ class PosStore {
         const unitPrice = Number(rawItem.unitPrice || rawItem.price || rawItem.ppp || 0);
         if (!rawItem.productId && !rawItem.productName) continue;
 
-        const productId = rawItem.productId || await this.ensureProductByName(rawItem.productName, { unit: rawItem.unit });
-        const product = await get(
-          db,
+        const productId = rawItem.productId || this.ensureProductByNameSync(dbBetter, rawItem.productName, { unit: rawItem.unit });
+        
+        const product = dbBetter.prepare(
           `SELECT id, name, unit, COALESCE(base_price, price, 0) AS basePrice, COALESCE((SELECT SUM(quantity_remaining) FROM batches WHERE product_id = products.id AND COALESCE(deleted_at, '') = ''), 0) AS currentStock
-           FROM products WHERE id = ? LIMIT 1`,
-          [productId]
-        );
+           FROM products WHERE id = ? LIMIT 1`
+        ).get(productId);
+        
         if (!product) throw new Error(`Product not found: ${rawItem.productName || productId}`);
 
         const lineTotal = Math.max(0, quantity * unitPrice - discount);
@@ -2447,37 +2458,33 @@ class PosStore {
         discountTotal += discount;
         total += lineTotal;
 
-        await run(
-          db,
+        dbBetter.prepare(
           `
             INSERT INTO sale_items (sale_id, product_id, batch_id, product_name, quantity, unit, unit_price, discount, line_total)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `,
-          [
-            saleId,
-            productId,
-            rawItem.batchId || null,
-            product.name,
-            quantity,
-            rawItem.unit || product.unit,
-            unitPrice,
-            discount,
-            lineTotal,
-          ]
+          `
+        ).run(
+          saleId,
+          productId,
+          rawItem.batchId || null,
+          product.name,
+          quantity,
+          rawItem.unit || product.unit,
+          unitPrice,
+          discount,
+          lineTotal
         );
 
-        const consumed = await this.consumeStock(db, productId, quantity, {
+        const consumed = this.consumeStockSync(dbBetter, productId, quantity, {
           batchId: rawItem.batchId || null,
           note: `sale:${invoiceNo}`,
           unitCost: unitPrice,
           saleId,
         });
 
-        await run(
-          db,
-          `UPDATE products SET base_price = CASE WHEN ? > 0 THEN ? ELSE base_price END, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-          [unitPrice, unitPrice, productId]
-        );
+        dbBetter.prepare(
+          `UPDATE products SET base_price = CASE WHEN ? > 0 THEN ? ELSE base_price END, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+        ).run(unitPrice, unitPrice, productId);
 
         auditItems.push({
           productId,
@@ -2494,51 +2501,62 @@ class PosStore {
       const normalizedStatus =
         balanceDue <= 0 ? "Paid" : amountPaid > 0 ? "Partial" : paymentStatus;
       const paidAt = normalizedStatus === "Paid" ? saleDate : null;
-      await run(
-        db,
+      
+      dbBetter.prepare(
         `UPDATE sales
          SET subtotal = ?, discount_total = ?, total = ?, amount_paid = ?, balance_due = ?, credit_applied = ?, payment_status = ?, paid_at = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [subtotal, discountTotal, total, amountPaid, balanceDue, creditApplied, normalizedStatus, paidAt, saleId]
-      );
+         WHERE id = ?`
+      ).run(subtotal, discountTotal, total, amountPaid, balanceDue, creditApplied, normalizedStatus, paidAt, saleId);
 
-      if (creditApplied > 0 && input.customerId) {
+      if (creditApplied > 0 && customerId) {
         let remaining = creditApplied;
-        const payments = await all(
-          db,
+        const payments = dbBetter.prepare(
           `SELECT id, unapplied_amount FROM customer_payments
            WHERE customer_id = ? AND unapplied_amount > 0
-           ORDER BY payment_date ASC, id ASC`,
-          [input.customerId]
-        );
+           ORDER BY payment_date ASC, id ASC`
+        ).all(customerId);
+        
         for (const payment of payments) {
           if (remaining <= 0) break;
           const take = Math.min(payment.unapplied_amount, remaining);
-          await run(
-            db,
-            `UPDATE customer_payments SET unapplied_amount = MAX(unapplied_amount - ?, 0) WHERE id = ?`,
-            [take, payment.id]
-          );
+          
+          dbBetter.prepare(
+            `UPDATE customer_payments SET unapplied_amount = MAX(unapplied_amount - ?, 0) WHERE id = ?`
+          ).run(take, payment.id);
+          
           remaining -= take;
         }
 
         if (remaining > 0) {
-          const cust = await get(db, `SELECT opening_balance FROM customers WHERE id = ?`, [input.customerId]);
+          const cust = dbBetter.prepare(`SELECT opening_balance FROM customers WHERE id = ?`).get(customerId);
           if (cust && cust.opening_balance < 0) {
             const take = Math.min(Math.abs(cust.opening_balance), remaining);
-            await run(
-              db,
-              `UPDATE customers SET opening_balance = opening_balance + ? WHERE id = ?`,
-              [take, input.customerId]
-            );
+            dbBetter.prepare(
+              `UPDATE customers SET opening_balance = opening_balance + ? WHERE id = ?`
+            ).run(take, customerId);
             remaining -= take;
           }
         }
       }
 
-      await this._syncCustomerBalance(db, input.customerId);
+      this._syncCustomerBalanceSync(dbBetter, customerId);
 
-      await this.audit("sale", saleId, "create", null, { ...input, invoiceNo, items: auditItems, subtotal, discountTotal, total, amountPaid, balanceDue, creditApplied });
+      this.auditSync(dbBetter, "sale", saleId, "create", null, { ...input, invoiceNo, items: auditItems, subtotal, discountTotal, total, amountPaid, balanceDue, creditApplied });
+
+      // Call GL Post
+      postSale(dbBetter, {
+        id:             saleId,
+        invoice_no:     invoiceNo,
+        sale_date:      saleDate,
+        customer_id:    customerId,
+        payment_method: paymentMethod,
+        total:          total,
+        amount_paid:    amountPaid,
+        balance_due:    balanceDue,
+        credit_applied: creditApplied,
+        voided_at:      null,
+      });
+
       return {
         id: saleId,
         invoiceNo,
@@ -2553,86 +2571,15 @@ class PosStore {
         paymentStatus: normalizedStatus,
         items: auditItems,
       };
-    });
+    })();
 
-    try {
-      const dbBetter = this.getBetterDb();
-      postSale(dbBetter, {
-        id:             result.id,
-        invoice_no:     result.invoiceNo,
-        sale_date:      result.saleDate,
-        customer_id:    input.customerId || null,
-        payment_method: result.paymentMethod,
-        total:          result.total,
-        amount_paid:    result.amountPaid,
-        balance_due:    result.balanceDue,
-        credit_applied: result.creditApplied || 0,
-        voided_at:      null,
-      });
-    } catch (err) {
-      console.error("[GL] postSale failed:", err.message);
+    // Notify updates out of transaction
+    if (customerId) {
+      this._notifyUpdate("customer:updated", customerId);
     }
-
     this._notifyUpdate("sale:created", result.id);
 
     return result;
-  }
-
-  async consumeStock(db, productId, quantityNeeded, options = {}) {
-    let remaining = Number(quantityNeeded || 0);
-    const allocated = [];
-
-    const batches = await all(
-      db,
-      `
-        SELECT id, quantity_remaining AS quantityRemaining
-        FROM batches
-        WHERE product_id = ? AND COALESCE(deleted_at, '') = ''
-          AND quantity_remaining > 0
-        ORDER BY
-          CASE WHEN expiry_date IS NULL OR expiry_date = '' THEN 1 ELSE 0 END,
-          expiry_date ASC,
-          id ASC
-      `,
-      [productId]
-    );
-
-    for (const batch of batches) {
-      if (remaining <= 0) break;
-      const take = Math.min(batch.quantityRemaining, remaining);
-      if (take <= 0) continue;
-      await run(
-        db,
-        `UPDATE batches SET quantity_remaining = MAX(quantity_remaining - ?, 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-        [take, batch.id]
-      );
-      await run(
-        db,
-        `
-          INSERT INTO inventory_movements
-          (product_id, batch_id, movement_type, quantity, unit_cost, reference_type, reference_id, note)
-          VALUES (?, ?, 'sale', ?, ?, 'sale', ?, ?)
-        `,
-        [productId, batch.id, -take, options.unitCost || 0, options.saleId || null, options.note || null]
-      );
-      allocated.push({ batchId: batch.id, quantity: take });
-      remaining -= take;
-    }
-
-    if (remaining > 0) {
-      await run(
-        db,
-        `
-          INSERT INTO inventory_movements
-          (product_id, batch_id, movement_type, quantity, unit_cost, reference_type, reference_id, note)
-          VALUES (?, NULL, 'sale-shortage', ?, ?, 'sale', ?, ?)
-        `,
-        [productId, -remaining, options.unitCost || 0, options.saleId || null, options.note || null]
-      );
-      allocated.push({ batchId: null, quantity: remaining, shortage: true });
-    }
-
-    return allocated;
   }
 
   async nextInvoiceNo(db, saleDate) {
@@ -3203,38 +3150,248 @@ class PosStore {
   }
 
   async saveExpense({ amount, category, moneyFrom, moneyTo, description, expenseDate }) {
-    const db = await this._db();
+    const dbBetter = this.getBetterDb();
     const cleanDate = expenseDate || new Date().toISOString().split("T")[0];
-    const result = await run(
-      db,
-      `INSERT INTO expenses (expense_date, category, description, amount, payment_method, money_from, money_to)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [cleanDate, category, description, Number(amount || 0), moneyFrom, moneyFrom, moneyTo]
-    );
-    
-    const expenseObj = {
-      id: result.lastID,
-      expenseDate: cleanDate,
-      category,
-      description,
-      amount: Number(amount || 0),
-      paymentMethod: moneyFrom,
-      moneyFrom,
-      moneyTo
-    };
 
-    try {
-      const dbBetter = this.getBetterDb();
-      postExpense(dbBetter, expenseObj);
-    } catch (err) {
-      console.error("[GL] postExpense failed:", err.message);
-    }
+    const expenseObj = dbBetter.transaction(() => {
+      const result = dbBetter.prepare(`
+        INSERT INTO expenses (expense_date, category, description, amount, payment_method, money_from, money_to)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(cleanDate, category, description || null, Number(amount || 0), moneyFrom, moneyFrom, moneyTo);
+
+      const obj = {
+        id: result.lastInsertRowid,
+        expenseDate: cleanDate,
+        category,
+        description,
+        amount: Number(amount || 0),
+        paymentMethod: moneyFrom,
+        moneyFrom,
+        moneyTo
+      };
+
+      postExpense(dbBetter, obj);
+
+      return obj;
+    })();
+
+    // Emit event out of transaction
+    this._notifyUpdate("expense:created", expenseObj.id);
 
     return expenseObj;
   }
 
+  _syncCustomerBalanceSync(dbBetter, customerId) {
+    if (!customerId) return;
+    dbBetter.prepare(`
+      UPDATE customers SET
+        cached_balance = (
+          COALESCE(opening_balance, 0)
+          + COALESCE((
+              SELECT SUM(balance_due) 
+              FROM sales 
+              WHERE customer_id = customers.id 
+                AND COALESCE(voided_at, '') = ''
+                AND payment_status != 'Returned'
+            ), 0)
+          + COALESCE((
+              SELECT SUM(amount)
+              FROM customer_withdrawals
+              WHERE customer_id = customers.id
+                AND type = 'loan'
+            ), 0)
+          - COALESCE((
+              SELECT SUM(COALESCE(unapplied_amount, amount))
+              FROM customer_payments
+              WHERE customer_id = customers.id
+                AND amount > 0
+            ), 0)
+          + COALESCE((
+              SELECT SUM(jl.debit - jl.credit) / 100.0
+              FROM journal_lines jl
+              JOIN journal_entries je ON jl.entry_id = je.id
+              JOIN accounts a ON jl.account_id = a.id
+              WHERE jl.customer_id = customers.id
+                AND a.code = '1100'
+                AND je.status = 'posted'
+                AND je.source_type = 'manual'
+            ), 0)
+        ),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(customerId);
+  }
+
+  _syncSupplierBalanceSync(dbBetter, supplierId) {
+    if (!supplierId) return;
+    dbBetter.prepare(`
+      UPDATE suppliers SET
+        cached_balance = CAST(ROUND(COALESCE(opening_balance, 0) * 100) AS INTEGER)
+          + CAST(ROUND(COALESCE((SELECT SUM(balance_due) FROM purchases WHERE supplier_id = suppliers.id), 0) * 100) AS INTEGER)
+          - CAST(ROUND(COALESCE((SELECT SUM(amount) FROM supplier_payments WHERE supplier_id = suppliers.id), 0) * 100) AS INTEGER)
+          + COALESCE((
+              SELECT SUM(jl.credit - jl.debit)
+              FROM journal_lines jl
+              JOIN journal_entries je ON jl.entry_id = je.id
+              JOIN accounts a ON jl.account_id = a.id
+              WHERE jl.supplier_id = suppliers.id
+                AND a.code = '2000'
+                AND je.status = 'posted'
+                AND je.source_type = 'manual'
+            ), 0),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(supplierId);
+  }
+
+  saveProductSync(dbBetter, input) {
+    const payload = {
+      sku: String(input.sku || "").trim() || null,
+      name: String(input.name || "").trim(),
+      categoryId: input.categoryId ? Number(input.categoryId) : null,
+      unit: String(input.unit || "Piece").trim() || "Piece",
+      basePrice: Number(input.basePrice || input.price || 0),
+      wholesalePrice: Number(input.wholesalePrice || 0),
+      costPrice: Number(input.costPrice || 0),
+      currentStock: Number(input.currentStock || 0),
+      lowStockLevel: Number(input.lowStockLevel || 0),
+      notes: String(input.notes || "").trim() || null,
+      active: input.active === false ? 0 : 1,
+      currentRetailPrice: Number(input.currentRetailPrice || 0),
+    };
+    if (!payload.name) throw new Error("Product name is required");
+
+    const result = dbBetter.prepare(`
+      INSERT INTO products (sku, name, category_id, unit, base_price, wholesale_price, cost_price, current_stock, low_stock_level, notes, active, current_retail_price)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      payload.sku, payload.name, payload.categoryId, payload.unit,
+      payload.basePrice, payload.wholesalePrice, payload.costPrice,
+      payload.currentStock, payload.lowStockLevel, payload.notes,
+      payload.active, payload.currentRetailPrice
+    );
+    
+    dbBetter.prepare(`
+      INSERT INTO audit_log (entity_type, entity_id, action, before_json, after_json)
+      VALUES ('product', ?, 'create', NULL, ?)
+    `).run(result.lastInsertRowid, JSON.stringify(payload));
+
+    return { id: result.lastInsertRowid, ...payload };
+  }
+
+  ensureProductByNameSync(dbBetter, name, fallback = {}) {
+    const productName = String(name || "").trim();
+    if (!productName) throw new Error("Product name is required");
+
+    const existing = dbBetter.prepare(`SELECT id FROM products WHERE name = ? AND COALESCE(deleted_at, '') = '' LIMIT 1`).get(productName);
+    if (existing) return existing.id;
+
+    let categoryId = fallback.categoryId || null;
+    if (!categoryId && fallback.category) {
+      const catName = String(fallback.category).trim();
+      const cat = dbBetter.prepare(`SELECT id FROM categories WHERE name = ? LIMIT 1`).get(catName);
+      if (!cat) {
+        const catRes = dbBetter.prepare(`INSERT INTO categories (name) VALUES (?)`).run(catName);
+        categoryId = catRes.lastInsertRowid;
+      } else {
+        categoryId = cat.id;
+      }
+    }
+
+    const created = this.saveProductSync(dbBetter, {
+      name: productName,
+      categoryId: categoryId,
+      unit: fallback.unit || "Piece",
+      basePrice: fallback.basePrice || 0,
+      costPrice: fallback.costPrice || 0,
+      currentStock: fallback.currentStock || 0,
+      lowStockLevel: fallback.lowStockLevel || 0,
+      active: true,
+      currentRetailPrice: fallback.currentRetailPrice || fallback.basePrice || fallback.salePrice || 0,
+    });
+    return created.id;
+  }
+
+  consumeStockSync(dbBetter, productId, quantityNeeded, options = {}) {
+    let remaining = Number(quantityNeeded || 0);
+    const allocated = [];
+
+    const batches = dbBetter.prepare(`
+      SELECT id, quantity_remaining AS quantityRemaining
+      FROM batches
+      WHERE product_id = ? AND COALESCE(deleted_at, '') = ''
+        AND quantity_remaining > 0
+      ORDER BY
+        CASE WHEN expiry_date IS NULL OR expiry_date = '' THEN 1 ELSE 0 END,
+        expiry_date ASC,
+        id ASC
+    `).all(productId);
+
+    for (const batch of batches) {
+      if (remaining <= 0) break;
+      const take = Math.min(batch.quantityRemaining, remaining);
+      if (take <= 0) continue;
+      
+      dbBetter.prepare(
+        `UPDATE batches SET quantity_remaining = MAX(quantity_remaining - ?, 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+      ).run(take, batch.id);
+
+      dbBetter.prepare(`
+        INSERT INTO inventory_movements
+        (product_id, batch_id, movement_type, quantity, unit_cost, reference_type, reference_id, note)
+        VALUES (?, ?, 'sale', ?, ?, 'sale', ?, ?)
+      `).run(productId, batch.id, -take, options.unitCost || 0, options.saleId || null, options.note || null);
+
+      allocated.push({ batchId: batch.id, quantity: take });
+      remaining -= take;
+    }
+
+    if (remaining > 0) {
+      dbBetter.prepare(`
+        INSERT INTO inventory_movements
+        (product_id, batch_id, movement_type, quantity, unit_cost, reference_type, reference_id, note)
+        VALUES (?, NULL, 'sale-shortage', ?, ?, 'sale', ?, ?)
+      `).run(productId, -remaining, options.unitCost || 0, options.saleId || null, options.note || null);
+
+      allocated.push({ batchId: null, quantity: remaining, shortage: true });
+    }
+
+    return allocated;
+  }
+
+  nextInvoiceNoSync(dbBetter, saleDate) {
+    const prefix = `INV-${String(saleDate).replace(/-/g, "")}`;
+    const rows = dbBetter.prepare(`SELECT invoice_no FROM sales WHERE invoice_no LIKE ?`).all(`${prefix}-%`);
+    if (!rows || rows.length === 0) return `${prefix}-001`;
+
+    let maxNum = 0;
+    for (const r of rows) {
+      const match = String(r.invoice_no).match(/-(\d+)$/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (num > maxNum) {
+          maxNum = num;
+        }
+      }
+    }
+    const next = String(maxNum + 1).padStart(3, "0");
+    return `${prefix}-${next}`;
+  }
+
+  auditSync(dbBetter, entityType, entityId, action, beforeValue, afterValue, userId = null) {
+    dbBetter.prepare(
+      `INSERT INTO audit_log (entity_type, entity_id, action, before_json, after_json, user_id) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      entityType,
+      entityId,
+      action,
+      beforeValue == null ? null : JSON.stringify(beforeValue),
+      afterValue == null ? null : JSON.stringify(afterValue),
+      userId
+    );
+  }
+
   // ── JOURNAL ENTRIES MODULE HANDLERS ─────────────────────────
-  
   getBetterDb() {
     if (!this.dbBetterInstance) {
       this.dbBetterInstance = new Database(this.dbPath);
