@@ -503,6 +503,7 @@ db.serialize(() => {
   db.run(`ALTER TABLE customer_payments ADD COLUMN type TEXT DEFAULT 'payment'`, ignoreColumnExists);
   db.run(`ALTER TABLE sales ADD COLUMN credit_applied REAL NOT NULL DEFAULT 0`, ignoreColumnExists);
   db.run(`ALTER TABLE customers ADD COLUMN cached_balance REAL NOT NULL DEFAULT 0`, ignoreColumnExists);
+  db.run(`ALTER TABLE suppliers ADD COLUMN cached_balance INTEGER NOT NULL DEFAULT 0`, ignoreColumnExists);
   db.run(`ALTER TABLE sales_returns ADD COLUMN notes TEXT`, ignoreColumnExists);
   db.run(`ALTER TABLE expenses ADD COLUMN money_from TEXT`, ignoreColumnExists);
   db.run(`ALTER TABLE expenses ADD COLUMN money_to TEXT`, ignoreColumnExists);

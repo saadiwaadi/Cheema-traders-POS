@@ -73,6 +73,8 @@ function StockViewTab({ refreshKey }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [suppliers, setSuppliers] = useState([]);
+  const [editingBatch, setEditingBatch] = useState(null);
 
   // Category and Expiry filter states
   const [selectedCategory, setSelectedCategory] = useState("All");
@@ -95,6 +97,28 @@ function StockViewTab({ refreshKey }) {
   useEffect(() => {
     loadData();
   }, [search, refreshKey]);
+
+  useEffect(() => {
+    const loadSuppliers = async () => {
+      try {
+        const res = await api.listSuppliers();
+        setSuppliers(res.suppliers || []);
+      } catch (err) {
+        console.error("Failed to load suppliers:", err);
+      }
+    };
+    loadSuppliers();
+  }, []);
+
+  const handleDeleteBatch = async (id) => {
+    if (!window.confirm(t("inventory.confirm_delete_batch", "Are you sure you want to delete this batch? Product stock level will be adjusted accordingly."))) return;
+    try {
+      await api.deleteBatch(id);
+      loadData();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
 
   const computeExpiryStatus = (expiryDateStr, thresholdDays) => {
     if (!expiryDateStr) return "healthy";
@@ -186,6 +210,7 @@ function StockViewTab({ refreshKey }) {
             <span style={{ flex: 1, textAlign: "right" }}>{t("inventory.retail_price", "Retail Price")}</span>
             <span style={{ flex: 1.2, textAlign: "center" }}>{t("inventory.expiry_date", "Expiry Date")}</span>
             <span style={{ width: 80, textAlign: "center" }}>{t("inventory.status", "Status")}</span>
+            <span style={{ width: 90, textAlign: "center" }}>{t("inventory.actions", "Actions")}</span>
           </div>
 
           {loading ? (
@@ -219,10 +244,301 @@ function StockViewTab({ refreshKey }) {
                     {t("inventory.expiry_status_" + b.expiryStatus, b.expiryStatus)}
                   </div>
                 </div>
+                <div style={{ width: 90, display: "flex", gap: 6, justifyContent: "center" }}>
+                  <button
+                    title={t("inventory.edit", "Edit")}
+                    style={{ ...st.delBtn, background: "#e8f0ff", color: "#5c35cc", fontWeight: 700, width: 32, height: 32 }}
+                    onClick={() => setEditingBatch(b)}>✎</button>
+                  <button
+                    title={t("inventory.delete", "Delete")}
+                    style={{ ...st.delBtn, width: 32, height: 32 }}
+                    onClick={() => handleDeleteBatch(b.id)}>🗑</button>
+                </div>
               </div>
             ))
           )}
         </div>
+      </div>
+
+      {editingBatch && (
+        <EditStockModal
+          batch={editingBatch}
+          suppliers={suppliers}
+          onClose={() => setEditingBatch(null)}
+          onSaved={() => {
+            setEditingBatch(null);
+            loadData();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function EditStockModal({ batch, suppliers, onClose, onSaved }) {
+  const { t } = useThemeLanguage();
+  const [productName, setProductName] = useState(batch.productName || "");
+  const [batchNo, setBatchNo] = useState(batch.batchNo || "");
+  const [category, setCategory] = useState(batch.category || "Pesticide");
+  const [unit, setUnit] = useState(batch.unit || "Litre");
+  const [qtyRemaining, setQtyRemaining] = useState(batch.quantityRemaining || 0);
+  const [qtyReceived, setQtyReceived] = useState(batch.quantityReceived || 0);
+  const [costPrice, setCostPrice] = useState(batch.costPrice || 0);
+  const [salePrice, setSalePrice] = useState(batch.salePrice || 0);
+  const [expiryDate, setExpiryDate] = useState(batch.expiryDate || "");
+  const [supplierId, setSupplierId] = useState(batch.supplierId || "");
+  const [purchaseDate, setPurchaseDate] = useState(batch.purchaseDate || "");
+  const [notes, setNotes] = useState(batch.notes || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!productName.trim()) {
+      setError(t("inventory.error_product_name_required", "Please enter a product name."));
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await api.updateBatch(batch.id, {
+        productName,
+        batchNo,
+        category,
+        unit,
+        quantityRemaining: Number(qtyRemaining),
+        quantityReceived: Number(qtyReceived),
+        costPrice: Number(costPrice),
+        salePrice: Number(salePrice),
+        expiryDate: expiryDate || null,
+        supplierId: supplierId ? Number(supplierId) : null,
+        purchaseDate,
+        notes: notes || null
+      });
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{
+      position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+      backgroundColor: "rgba(0,0,0,0.6)", display: "flex", justifyContent: "center",
+      alignItems: "center", zIndex: 1000, padding: 16
+    }}>
+      <div style={{
+        background: "#fff", padding: 24, borderRadius: 8, width: 680,
+        maxWidth: "100%", maxHeight: "95vh", overflowY: "auto",
+        border: "1px solid #b8c8b8", display: "flex", flexDirection: "column", gap: 16,
+        boxShadow: "0 8px 30px rgba(0,0,0,0.15)", boxSizing: "border-box"
+      }}>
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #e8f0e8", paddingBottom: 12 }}>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#1b3a1d", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            {t("inventory.edit_stock_title", "Edit Stock Batch")}
+          </h3>
+          <button style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#666" }} onClick={onClose}>✕</button>
+        </div>
+
+        {error && <div style={st.alertError}>{error}</div>}
+
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
+            {/* Left Column */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={st.fieldWrap}>
+                <label style={st.fieldLabel}>{t("inventory.product", "Product")}</label>
+                <input
+                  style={st.fieldInput}
+                  value={productName}
+                  onChange={(e) => setProductName(e.target.value)}
+                  placeholder={t("inventory.placeholder_product_name", "Product Name")}
+                />
+              </div>
+
+              <div style={st.fieldWrap}>
+                <label style={st.fieldLabel}>{t("inventory.batch_no", "Batch No")}</label>
+                <input
+                  style={{ ...st.fieldInput, fontFamily: "IBM Plex Mono, monospace" }}
+                  value={batchNo}
+                  onChange={(e) => setBatchNo(e.target.value)}
+                  placeholder="e.g. BT-1001"
+                />
+              </div>
+
+              <div style={st.fieldWrap}>
+                <label style={st.fieldLabel}>{t("inventory.category", "Category")}</label>
+                <select
+                  style={st.fieldInput}
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                >
+                  <option value="Dairy">{t("inventory.category_dairy", "Dairy")}</option>
+                  <option value="Pesticide">{t("inventory.category_pesticide", "Pesticide")}</option>
+                  <option value="Seeds">{t("inventory.category_seeds", "Seeds")}</option>
+                  <option value="Fertilizer">{t("inventory.category_fertilizer", "Fertilizer")}</option>
+                </select>
+              </div>
+
+              <div style={st.fieldWrap}>
+                <label style={st.fieldLabel}>{t("inventory.unit", "Unit")}</label>
+                <select
+                  style={st.fieldInput}
+                  value={unit}
+                  onChange={(e) => setUnit(e.target.value)}
+                >
+                  <option value="Litre">{t("inventory.unit_litre", "Litre")}</option>
+                  <option value="Kg">{t("inventory.unit_kg", "Kg")}</option>
+                  <option value="Bottle">{t("inventory.unit_bottle", "Bottle")}</option>
+                  <option value="Piece">{t("inventory.unit_piece", "Piece")}</option>
+                </select>
+              </div>
+
+              <div style={st.fieldWrap}>
+                <label style={st.fieldLabel}>{t("inventory.supplier", "Supplier")}</label>
+                <select
+                  style={st.fieldInput}
+                  value={supplierId}
+                  onChange={(e) => setSupplierId(e.target.value)}
+                >
+                  <option value="">{t("inventory.select_supplier", "-- Select Supplier --")}</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={st.fieldWrap}>
+                <label style={st.fieldLabel}>{t("inventory.purchase_date", "Purchase Date")}</label>
+                <input
+                  type="date"
+                  style={{ ...st.fieldInput, fontFamily: "IBM Plex Mono, monospace" }}
+                  value={purchaseDate}
+                  onChange={(e) => setPurchaseDate(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {/* Right Column */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {/* Qty Remaining with +/- and Offset Helpers */}
+              <div style={st.fieldWrap}>
+                <label style={st.fieldLabel}>{t("inventory.qty_remaining", "Qty Remaining")}</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <button
+                    type="button"
+                    style={{ ...st.delBtn, background: "#e8f0ff", color: "#5c35cc", fontWeight: 700, width: 36, height: 36 }}
+                    onClick={() => setQtyRemaining(q => Math.max(0, Number(q) - 1))}>-</button>
+                  <input
+                    type="number"
+                    style={{ ...st.fieldInput, flex: 1, textAlign: "center", fontFamily: "IBM Plex Mono, monospace" }}
+                    value={qtyRemaining}
+                    onChange={(e) => setQtyRemaining(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    style={{ ...st.delBtn, background: "#e8f0ff", color: "#5c35cc", fontWeight: 700, width: 36, height: 36 }}
+                    onClick={() => setQtyRemaining(q => Number(q) + 1)}>+</button>
+                </div>
+                {/* Quick adjustments */}
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
+                  {[-10, -5, -1, 1, 5, 10].map(val => (
+                    <button
+                      key={val}
+                      type="button"
+                      style={{
+                        padding: "4px 8px",
+                        background: val > 0 ? "#e8f5e9" : "#fff0f0",
+                        color: val > 0 ? "#2e7d32" : "#d32f2f",
+                        border: `1px solid ${val > 0 ? "#c8e6c9" : "#f5c6c6"}`,
+                        borderRadius: 4,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        cursor: "pointer"
+                      }}
+                      onClick={() => setQtyRemaining(q => Math.max(0, Number(q) + val))}
+                    >
+                      {val > 0 ? `+${val}` : val}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={st.fieldWrap}>
+                <label style={st.fieldLabel}>{t("inventory.qty_received", "Qty Received")}</label>
+                <input
+                  type="number"
+                  style={{ ...st.fieldInput, fontFamily: "IBM Plex Mono, monospace" }}
+                  value={qtyReceived}
+                  onChange={(e) => setQtyReceived(e.target.value)}
+                />
+              </div>
+
+              <div style={st.fieldWrap}>
+                <label style={st.fieldLabel}>{t("inventory.cost_price", "Cost Price")}</label>
+                <input
+                  type="number"
+                  style={{ ...st.fieldInput, fontFamily: "IBM Plex Mono, monospace" }}
+                  value={costPrice}
+                  onChange={(e) => setCostPrice(e.target.value)}
+                />
+              </div>
+
+              <div style={st.fieldWrap}>
+                <label style={st.fieldLabel}>{t("inventory.retail_price", "Retail Price")}</label>
+                <input
+                  type="number"
+                  style={{ ...st.fieldInput, fontFamily: "IBM Plex Mono, monospace" }}
+                  value={salePrice}
+                  onChange={(e) => setSalePrice(e.target.value)}
+                />
+              </div>
+
+              <div style={st.fieldWrap}>
+                <label style={st.fieldLabel}>{t("inventory.expiry_date", "Expiry Date")}</label>
+                <input
+                  type="date"
+                  style={{ ...st.fieldInput, fontFamily: "IBM Plex Mono, monospace" }}
+                  value={expiryDate}
+                  onChange={(e) => setExpiryDate(e.target.value)}
+                />
+              </div>
+
+              <div style={st.fieldWrap}>
+                <label style={st.fieldLabel}>{t("inventory.notes", "Notes / Shelf")}</label>
+                <input
+                  style={st.fieldInput}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="e.g. Shelf A-2"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Form Actions */}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, borderTop: "1px solid #e8f0e8", paddingTop: 16 }}>
+            <button
+              type="button"
+              style={{ ...st.addBtn, background: "#888" }}
+              onClick={onClose}
+              disabled={saving}
+            >
+              {t("inventory.cancel", "Cancel")}
+            </button>
+            <button
+              type="submit"
+              style={st.addBtn}
+              disabled={saving}
+            >
+              {saving ? t("inventory.saving", "Saving...") : t("inventory.save_changes", "Save Changes")}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

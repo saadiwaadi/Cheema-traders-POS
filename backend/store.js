@@ -328,6 +328,7 @@ class PosStore {
 
   async listSuppliers(search = "") {
     const db = await this._db();
+    await this._syncAllSupplierBalances(db);
     return all(
       db,
       `
@@ -340,21 +341,7 @@ class PosStore {
           s.opening_balance AS openingBalance,
           s.created_at AS createdAt, 
           s.updated_at AS updatedAt,
-          (
-            s.opening_balance 
-            + COALESCE((SELECT SUM(balance_due) FROM purchases WHERE supplier_id = s.id), 0)
-            - COALESCE((SELECT SUM(amount) FROM supplier_payments WHERE supplier_id = s.id), 0)
-            + COALESCE((
-                SELECT SUM(jl.credit - jl.debit) / 100.0
-                FROM journal_lines jl
-                JOIN journal_entries je ON jl.entry_id = je.id
-                JOIN accounts a ON jl.account_id = a.id
-                WHERE jl.supplier_id = s.id
-                  AND a.code = '2000'
-                  AND je.status = 'posted'
-                  AND je.source_type = 'manual'
-              ), 0)
-          ) AS current_balance,
+          (s.cached_balance / 100.0) AS current_balance,
           (SELECT COUNT(*) FROM purchases WHERE supplier_id = s.id) AS transaction_count,
           (SELECT MAX(purchase_date) FROM purchases WHERE supplier_id = s.id) AS last_purchase
         FROM suppliers s
@@ -387,6 +374,7 @@ class PosStore {
         [payload.name, payload.phone, payload.salesOfficerPhone, payload.address, payload.openingBalance, input.id]
       );
       await this.audit("supplier", input.id, "update", null, payload);
+      await this._syncSupplierBalance(db, input.id);
       return { id: input.id, ...payload, changes: result.changes };
     }
 
@@ -397,6 +385,7 @@ class PosStore {
       [payload.name, payload.phone, payload.salesOfficerPhone, payload.address, payload.openingBalance]
     );
     await this.audit("supplier", result.lastID, "create", null, payload);
+    await this._syncSupplierBalance(db, result.lastID);
     return { id: result.lastID, ...payload };
   }
 
@@ -404,6 +393,7 @@ class PosStore {
     const db = await this._db();
     await run(db, `UPDATE suppliers SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [id]);
     await this.audit("supplier", id, "delete", null, null);
+    await this._syncSupplierBalance(db, id);
   }
 
   async getSupplierHistory(supplierId) {
@@ -507,6 +497,8 @@ class PosStore {
     } catch (err) {
       console.error("[GL] postSupplierPayment failed:", err.message);
     }
+
+    await this._syncSupplierBalance(db, input.supplierId);
 
     return { id: result.lastID };
   }
@@ -1052,6 +1044,56 @@ class PosStore {
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [customerId]);
+    this._notifyUpdate("customer:updated", customerId);
+  }
+
+  _notifyUpdate(event, data) {
+    try {
+      const { BrowserWindow } = require("electron");
+      const windows = BrowserWindow.getAllWindows();
+      for (const win of windows) {
+        win.webContents.send(event, data);
+      }
+    } catch (err) {
+      console.warn("Could not notify update via IPC:", err.message);
+    }
+  }
+
+  async _syncSupplierBalance(db, supplierId) {
+    if (!supplierId) return;
+    await run(db, `
+      UPDATE suppliers SET
+        cached_balance = CAST(ROUND(COALESCE(opening_balance, 0) * 100) AS INTEGER)
+          + CAST(ROUND(COALESCE((SELECT SUM(balance_due) FROM purchases WHERE supplier_id = suppliers.id), 0) * 100) AS INTEGER)
+          - CAST(ROUND(COALESCE((SELECT SUM(amount) FROM supplier_payments WHERE supplier_id = suppliers.id), 0) * 100) AS INTEGER)
+          + COALESCE((
+              SELECT SUM(jl.credit - jl.debit)
+              FROM journal_lines jl
+              JOIN journal_entries je ON jl.entry_id = je.id
+              JOIN accounts a ON jl.account_id = a.id
+              WHERE jl.supplier_id = suppliers.id
+                AND a.code = '2000'
+                AND je.status = 'posted'
+                AND je.source_type = 'manual'
+            ), 0),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [supplierId]);
+    this._notifyUpdate("supplier:updated", supplierId);
+  }
+
+  async _syncAllCustomerBalances(db) {
+    const customers = await all(db, `SELECT id FROM customers`);
+    for (const c of customers) {
+      await this._syncCustomerBalance(db, c.id);
+    }
+  }
+
+  async _syncAllSupplierBalances(db) {
+    const suppliers = await all(db, `SELECT id FROM suppliers`);
+    for (const s of suppliers) {
+      await this._syncSupplierBalance(db, s.id);
+    }
   }
 
   async saveCustomer(input) {
@@ -1876,33 +1918,120 @@ class PosStore {
 
   async updateBatch(id, payload) {
     return this.transaction(async (db) => {
-      const old = await get(db, `SELECT product_id, quantity_remaining, cost_price, sale_price, expiry_date FROM batches WHERE id = ?`, [id]);
+      const old = await get(
+        db,
+        `SELECT product_id, supplier_id, batch_no, purchase_date, expiry_date, quantity_received, quantity_remaining, cost_price, sale_price, notes 
+         FROM batches WHERE id = ?`,
+        [id]
+      );
       if (!old) throw new Error("Batch not found");
 
-      const qtyRemaining = Number(payload.quantityRemaining);
-      const costPrice = Number(payload.costPrice);
-      const salePrice = Number(payload.salePrice);
+      const qtyRemaining = Number(payload.quantityRemaining ?? payload.qty ?? old.quantity_remaining);
+      const qtyReceived = Number(payload.quantityReceived ?? old.quantity_received);
+      const costPrice = Number(payload.costPrice ?? old.cost_price);
+      const salePrice = Number(payload.salePrice ?? old.sale_price);
       const expiryDate = payload.expiryDate || null;
+      const supplierId = payload.supplierId !== undefined ? (payload.supplierId ? Number(payload.supplierId) : null) : old.supplier_id;
+      const batchNo = payload.batchNo !== undefined ? String(payload.batchNo || "").trim() : old.batch_no;
+      const purchaseDate = payload.purchaseDate || old.purchase_date;
+      const notes = payload.notes !== undefined ? (payload.notes ? String(payload.notes).trim() : null) : old.notes;
 
+      let productId = old.product_id;
+      if (payload.productName && payload.productName.trim() !== "") {
+        productId = await this.ensureProductByName(payload.productName, {
+          unit: payload.unit || 'Piece',
+          costPrice: costPrice,
+          basePrice: salePrice,
+          category: payload.category
+        });
+      }
+
+      // Update the batch
       await run(
         db,
         `UPDATE batches
-         SET quantity_remaining = ?, cost_price = ?, sale_price = ?, expiry_date = ?, updated_at = CURRENT_TIMESTAMP
+         SET product_id = ?, supplier_id = ?, batch_no = ?, purchase_date = ?, expiry_date = ?, 
+             quantity_received = ?, quantity_remaining = ?, cost_price = ?, sale_price = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
-        [qtyRemaining, costPrice, salePrice, expiryDate, id]
+        [productId, supplierId, batchNo, purchaseDate, expiryDate, qtyReceived, qtyRemaining, costPrice, salePrice, notes, id]
       );
 
-      const diff = qtyRemaining - old.quantity_remaining;
-      if (diff !== 0) {
-        await run(
-          db,
-          `UPDATE products SET current_stock = MAX(COALESCE(current_stock, 0) + ?, 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-          [diff, old.product_id]
-        );
+      // Handle stock movement and product current_stock updates
+      if (productId !== old.product_id) {
+        // Subtract old remaining quantity from old product
+        if (old.quantity_remaining > 0) {
+          await run(
+            db,
+            `UPDATE products SET current_stock = MAX(COALESCE(current_stock, 0) - ?, 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [old.quantity_remaining, old.product_id]
+          );
+          await run(
+            db,
+            `INSERT INTO inventory_movements (product_id, batch_id, movement_type, quantity, unit_cost, reference_type, reference_id, note)
+             VALUES (?, ?, 'adjustment', ?, ?, 'batch', ?, ?)`,
+            [old.product_id, id, -old.quantity_remaining, old.cost_price, id, `Stock product re-link: removed from old product`]
+          );
+        }
+        // Add new remaining quantity to new product
+        if (qtyRemaining > 0) {
+          await run(
+            db,
+            `UPDATE products SET current_stock = COALESCE(current_stock, 0) + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [qtyRemaining, productId]
+          );
+          await run(
+            db,
+            `INSERT INTO inventory_movements (product_id, batch_id, movement_type, quantity, unit_cost, reference_type, reference_id, note)
+             VALUES (?, ?, 'adjustment', ?, ?, 'batch', ?, ?)`,
+            [productId, id, qtyRemaining, costPrice, id, `Stock product re-link: added to new product`]
+          );
+        }
+      } else {
+        // Product is the same, just adjust stock if remaining quantity changed
+        const diff = qtyRemaining - old.quantity_remaining;
+        if (diff !== 0) {
+          await run(
+            db,
+            `UPDATE products SET current_stock = MAX(COALESCE(current_stock, 0) + ?, 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [diff, productId]
+          );
+          await run(
+            db,
+            `INSERT INTO inventory_movements (product_id, batch_id, movement_type, quantity, unit_cost, reference_type, reference_id, note)
+             VALUES (?, ?, 'adjustment', ?, ?, 'batch', ?, ?)`,
+            [productId, id, diff, costPrice, id, `Stock adjustment edit: ${diff > 0 ? '+' : ''}${diff}`]
+          );
+        }
       }
 
-      await this.audit("batch", id, "update", old, payload);
-      return { id, ...payload };
+      // Update the current product's prices, and optionally category and unit if renaming/updating
+      await run(
+        db,
+        `UPDATE products 
+         SET cost_price = COALESCE(?, cost_price), 
+             base_price = CASE WHEN ? > 0 THEN ? ELSE base_price END, 
+             unit = COALESCE(?, unit),
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+        [costPrice || null, salePrice, salePrice, payload.unit || null, productId]
+      );
+
+      // If category was passed, ensure the category_id is set correctly on the product
+      if (payload.category) {
+        const catName = String(payload.category).trim();
+        const cat = await get(db, `SELECT id FROM categories WHERE name = ? LIMIT 1`, [catName]);
+        let catId = cat ? cat.id : null;
+        if (!cat && catName !== "") {
+          const catRes = await run(db, `INSERT INTO categories (name) VALUES (?)`, [catName]);
+          catId = catRes.lastID;
+        }
+        if (catId) {
+          await run(db, `UPDATE products SET category_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [catId, productId]);
+        }
+      }
+
+      await this.audit("batch", id, "update", old, { ...payload, productId, quantityRemaining: qtyRemaining, quantityReceived: qtyReceived });
+      return { id, ...payload, productId, quantityRemaining: qtyRemaining, quantityReceived: qtyReceived };
     });
   }
 
@@ -2086,6 +2215,11 @@ class PosStore {
       });
     } catch (err) {
       console.error("[GL] postPurchase failed:", err.message);
+    }
+
+    if (result && result.supplierId) {
+      const db = await this._db();
+      await this._syncSupplierBalance(db, result.supplierId);
     }
 
     return result;
@@ -2384,6 +2518,8 @@ class PosStore {
       console.error("[GL] postSale failed:", err.message);
     }
 
+    this._notifyUpdate("sale:created", result.id);
+
     return result;
   }
 
@@ -2630,6 +2766,8 @@ class PosStore {
       console.error("[GL] voidSale failed:", err.message);
     }
 
+    this._notifyUpdate("sale:created", id);
+
     return result;
   }
 
@@ -2724,129 +2862,7 @@ class PosStore {
     return this.nextInvoiceNo(db, today);
   }
 
-  async getDashboardSummary() {
-    const db = await this._db();
-    const today = new Date().toISOString().slice(0, 10);
-    const expiringCutoff = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
 
-    const [
-      todaySales, creditDue, lowStock, expiringSoon, recentSales,
-      todayExpenses, todayCashSales, todayCreditSales, todayTransactionCount
-    ] = await Promise.all([
-      get(db, `SELECT COALESCE(SUM(total), 0) AS value FROM sales WHERE sale_date = ? AND COALESCE(voided_at, '') = ''`, [today]),
-      get(db, `SELECT COALESCE(SUM(balance_due), 0) AS value FROM sales WHERE balance_due > 0 AND COALESCE(voided_at, '') = ''`),
-      get(db, `SELECT COUNT(*) AS value FROM products WHERE COALESCE(deleted_at, '') = '' AND COALESCE(current_stock, quantity, 0) <= COALESCE(low_stock_level, 0) AND COALESCE(active, 1) = 1`),
-      get(db, `SELECT COUNT(*) AS value FROM batches WHERE COALESCE(deleted_at, '') = '' AND expiry_date IS NOT NULL AND expiry_date <> '' AND expiry_date <= ? AND quantity_remaining > 0`, [expiringCutoff]),
-      all(
-        db,
-        `
-          SELECT 
-            id, 
-            invoice_no AS invoice_number, 
-            sale_date AS date, 
-            total, 
-            payment_method AS method, 
-            customer_name, 
-            payment_status, 
-            balance_due AS remaining_amount, 
-            amount_paid AS paid_amount
-          FROM sales
-          WHERE COALESCE(voided_at, '') = ''
-          ORDER BY id DESC
-          LIMIT 8
-        `
-      ),
-      get(db, `SELECT COALESCE(SUM(amount), 0) AS value FROM expenses WHERE expense_date = ?`, [today]),
-      get(db, `SELECT COALESCE(SUM(total), 0) AS value FROM sales WHERE sale_date = ? AND payment_method = 'Cash' AND COALESCE(voided_at, '') = ''`, [today]),
-      get(db, `SELECT COALESCE(SUM(total), 0) AS value FROM sales WHERE sale_date = ? AND payment_method != 'Cash' AND COALESCE(voided_at, '') = ''`, [today]),
-      get(db, `SELECT COUNT(*) AS value FROM sales WHERE sale_date = ? AND COALESCE(voided_at, '') = ''`, [today]),
-    ]);
-
-    const productCount = await get(db, `SELECT COUNT(*) AS value FROM products WHERE COALESCE(deleted_at, '') = '' AND COALESCE(active, 1) = 1`);
-    const batchCount = await get(db, `SELECT COUNT(*) AS value FROM batches WHERE COALESCE(deleted_at, '') = ''`);
-    const supplierCount = await get(db, `SELECT COUNT(*) AS value FROM suppliers WHERE COALESCE(deleted_at, '') = ''`);
-
-    return {
-      todaySales: Number(todaySales?.value || 0),
-      todayExpenses: Number(todayExpenses?.value || 0),
-      todayProfit: Number(todaySales?.value || 0) - Number(todayExpenses?.value || 0),
-      todayCashSales: Number(todayCashSales?.value || 0),
-      todayCreditSales: Number(todayCreditSales?.value || 0),
-      todayTransactionCount: Number(todayTransactionCount?.value || 0),
-      creditDue: Number(creditDue?.value || 0),
-      lowStockCount: Number(lowStock?.value || 0),
-      expiringSoonCount: Number(expiringSoon?.value || 0),
-      productCount: Number(productCount?.value || 0),
-      batchCount: Number(batchCount?.value || 0),
-      supplierCount: Number(supplierCount?.value || 0),
-      recentSales,
-    };
-  }
-
-  async getMonthlyReport() {
-    const db = await this._db();
-    
-    // Revenue from sales
-    const salesData = await all(db, `
-      SELECT 
-        strftime('%m', sale_date) AS m, 
-        strftime('%Y', sale_date) AS y, 
-        COALESCE(SUM(total), 0) AS revenue
-      FROM sales 
-      WHERE sale_date >= date('now', '-12 months') AND COALESCE(voided_at, '') = ''
-      GROUP BY y, m 
-      ORDER BY y ASC, m ASC
-    `);
-
-    // Expenses from expenses table
-    const expensesData = await all(db, `
-      SELECT 
-        strftime('%m', expense_date) AS m, 
-        strftime('%Y', expense_date) AS y, 
-        COALESCE(SUM(amount), 0) AS expenses
-      FROM expenses 
-      WHERE expense_date >= date('now', '-12 months')
-      GROUP BY y, m 
-      ORDER BY y ASC, m ASC
-    `);
-
-    // Combine data
-    const map = {};
-    const now = new Date();
-    // Pre-fill last 12 months
-    for (let i = 11; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const mStr = String(d.getMonth() + 1).padStart(2, '0');
-      const yStr = String(d.getFullYear());
-      const key = `${yStr}-${mStr}`;
-      map[key] = {
-        month: d.toLocaleString('default', { month: 'short' }),
-        year: d.getFullYear(),
-        revenue: 0,
-        expenses: 0,
-        profit: 0
-      };
-    }
-
-    for (const row of salesData) {
-      if (!row.m || !row.y) continue;
-      const key = `${row.y}-${row.m}`;
-      if (map[key]) map[key].revenue = row.revenue;
-    }
-
-    for (const row of expensesData) {
-      if (!row.m || !row.y) continue;
-      const key = `${row.y}-${row.m}`;
-      if (map[key]) map[key].expenses = row.expenses;
-    }
-
-    // Calculate profit
-    for (const key in map) {
-      map[key].profit = map[key].revenue - map[key].expenses;
-    }
-
-    return Object.values(map);
-  }
 
   async getTopDebtors() {
     const db = await this._db();
@@ -3187,6 +3203,7 @@ class PosStore {
       const entryId = createJournalEntry(dbBetter, payload);
       const customerIds = [...new Set(payload.lines.map(l => l.customerId).filter(Boolean))];
       const employeeIds = [...new Set(payload.lines.map(l => l.employeeId).filter(Boolean))];
+      const supplierIds = [...new Set(payload.lines.map(l => l.supplierId).filter(Boolean))];
       const db = await this._db();
       for (const cid of customerIds) {
         await this._syncCustomerBalance(db, cid);
@@ -3194,6 +3211,10 @@ class PosStore {
       for (const eid of employeeIds) {
         await this._syncEmployeeBalance(db, eid);
       }
+      for (const sid of supplierIds) {
+        await this._syncSupplierBalance(db, sid);
+      }
+      this._notifyUpdate("journal:created", entryId);
       return { id: entryId };
     } catch (err) {
       throw new Error(err.message);
@@ -3271,9 +3292,10 @@ class PosStore {
   async reverseJournalEntry({ id, date, reason }) {
     try {
       const dbBetter = this.getBetterDb();
-      const origLines = dbBetter.prepare("SELECT customer_id, employee_id FROM journal_lines WHERE entry_id = ?").all(id);
+      const origLines = dbBetter.prepare("SELECT customer_id, employee_id, supplier_id FROM journal_lines WHERE entry_id = ?").all(id);
       const customerIds = [...new Set(origLines.map(l => l.customer_id).filter(Boolean))];
       const employeeIds = [...new Set(origLines.map(l => l.employee_id).filter(Boolean))];
+      const supplierIds = [...new Set(origLines.map(l => l.supplier_id).filter(Boolean))];
       const newId = reverseEntry(dbBetter, id, date, reason);
       
       const db = await this._db();
@@ -3283,6 +3305,10 @@ class PosStore {
       for (const eid of employeeIds) {
         await this._syncEmployeeBalance(db, eid);
       }
+      for (const sid of supplierIds) {
+        await this._syncSupplierBalance(db, sid);
+      }
+      this._notifyUpdate("journal:created", newId);
       return { id: newId };
     } catch (err) {
       throw new Error(err.message);
@@ -3300,6 +3326,7 @@ class PosStore {
       const lines = dbBetter.prepare("SELECT * FROM journal_lines WHERE entry_id = ?").all(id);
       const customerIds = [...new Set(lines.map(l => l.customer_id).filter(Boolean))];
       const employeeIds = [...new Set(lines.map(l => l.employee_id).filter(Boolean))];
+      const supplierIds = [...new Set(lines.map(l => l.supplier_id).filter(Boolean))];
       
       const tx = dbBetter.transaction(() => {
         if (entry.source_type === "expense" && entry.source_id) {
@@ -3316,6 +3343,10 @@ class PosStore {
       for (const eid of employeeIds) {
         await this._syncEmployeeBalance(db, eid);
       }
+      for (const sid of supplierIds) {
+        await this._syncSupplierBalance(db, sid);
+      }
+      this._notifyUpdate("journal:deleted", id);
       return { success: true };
     } catch (err) {
       throw new Error(err.message);
@@ -4819,6 +4850,130 @@ class PosStore {
       outstandingAdvances: balances.outstandingAdvances,
       payTypes
     };
+  }
+
+  async getDashboardSummary() {
+    const db = await this._db();
+    const today = new Date().toISOString().slice(0, 10);
+    const expiringCutoff = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
+
+    const [
+      todaySales, creditDue, lowStock, expiringSoon, recentSales,
+      todayExpenses, todayCashSales, todayCreditSales, todayTransactionCount
+    ] = await Promise.all([
+      get(db, `SELECT COALESCE(SUM(total), 0) AS value FROM sales WHERE sale_date = ? AND COALESCE(voided_at, '') = ''`, [today]),
+      get(db, `SELECT COALESCE(SUM(balance_due), 0) AS value FROM sales WHERE balance_due > 0 AND COALESCE(voided_at, '') = ''`),
+      get(db, `SELECT COUNT(*) AS value FROM products WHERE COALESCE(deleted_at, '') = '' AND COALESCE(current_stock, quantity, 0) <= COALESCE(low_stock_level, 0) AND COALESCE(active, 1) = 1`),
+      get(db, `SELECT COUNT(*) AS value FROM batches WHERE COALESCE(deleted_at, '') = '' AND expiry_date IS NOT NULL AND expiry_date <> '' AND expiry_date <= ? AND quantity_remaining > 0`, [expiringCutoff]),
+      all(
+        db,
+        `
+          SELECT 
+            id, 
+            invoice_no AS invoice_number, 
+            sale_date AS date, 
+            total, 
+            payment_method AS method, 
+            customer_name, 
+            payment_status, 
+            balance_due AS remaining_amount, 
+            amount_paid AS paid_amount
+          FROM sales
+          WHERE COALESCE(voided_at, '') = ''
+          ORDER BY id DESC
+          LIMIT 8
+        `
+      ),
+      get(db, `SELECT COALESCE(SUM(amount), 0) AS value FROM expenses WHERE expense_date = ?`, [today]),
+      get(db, `SELECT COALESCE(SUM(total), 0) AS value FROM sales WHERE sale_date = ? AND payment_method = 'Cash' AND COALESCE(voided_at, '') = ''`, [today]),
+      get(db, `SELECT COALESCE(SUM(total), 0) AS value FROM sales WHERE sale_date = ? AND payment_method != 'Cash' AND COALESCE(voided_at, '') = ''`, [today]),
+      get(db, `SELECT COUNT(*) AS value FROM sales WHERE sale_date = ? AND COALESCE(voided_at, '') = ''`, [today]),
+    ]);
+
+    const productCount = await get(db, `SELECT COUNT(*) AS value FROM products WHERE COALESCE(deleted_at, '') = '' AND COALESCE(active, 1) = 1`);
+    const batchCount = await get(db, `SELECT COUNT(*) AS value FROM batches WHERE COALESCE(deleted_at, '') = ''`);
+    const supplierCount = await get(db, `SELECT COUNT(*) AS value FROM suppliers WHERE COALESCE(deleted_at, '') = ''`);
+
+    return {
+      todaySales: Number(todaySales?.value || 0),
+      todayExpenses: Number(todayExpenses?.value || 0),
+      todayProfit: Number(todaySales?.value || 0) - Number(todayExpenses?.value || 0),
+      todayCashSales: Number(todayCashSales?.value || 0),
+      todayCreditSales: Number(todayCreditSales?.value || 0),
+      todayTransactionCount: Number(todayTransactionCount?.value || 0),
+      creditDue: Number(creditDue?.value || 0),
+      lowStockCount: Number(lowStock?.value || 0),
+      expiringSoonCount: Number(expiringSoon?.value || 0),
+      productCount: Number(productCount?.value || 0),
+      batchCount: Number(batchCount?.value || 0),
+      supplierCount: Number(supplierCount?.value || 0),
+      recentSales,
+    };
+  }
+
+  async getMonthlyReport() {
+    const db = await this._db();
+    
+    // Revenue from sales
+    const salesData = await all(db, `
+      SELECT 
+        strftime('%m', sale_date) AS m, 
+        strftime('%Y', sale_date) AS y, 
+        COALESCE(SUM(total), 0) AS revenue
+      FROM sales 
+      WHERE sale_date >= date('now', '-12 months') AND COALESCE(voided_at, '') = ''
+      GROUP BY y, m 
+      ORDER BY y ASC, m ASC
+    `);
+
+    // Expenses from expenses table
+    const expensesData = await all(db, `
+      SELECT 
+        strftime('%m', expense_date) AS m, 
+        strftime('%Y', expense_date) AS y, 
+        COALESCE(SUM(amount), 0) AS expenses
+      FROM expenses 
+      WHERE expense_date >= date('now', '-12 months')
+      GROUP BY y, m 
+      ORDER BY y ASC, m ASC
+    `);
+
+    // Combine data
+    const map = {};
+    const now = new Date();
+    // Pre-fill last 12 months
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const mStr = String(d.getMonth() + 1).padStart(2, '0');
+      const yStr = String(d.getFullYear());
+      const key = `${yStr}-${mStr}`;
+      map[key] = {
+        month: d.toLocaleString('default', { month: 'short' }),
+        year: d.getFullYear(),
+        revenue: 0,
+        expenses: 0,
+        profit: 0
+      };
+    }
+
+    for (const row of salesData) {
+      if (!row.m || !row.y) continue;
+      const key = `${row.y}-${row.m}`;
+      if (map[key]) map[key].revenue = row.revenue;
+    }
+
+    for (const row of expensesData) {
+      if (!row.m || !row.y) continue;
+      const key = `${row.y}-${row.m}`;
+      if (map[key]) map[key].expenses = row.expenses;
+    }
+
+    // Calculate profit
+    for (const key in map) {
+      map[key].profit = map[key].revenue - map[key].expenses;
+    }
+
+    return Object.values(map);
   }
 }
 
