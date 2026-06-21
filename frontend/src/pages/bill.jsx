@@ -128,7 +128,7 @@ export default function BillingWorkspace() {
           if (selected) {
             updated.productId = selected.id;
             updated.unit = selected.unit;
-            updated.price = selected.basePrice || selected.price || 0;
+            updated.price = selected.currentRetailPrice || selected.basePrice || selected.price || 0;
 
             const stock = selected.currentStock ?? selected.quantity ?? null;
             updated.availableStock = stock;
@@ -316,30 +316,67 @@ export default function BillingWorkspace() {
       price: parseFloat(r.price) || 0,
       discount: parseFloat(r.discount) || 0,
     }));
-    const outOfStockItems = activeRows.filter((r) => r.outOfStock);
-    const overStockItems  = activeRows.filter((r) => r.overStock);
 
-    if (outOfStockItems.length > 0 || overStockItems.length > 0) {
+    // 1. Fetch fresh stock
+    let freshProducts = [];
+    try {
+      const res = await listProducts();
+      freshProducts = res?.products || [];
+    } catch (e) {
+      console.warn("Failed to fetch fresh stock for validation", e);
+      freshProducts = products; // Fallback
+    }
+
+    // 2. Aggregate requested quantities by productId
+    const requestedQtyByProduct = {};
+    activeRows.forEach(r => {
+      if (r.productId) {
+        requestedQtyByProduct[r.productId] = (requestedQtyByProduct[r.productId] || 0) + (parseFloat(r.qty) || 0);
+      }
+    });
+
+    // 3. Find any shortfalls
+    const shortfalls = [];
+    Object.keys(requestedQtyByProduct).forEach(pId => {
+      const id = Number(pId);
+      const requested = requestedQtyByProduct[id];
+      const freshData = freshProducts.find(p => p.id === id);
+      const available = freshData ? (freshData.currentStock ?? freshData.quantity ?? 0) : 0;
+      
+      if (requested > available) {
+        const row = activeRows.find(r => r.productId === id);
+        shortfalls.push({
+          productName: row ? row.product : (freshData ? freshData.name : `Product #${id}`),
+          requested,
+          available
+        });
+      }
+    });
+
+    if (shortfalls.length > 0) {
       setWarnData({
         title: t("billing.warn_stock_warning_title", "Stock Warning"),
         lines: [
-          ...outOfStockItems.map((r) => ({ label: r.product, value: t("billing.out_of_stock", "Out of Stock") })),
-          ...overStockItems.map((r) => ({
-            label: r.product,
-            value: t("billing.warn_qty_exceeds_stock", "Qty {qty} exceeds stock ({available} available)")
-              .replace("{qty}", r.qty)
-              .replace("{available}", r.availableStock),
+          ...shortfalls.map((s) => ({
+            label: s.productName,
+            value: t("billing.warn_shortfall", "only {X} in stock, but {Y} requested")
+              .replace("{X}", s.available)
+              .replace("{Y}", s.requested)
           })),
-          { label: t("billing.warn_note_label", "Note"), value: t("billing.warn_stock_invoice_anyway", "Invoice will still be generated") },
+          { label: t("billing.warn_note_label", "Note"), value: t("billing.warn_continue_anyway", "Continue anyway?") },
         ],
-        confirmLabel: t("billing.btn_generate_anyway", "Generate Anyway"),
-        cancelLabel: t("billing.btn_review_items", "Review Items"),
-        onConfirm: () => proceedGenerateInvoice(activeRows, saleItems),
+        confirmLabel: t("billing.btn_continue", "Continue"),
+        cancelLabel: t("billing.btn_cancel", "Cancel"),
+        onConfirm: () => {
+          setWarnData(null);
+          proceedGenerateInvoice(activeRows, saleItems);
+        },
       });
       return;
     }
+
     await proceedGenerateInvoice(activeRows, saleItems);
-  }, [rows, proceedGenerateInvoice]);
+  }, [rows, products, t, proceedGenerateInvoice]);
 
   // Keyboard shortcuts: Ctrl/Cmd+S -> generate invoice, Ctrl/Cmd+P -> print
   useEffect(() => {

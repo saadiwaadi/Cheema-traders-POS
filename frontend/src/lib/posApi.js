@@ -112,6 +112,35 @@ export async function saveProduct(payload) {
   });
 }
 
+export async function updateProductRetailPrice(productId, retailPrice) {
+  if (usingIpc()) {
+    return window.ipc.invoke("pos:products:update-retail-price", productId, retailPrice);
+  }
+  return httpJson(`/products/${productId}/retail-price`, {
+    method: "PATCH",
+    body: JSON.stringify({ retailPrice }),
+  });
+}
+
+export async function adjustStock(payload) {
+  if (usingIpc()) {
+    return window.ipc.invoke("pos:products:adjust-stock", payload);
+  }
+  return httpJson("/products/adjust-stock", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listStockAdjustments(args = {}) {
+  if (usingIpc()) {
+    return window.ipc.invoke("pos:stock-adjustments:list", args);
+  }
+  const query = new URLSearchParams();
+  if (args.limit) query.set("limit", String(args.limit));
+  return httpJson(`/stock-adjustments?${query.toString()}`);
+}
+
 export async function listBatches(args = {}) {
   if (usingIpc()) return window.pos.listBatches(args);
   const query = new URLSearchParams();

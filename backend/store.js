@@ -206,6 +206,14 @@ class PosStore {
     }
   }
 
+  async getDiagnostics() {
+    const db = await this._db();
+    const dupes = await all(db, `SELECT name, COUNT(*) as count FROM products WHERE COALESCE(deleted_at,'') = '' GROUP BY name HAVING count > 1`);
+    const noBatches = await all(db, `SELECT p.id, p.name FROM products p LEFT JOIN batches b ON p.id = b.product_id AND b.quantity_remaining > 0 WHERE p.deleted_at IS NULL GROUP BY p.id HAVING COUNT(b.id) = 0`);
+    const orphans = await all(db, `SELECT b.id, b.product_id FROM batches b LEFT JOIN products p ON b.product_id = p.id WHERE p.id IS NULL`);
+    return { dupes, noBatches: { count: noBatches.length, examples: noBatches.slice(0, 5) }, orphans: orphans.length };
+  }
+
   async listUsers() {
     const db = await this._db();
     try {
@@ -1672,7 +1680,16 @@ class PosStore {
           COALESCE(p.base_price, p.price, 0) AS basePrice,
           COALESCE(p.wholesale_price, 0) AS wholesalePrice,
           COALESCE(p.cost_price, 0) AS costPrice,
-          COALESCE(p.current_stock, p.quantity, 0) AS currentStock,
+          COALESCE(p.current_retail_price, 0) AS currentRetailPrice,
+          COALESCE((
+            SELECT SUM(quantity_remaining * cost_price) / SUM(quantity_remaining)
+            FROM batches
+            WHERE product_id = p.id
+              AND COALESCE(deleted_at, '') = ''
+              AND quantity_remaining > 0
+              AND batch_no NOT LIKE 'ADJ-%'
+          ), p.cost_price) AS weightedAverageCost,
+          COALESCE((SELECT SUM(quantity_remaining) FROM batches WHERE product_id = p.id AND COALESCE(deleted_at, '') = ''), 0) AS currentStock,
           COALESCE(p.low_stock_level, 0) AS lowStockLevel,
           COALESCE(p.active, 1) AS active,
           p.category_id AS categoryId,
@@ -1710,6 +1727,7 @@ class PosStore {
       lowStockLevel: Number(input.lowStockLevel || 0),
       notes: String(input.notes || "").trim() || null,
       active: input.active === false ? 0 : 1,
+      currentRetailPrice: Number(input.currentRetailPrice || 0),
     };
 
     if (!payload.name) throw new Error("Product name is required");
@@ -1720,7 +1738,7 @@ class PosStore {
         `
           UPDATE products
           SET sku = ?, name = ?, category_id = ?, unit = ?, base_price = ?, wholesale_price = ?, cost_price = ?,
-              current_stock = ?, low_stock_level = ?, notes = ?, active = ?, updated_at = CURRENT_TIMESTAMP
+              current_stock = ?, low_stock_level = ?, notes = ?, active = ?, current_retail_price = ?, updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
         `,
         [
@@ -1735,6 +1753,7 @@ class PosStore {
           payload.lowStockLevel,
           payload.notes,
           payload.active,
+          payload.currentRetailPrice,
           input.id,
         ]
       );
@@ -1745,8 +1764,8 @@ class PosStore {
     const result = await run(
       db,
       `
-        INSERT INTO products (sku, name, category_id, unit, base_price, wholesale_price, cost_price, current_stock, low_stock_level, notes, active)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO products (sku, name, category_id, unit, base_price, wholesale_price, cost_price, current_stock, low_stock_level, notes, active, current_retail_price)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         payload.sku,
@@ -1760,6 +1779,7 @@ class PosStore {
         payload.lowStockLevel,
         payload.notes,
         payload.active,
+        payload.currentRetailPrice,
       ]
     );
     await this.audit("product", result.lastID, "create", null, payload);
@@ -1795,6 +1815,7 @@ class PosStore {
       currentStock: fallback.currentStock || 0,
       lowStockLevel: fallback.lowStockLevel || 0,
       active: true,
+      currentRetailPrice: fallback.currentRetailPrice || fallback.basePrice || fallback.salePrice || 0,
     });
     return created.id;
   }
@@ -1806,7 +1827,7 @@ class PosStore {
       `
         SELECT
           b.id,
-          b.product_id AS productId,
+          p.id AS productId,
           b.supplier_id AS supplierId,
           b.batch_no AS batchNo,
           b.purchase_date AS purchaseDate,
@@ -1822,15 +1843,17 @@ class PosStore {
           p.name AS productName,
           p.unit,
           p.low_stock_level AS lowStockLevel,
+          COALESCE(p.current_retail_price, 0) AS currentRetailPrice,
           s.name AS supplierName,
           c.name AS category
-        FROM batches b
-        JOIN products p ON p.id = b.product_id
+        FROM products p
+        LEFT JOIN batches b ON p.id = b.product_id AND COALESCE(b.deleted_at, '') = ''
         LEFT JOIN suppliers s ON s.id = b.supplier_id
         LEFT JOIN categories c ON c.id = p.category_id
-        WHERE COALESCE(b.deleted_at, '') = ''
-          AND (p.name LIKE ? OR b.batch_no LIKE ? OR s.name LIKE ?)
+        WHERE COALESCE(p.deleted_at, '') = ''
+          AND (p.name LIKE ? OR COALESCE(b.batch_no, '') LIKE ? OR COALESCE(s.name, '') LIKE ?)
         ORDER BY
+          p.name COLLATE NOCASE ASC,
           CASE WHEN b.expiry_date IS NULL OR b.expiry_date = '' THEN 1 ELSE 0 END,
           b.expiry_date ASC,
           b.id DESC
@@ -1898,8 +1921,8 @@ class PosStore {
 
       await run(
         db,
-        `UPDATE products SET current_stock = COALESCE(current_stock, 0) + ?, cost_price = COALESCE(?, cost_price), base_price = CASE WHEN ? > 0 THEN ? ELSE base_price END, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-        [quantity, costPrice || null, salePrice, salePrice, payload.productId]
+        `UPDATE products SET cost_price = COALESCE(?, cost_price), base_price = CASE WHEN ? > 0 THEN ? ELSE base_price END, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [costPrice || null, salePrice, salePrice, payload.productId]
       );
 
       await run(
@@ -1956,15 +1979,10 @@ class PosStore {
         [productId, supplierId, batchNo, purchaseDate, expiryDate, qtyReceived, qtyRemaining, costPrice, salePrice, notes, id]
       );
 
-      // Handle stock movement and product current_stock updates
+      // Handle stock movement updates
       if (productId !== old.product_id) {
         // Subtract old remaining quantity from old product
         if (old.quantity_remaining > 0) {
-          await run(
-            db,
-            `UPDATE products SET current_stock = MAX(COALESCE(current_stock, 0) - ?, 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-            [old.quantity_remaining, old.product_id]
-          );
           await run(
             db,
             `INSERT INTO inventory_movements (product_id, batch_id, movement_type, quantity, unit_cost, reference_type, reference_id, note)
@@ -1976,11 +1994,6 @@ class PosStore {
         if (qtyRemaining > 0) {
           await run(
             db,
-            `UPDATE products SET current_stock = COALESCE(current_stock, 0) + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-            [qtyRemaining, productId]
-          );
-          await run(
-            db,
             `INSERT INTO inventory_movements (product_id, batch_id, movement_type, quantity, unit_cost, reference_type, reference_id, note)
              VALUES (?, ?, 'adjustment', ?, ?, 'batch', ?, ?)`,
             [productId, id, qtyRemaining, costPrice, id, `Stock product re-link: added to new product`]
@@ -1990,11 +2003,6 @@ class PosStore {
         // Product is the same, just adjust stock if remaining quantity changed
         const diff = qtyRemaining - old.quantity_remaining;
         if (diff !== 0) {
-          await run(
-            db,
-            `UPDATE products SET current_stock = MAX(COALESCE(current_stock, 0) + ?, 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-            [diff, productId]
-          );
           await run(
             db,
             `INSERT INTO inventory_movements (product_id, batch_id, movement_type, quantity, unit_cost, reference_type, reference_id, note)
@@ -2047,13 +2055,7 @@ class PosStore {
         [id]
       );
 
-      if (old.quantity_remaining > 0) {
-        await run(
-          db,
-          `UPDATE products SET current_stock = MAX(COALESCE(current_stock, 0) - ?, 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-          [old.quantity_remaining, old.product_id]
-        );
-      }
+
 
       await this.audit("batch", id, "delete", old, null);
       return { id };
@@ -2108,7 +2110,7 @@ class PosStore {
         const salePrice = Number(item.salePrice || 0);
         const unit = String(item.unit || "Piece").trim();
         
-        const productId = await this.ensureProductByName(item.productName, {
+        const productId = item.productId || await this.ensureProductByName(item.productName, {
           unit: unit,
           costPrice: costPrice,
           basePrice: salePrice,
@@ -2144,12 +2146,11 @@ class PosStore {
         await run(
           db,
           `UPDATE products 
-           SET current_stock = COALESCE(current_stock, 0) + ?, 
-               cost_price = COALESCE(?, cost_price), 
+           SET cost_price = COALESCE(?, cost_price), 
                base_price = CASE WHEN ? > 0 THEN ? ELSE base_price END, 
                updated_at = CURRENT_TIMESTAMP 
            WHERE id = ?`,
-          [qty, costPrice || null, salePrice, salePrice, productId]
+          [costPrice || null, salePrice, salePrice, productId]
         );
         
         await run(
@@ -2301,17 +2302,6 @@ class PosStore {
       const items = await all(db, `SELECT product_id, batch_id, quantity FROM purchase_items WHERE purchase_id = ?`, [id]);
 
       for (const item of items) {
-        if (item.quantity > 0) {
-          await run(
-            db,
-            `UPDATE products 
-             SET current_stock = MAX(COALESCE(current_stock, 0) - ?, 0), 
-                 updated_at = CURRENT_TIMESTAMP 
-             WHERE id = ?`,
-            [item.quantity, item.product_id]
-          );
-        }
-        
         if (item.batch_id) {
           await run(
             db,
@@ -2381,7 +2371,7 @@ class PosStore {
         const productId = rawItem.productId || await this.ensureProductByName(rawItem.productName, { unit: rawItem.unit });
         const product = await get(
           db,
-          `SELECT id, name, unit, COALESCE(base_price, price, 0) AS basePrice, COALESCE(current_stock, quantity, 0) AS currentStock
+          `SELECT id, name, unit, COALESCE(base_price, price, 0) AS basePrice, COALESCE((SELECT SUM(quantity_remaining) FROM batches WHERE product_id = products.id AND COALESCE(deleted_at, '') = ''), 0) AS currentStock
            FROM products WHERE id = ? LIMIT 1`,
           [productId]
         );
@@ -2420,8 +2410,8 @@ class PosStore {
 
         await run(
           db,
-          `UPDATE products SET current_stock = MAX(COALESCE(current_stock, 0) - ?, 0), base_price = CASE WHEN ? > 0 THEN ? ELSE base_price END, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-          [quantity, unitPrice, unitPrice, productId]
+          `UPDATE products SET base_price = CASE WHEN ? > 0 THEN ? ELSE base_price END, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+          [unitPrice, unitPrice, productId]
         );
 
         auditItems.push({
@@ -2707,37 +2697,34 @@ class PosStore {
       if (!sale) throw new Error("Sale not found");
       if (sale.voided_at) throw new Error("Sale is already voided");
 
-      const items = await all(db, `SELECT * FROM sale_items WHERE sale_id = ?`, [id]);
-      for (const item of items) {
-        // Reverse stock deduction
-        await run(
-          db,
-          `UPDATE products SET current_stock = COALESCE(current_stock, 0) + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-          [item.quantity, item.product_id]
-        );
+      // Retrieve exact stock consumption details from inventory_movements for this sale
+      const movements = await all(
+        db,
+        `SELECT batch_id, quantity, product_id, unit_cost 
+         FROM inventory_movements 
+         WHERE reference_type = 'sale' AND reference_id = ? AND movement_type = 'sale'`,
+        [id]
+      );
 
-        // Restock batches
-        await run(
-          db,
-          `UPDATE batches 
-           SET quantity_remaining = quantity_remaining + ?,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE id = (
-             SELECT id FROM batches
-             WHERE product_id = ?
-               AND quantity_remaining < quantity_received
-             ORDER BY created_at DESC
-             LIMIT 1
-           )`,
-          [item.quantity, item.product_id]
-        );
+      for (const mv of movements) {
+        if (mv.batch_id) {
+          // mv.quantity is negative, so we subtract it to add it back
+          await run(
+            db,
+            `UPDATE batches 
+             SET quantity_remaining = quantity_remaining - ?, 
+                 updated_at = CURRENT_TIMESTAMP 
+             WHERE id = ?`,
+            [mv.quantity, mv.batch_id]
+          );
+        }
 
-        // Write reversal movement
+        // Record specific void reversal movement matching the original consumed batch/shortage
         await run(
           db,
-          `INSERT INTO inventory_movements (product_id, movement_type, quantity, unit_cost, reference_type, reference_id, note)
-           VALUES (?, 'void_reversal', ?, ?, 'sale', ?, ?)`,
-          [item.product_id, item.quantity, item.unit_price, id, `void:${sale.invoice_no}`]
+          `INSERT INTO inventory_movements (product_id, batch_id, movement_type, quantity, unit_cost, reference_type, reference_id, note)
+           VALUES (?, ?, 'void_reversal', ?, ?, 'sale', ?, ?)`,
+          [mv.product_id, mv.batch_id, -mv.quantity, mv.unit_cost, id, `void:${sale.invoice_no}`]
         );
       }
 
@@ -2801,12 +2788,7 @@ class PosStore {
           [saleId, item.productId, item.productName, item.quantity, item.price, refundAmount, item.notes || null]
         );
 
-        // Reverse stock deduction
-        await run(
-          db,
-          `UPDATE products SET current_stock = COALESCE(current_stock, 0) + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-          [item.quantity, item.productId]
-        );
+
 
         // Restock batches
         await run(
@@ -3902,11 +3884,11 @@ class PosStore {
       SELECT 
         p.name AS product,
         'Low Stock' AS issue,
-        'Only ' || CAST(ROUND(p.current_stock) AS INTEGER) || ' ' || p.unit || 's left' AS detail,
+        'Only ' || CAST(ROUND(COALESCE((SELECT SUM(quantity_remaining) FROM batches WHERE product_id = p.id AND COALESCE(deleted_at, '') = ''), 0)) AS INTEGER) || ' ' || p.unit || 's left' AS detail,
         'danger' AS status
       FROM products p
-      WHERE p.deleted_at IS NULL AND p.active = 1 AND p.current_stock <= p.low_stock_level
-      ORDER BY p.current_stock ASC
+      WHERE p.deleted_at IS NULL AND p.active = 1 AND COALESCE((SELECT SUM(quantity_remaining) FROM batches WHERE product_id = p.id AND COALESCE(deleted_at, '') = ''), 0) <= p.low_stock_level
+      ORDER BY COALESCE((SELECT SUM(quantity_remaining) FROM batches WHERE product_id = p.id AND COALESCE(deleted_at, '') = ''), 0) ASC
       LIMIT 10
     `);
 
@@ -3929,8 +3911,8 @@ class PosStore {
       SELECT 
         p.name AS product,
         COALESCE(c.name, 'Uncategorized') AS category,
-        ROUND(p.current_stock) AS stock,
-        ROUND(p.current_stock * p.cost_price) AS value,
+        ROUND(COALESCE((SELECT SUM(quantity_remaining) FROM batches WHERE product_id = p.id AND COALESCE(deleted_at, '') = ''), 0)) AS stock,
+        ROUND(COALESCE((SELECT SUM(quantity_remaining) FROM batches WHERE product_id = p.id AND COALESCE(deleted_at, '') = ''), 0) * p.cost_price) AS value,
         COALESCE((SELECT MIN(expiry_date) FROM batches WHERE product_id = p.id AND quantity_remaining > 0 AND deleted_at IS NULL AND expiry_date IS NOT NULL AND expiry_date <> ''), '-') AS expiry
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
@@ -4072,11 +4054,22 @@ class PosStore {
 
     const supplierDues = await get(db, `SELECT COALESCE(SUM(balance_due), 0) AS val FROM purchases`);
     const creditOutstanding = await get(db, `SELECT COALESCE(SUM(balance_due), 0) AS val FROM sales WHERE voided_at IS NULL`);
-    const inventoryValue = await get(db, `SELECT COALESCE(SUM(current_stock * cost_price), 0) AS val FROM products WHERE deleted_at IS NULL AND active = 1`);
+    const inventoryValue = await get(db, `
+      SELECT COALESCE(SUM(
+        COALESCE((SELECT SUM(quantity_remaining) FROM batches WHERE product_id = p.id AND COALESCE(deleted_at, '') = ''), 0) * p.cost_price
+      ), 0) AS val 
+      FROM products p 
+      WHERE p.deleted_at IS NULL AND p.active = 1
+    `);
     const todayExpenses = await get(db, `SELECT COALESCE(SUM(amount), 0) AS val FROM expenses WHERE expense_date = ?`, [today]);
     const todayProfit = Number(todaySales?.val || 0) - Number(todayExpenses?.val || 0);
 
-    const lowStockRow = await get(db, `SELECT COUNT(*) AS val FROM products WHERE deleted_at IS NULL AND active = 1 AND current_stock <= low_stock_level`);
+    const lowStockRow = await get(db, `
+      SELECT COUNT(*) AS val 
+      FROM products p 
+      WHERE p.deleted_at IS NULL AND p.active = 1 
+        AND COALESCE((SELECT SUM(quantity_remaining) FROM batches WHERE product_id = p.id AND COALESCE(deleted_at, '') = ''), 0) <= p.low_stock_level
+    `);
     const lowStockCount = Number(lowStockRow?.val || 0);
     
     const expiringCutoff = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
@@ -4863,7 +4856,13 @@ class PosStore {
     ] = await Promise.all([
       get(db, `SELECT COALESCE(SUM(total), 0) AS value FROM sales WHERE sale_date = ? AND COALESCE(voided_at, '') = ''`, [today]),
       get(db, `SELECT COALESCE(SUM(balance_due), 0) AS value FROM sales WHERE balance_due > 0 AND COALESCE(voided_at, '') = ''`),
-      get(db, `SELECT COUNT(*) AS value FROM products WHERE COALESCE(deleted_at, '') = '' AND COALESCE(current_stock, quantity, 0) <= COALESCE(low_stock_level, 0) AND COALESCE(active, 1) = 1`),
+      get(db, `
+        SELECT COUNT(*) AS value 
+        FROM products p 
+        WHERE COALESCE(p.deleted_at, '') = '' 
+          AND COALESCE((SELECT SUM(quantity_remaining) FROM batches WHERE product_id = p.id AND COALESCE(deleted_at, '') = ''), 0) <= COALESCE(p.low_stock_level, 0) 
+          AND COALESCE(p.active, 1) = 1
+      `),
       get(db, `SELECT COUNT(*) AS value FROM batches WHERE COALESCE(deleted_at, '') = '' AND expiry_date IS NOT NULL AND expiry_date <> '' AND expiry_date <= ? AND quantity_remaining > 0`, [expiringCutoff]),
       all(
         db,
@@ -4974,6 +4973,211 @@ class PosStore {
     }
 
     return Object.values(map);
+  }
+
+  async updateProductRetailPrice(productId, retailPrice) {
+    const db = await this._db();
+    const price = Number(retailPrice || 0);
+    await run(
+      db,
+      `UPDATE products SET current_retail_price = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [price, productId]
+    );
+    this._notifyUpdate("product:price", productId);
+    return { productId, currentRetailPrice: price };
+  }
+
+  async adjustStock(productId, batchId, quantityChange, reason, notes, adjustedBy) {
+    const change = Number(quantityChange || 0);
+    if (change === 0) throw new Error("Adjustment quantity cannot be zero");
+    if (!reason) throw new Error("Reason is required for stock adjustments");
+
+    const result = await this.transaction(async (db) => {
+      const product = await get(
+        db,
+        `SELECT name, unit, cost_price AS costPrice FROM products WHERE id = ? LIMIT 1`,
+        [productId]
+      );
+      if (!product) throw new Error(`Product not found: ${productId}`);
+
+      let adjustmentsLogged = [];
+
+      if (change > 0) {
+        // Positive Adjustment: Create a new adjustment batch
+        const timestamp = Date.now();
+        const batchNo = `ADJ-${timestamp}`;
+        const currentDate = new Date().toISOString().slice(0, 10);
+        const batchNotes = `[Adjustment] Reason: ${reason}${notes ? '. ' + notes : ''}`;
+
+        const insertBatchRes = await run(
+          db,
+          `
+            INSERT INTO batches (product_id, supplier_id, batch_no, purchase_date, quantity_received, quantity_remaining, cost_price, sale_price, notes)
+            VALUES (?, NULL, ?, ?, ?, ?, 0, 0, ?)
+          `,
+          [productId, batchNo, currentDate, change, change, batchNotes]
+        );
+        const newBatchId = insertBatchRes.lastID;
+
+        const adjRes = await run(
+          db,
+          `
+            INSERT INTO stock_adjustments (product_id, batch_id, quantity_change, reason, notes, adjusted_by)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `,
+          [productId, newBatchId, change, reason, notes || null, adjustedBy || null]
+        );
+        const adjustmentId = adjRes.lastID;
+
+        await run(
+          db,
+          `
+            INSERT INTO inventory_movements (product_id, batch_id, movement_type, quantity, unit_cost, reference_type, reference_id, note)
+            VALUES (?, ?, 'adjustment', ?, 0, 'stock_adjustment', ?, ?)
+          `,
+          [productId, newBatchId, change, adjustmentId, batchNotes]
+        );
+
+        adjustmentsLogged.push({
+          adjustmentId,
+          batchId: newBatchId,
+          batchNo,
+          quantityChange: change,
+          unitCost: 0
+        });
+      } else {
+        // Negative Adjustment: Draw down from batches using FEFO order
+        let remaining = Math.abs(change);
+
+        const batches = await all(
+          db,
+          `
+            SELECT id, batch_no, quantity_remaining, cost_price
+            FROM batches
+            WHERE product_id = ? AND COALESCE(deleted_at, '') = ''
+              AND quantity_remaining > 0
+            ORDER BY
+              CASE WHEN batch_no LIKE 'ADJ-%' THEN 1 ELSE 0 END ASC,
+              CASE WHEN expiry_date IS NULL OR expiry_date = '' THEN 1 ELSE 0 END,
+              expiry_date ASC,
+              id ASC
+          `,
+          [productId]
+        );
+
+        for (const batch of batches) {
+          if (remaining <= 0) break;
+          const take = Math.min(batch.quantity_remaining, remaining);
+          if (take <= 0) continue;
+
+          await run(
+            db,
+            `UPDATE batches SET quantity_remaining = MAX(quantity_remaining - ?, 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [take, batch.id]
+          );
+
+          const adjRes = await run(
+            db,
+            `
+              INSERT INTO stock_adjustments (product_id, batch_id, quantity_change, reason, notes, adjusted_by)
+              VALUES (?, ?, ?, ?, ?, ?)
+            `,
+            [productId, batch.id, -take, reason, notes || null, adjustedBy || null]
+          );
+          const adjustmentId = adjRes.lastID;
+
+          const movementNotes = `[Adjustment] Reason: ${reason}${notes ? '. ' + notes : ''}`;
+          await run(
+            db,
+            `
+              INSERT INTO inventory_movements (product_id, batch_id, movement_type, quantity, unit_cost, reference_type, reference_id, note)
+              VALUES (?, ?, 'adjustment', ?, ?, 'stock_adjustment', ?, ?)
+            `,
+            [productId, batch.id, -take, batch.cost_price, adjustmentId, movementNotes]
+          );
+
+          adjustmentsLogged.push({
+            adjustmentId,
+            batchId: batch.id,
+            batchNo: batch.batch_no,
+            quantityChange: -take,
+            unitCost: batch.cost_price
+          });
+
+          remaining -= take;
+        }
+
+        if (remaining > 0) {
+          const adjRes = await run(
+            db,
+            `
+              INSERT INTO stock_adjustments (product_id, batch_id, quantity_change, reason, notes, adjusted_by)
+              VALUES (?, NULL, ?, ?, ?, ?)
+            `,
+            [productId, -remaining, reason, notes || null, adjustedBy || null]
+          );
+          const adjustmentId = adjRes.lastID;
+
+          const movementNotes = `[Adjustment Shortage] Reason: ${reason}${notes ? '. ' + notes : ''}`;
+          await run(
+            db,
+            `
+              INSERT INTO inventory_movements (product_id, batch_id, movement_type, quantity, unit_cost, reference_type, reference_id, note)
+              VALUES (?, NULL, 'adjustment-shortage', ?, 0, 'stock_adjustment', ?, ?)
+            `,
+            [productId, -remaining, adjustmentId, movementNotes]
+          );
+
+          adjustmentsLogged.push({
+            adjustmentId,
+            batchId: null,
+            batchNo: null,
+            quantityChange: -remaining,
+            unitCost: 0,
+            shortage: true
+          });
+        }
+      }
+
+      return {
+        productId,
+        productName: product.name,
+        quantityChange: change,
+        adjustments: adjustmentsLogged
+      };
+    });
+
+    this._notifyUpdate("stock:adjusted", productId);
+    return result;
+  }
+
+  async listStockAdjustments(options = {}) {
+    const db = await this._db();
+    const limit = options.limit || 50;
+
+    return all(
+      db,
+      `
+        SELECT 
+          sa.id,
+          sa.product_id AS productId,
+          p.name AS productName,
+          p.unit,
+          sa.batch_id AS batchId,
+          b.batch_no AS batchNo,
+          sa.quantity_change AS quantityChange,
+          sa.reason,
+          sa.notes,
+          sa.adjusted_by AS adjustedBy,
+          sa.created_at AS createdAt
+        FROM stock_adjustments sa
+        JOIN products p ON p.id = sa.product_id
+        LEFT JOIN batches b ON b.id = sa.batch_id
+        ORDER BY sa.id DESC
+        LIMIT ?
+      `,
+      [limit]
+    );
   }
 }
 

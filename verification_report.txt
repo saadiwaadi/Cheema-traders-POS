@@ -1,0 +1,48 @@
+=== DATABASE SCHEMA INTEGRITY & BACKUP VERIFICATION REPORT ===
+
+1. LIVE DATABASE PRODUCTS SCHEMA (PRAGMA table_info):
+  Column: id | Type: INTEGER | NotNull: 0 | Default: null | PK: 1
+  Column: sku | Type: TEXT | NotNull: 0 | Default: null | PK: 0
+  Column: name | Type: TEXT | NotNull: 1 | Default: null | PK: 0
+  Column: category_id | Type: INTEGER | NotNull: 0 | Default: null | PK: 0
+  Column: unit | Type: TEXT | NotNull: 1 | Default: 'Piece' | PK: 0
+  Column: price | Type: REAL | NotNull: 0 | Default: 0 | PK: 0
+  Column: quantity | Type: INTEGER | NotNull: 0 | Default: 0 | PK: 0
+  Column: base_price | Type: REAL | NotNull: 1 | Default: 0 | PK: 0
+  Column: wholesale_price | Type: REAL | NotNull: 1 | Default: 0 | PK: 0
+  Column: cost_price | Type: REAL | NotNull: 1 | Default: 0 | PK: 0
+  Column: current_stock | Type: REAL | NotNull: 1 | Default: 0 | PK: 0
+  Column: low_stock_level | Type: REAL | NotNull: 1 | Default: 0 | PK: 0
+  Column: active | Type: INTEGER | NotNull: 1 | Default: 1 | PK: 0
+  Column: notes | Type: TEXT | NotNull: 0 | Default: null | PK: 0
+  Column: created_at | Type: TEXT | NotNull: 1 | Default: CURRENT_TIMESTAMP | PK: 0
+  Column: updated_at | Type: TEXT | NotNull: 1 | Default: CURRENT_TIMESTAMP | PK: 0
+  Column: deleted_at | Type: TEXT | NotNull: 0 | Default: null | PK: 0
+  Column: current_retail_price | Type: REAL | NotNull: 0 | Default: 0 | PK: 0
+Total Columns count: 18
+
+2. VIEW DATA (SELECT * FROM sale_returns_summary LIMIT 5):
+  Found 0 rows in sale_returns_summary:
+
+3. PRE-MIGRATION BACKUP FILE VERIFICATION:
+  Latest Backup File: cheema_traders_pos_auto_backup_before_migration_20260620_224538.db
+  Size: 172.00 KB
+  Modified Time: 2026-06-21T05:18:48.584Z
+  [SUCCESS] Backup file opened successfully. Products table found with 17 columns:
+    Column: id | Type: INTEGER | NotNull: 0 | Default: null | PK: 1
+    Column: sku | Type: TEXT | NotNull: 0 | Default: null | PK: 0
+    Column: name | Type: TEXT | NotNull: 1 | Default: null | PK: 0
+    Column: category_id | Type: INTEGER | NotNull: 0 | Default: null | PK: 0
+    Column: unit | Type: TEXT | NotNull: 1 | Default: 'Piece' | PK: 0
+    Column: price | Type: REAL | NotNull: 0 | Default: 0 | PK: 0
+    Column: quantity | Type: INTEGER | NotNull: 0 | Default: 0 | PK: 0
+    Column: base_price | Type: REAL | NotNull: 1 | Default: 0 | PK: 0
+    Column: wholesale_price | Type: REAL | NotNull: 1 | Default: 0 | PK: 0
+    Column: cost_price | Type: REAL | NotNull: 1 | Default: 0 | PK: 0
+    Column: current_stock | Type: REAL | NotNull: 1 | Default: 0 | PK: 0
+    Column: low_stock_level | Type: REAL | NotNull: 1 | Default: 0 | PK: 0
+    Column: active | Type: INTEGER | NotNull: 1 | Default: 1 | PK: 0
+    Column: notes | Type: TEXT | NotNull: 0 | Default: null | PK: 0
+    Column: created_at | Type: TEXT | NotNull: 1 | Default: CURRENT_TIMESTAMP | PK: 0
+    Column: updated_at | Type: TEXT | NotNull: 1 | Default: CURRENT_TIMESTAMP | PK: 0
+    Column: deleted_at | Type: TEXT | NotNull: 0 | Default: null | PK: 0

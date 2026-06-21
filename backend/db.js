@@ -3,6 +3,8 @@ const path = require("path");
 const sqlite3 = require("sqlite3").verbose();
 require("dotenv").config();
 
+
+
 const defaultDbPath = path.resolve(__dirname, "..", "database", "pos.db");
 const dbPath = path.resolve(process.env.POS_DB_PATH || process.env.DB_PATH || defaultDbPath);
 const dbDir = path.dirname(dbPath);
@@ -86,6 +88,7 @@ db.serialize(() => {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       deleted_at TEXT,
+      current_retail_price REAL DEFAULT 0,
       FOREIGN KEY (category_id) REFERENCES categories(id)
     )
   `);
@@ -442,8 +445,20 @@ db.serialize(() => {
     )
   `);
 
-  db.run(`CREATE INDEX IF NOT EXISTS idx_lines_employee ON journal_lines(employee_id)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_employee_tx_emp ON employee_transactions(employee_id)`);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS stock_adjustments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL REFERENCES products(id),
+      batch_id INTEGER REFERENCES batches(id),
+      quantity_change REAL NOT NULL,
+      reason TEXT NOT NULL,
+      notes TEXT,
+      adjusted_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
 
   db.get("SELECT COUNT(*) AS count FROM accounts", (err, row) => {
     if (!err && row && row.count === 0) {
@@ -496,6 +511,7 @@ db.serialize(() => {
   db.run(`ALTER TABLE products ADD COLUMN created_at TEXT`, ignoreColumnExists);
   db.run(`ALTER TABLE products ADD COLUMN updated_at TEXT`, ignoreColumnExists);
   db.run(`ALTER TABLE products ADD COLUMN deleted_at TEXT`, ignoreColumnExists);
+  db.run(`ALTER TABLE products ADD COLUMN current_retail_price REAL DEFAULT 0`, ignoreColumnExists);
   db.run(`ALTER TABLE sales ADD COLUMN paid_at TEXT`, ignoreColumnExists);
   db.run(`ALTER TABLE customer_payments ADD COLUMN sale_id INTEGER`, ignoreColumnExists);
   db.run(`ALTER TABLE customer_payments ADD COLUMN applied_amount REAL NOT NULL DEFAULT 0`, ignoreColumnExists);
@@ -509,6 +525,7 @@ db.serialize(() => {
   db.run(`ALTER TABLE expenses ADD COLUMN money_to TEXT`, ignoreColumnExists);
   db.run(`ALTER TABLE journal_lines ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)`, ignoreColumnExists);
   db.run(`ALTER TABLE journal_lines ADD COLUMN employee_id INTEGER REFERENCES employees(id)`, ignoreColumnExists);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_lines_employee ON journal_lines(employee_id)`, ignoreColumnExists);
 
   // Self-heal/ensure required accounts for existing databases
   db.serialize(() => {
@@ -581,6 +598,30 @@ db.serialize(() => {
                            
     if (needsMigration) {
       console.log("Migrating products table to remove NOT NULL constraint from legacy price/quantity...");
+
+      // SAFETY: Perform synchronous automatic database backup before running migration
+      try {
+        const fs = require("fs");
+        const path = require("path");
+        const homeDir = process.env.USERPROFILE || process.env.HOME || "C:";
+        const backupDir = path.join(homeDir, "CheemaTradersPOS", "Backups");
+        if (!fs.existsSync(backupDir)) {
+          fs.mkdirSync(backupDir, { recursive: true });
+        }
+        const now = new Date();
+        const timestamp = now.getFullYear() +
+          String(now.getMonth() + 1).padStart(2, '0') +
+          String(now.getDate()).padStart(2, '0') + "_" +
+          String(now.getHours()).padStart(2, '0') +
+          String(now.getMinutes()).padStart(2, '0') +
+          String(now.getSeconds()).padStart(2, '0');
+        const backupPath = path.join(backupDir, `cheema_traders_pos_auto_backup_before_migration_${timestamp}.db`);
+        fs.copyFileSync(dbPath, backupPath);
+        console.log("Auto-backup successfully created before migration at:", backupPath);
+      } catch (backupErr) {
+        console.error("Failed to create auto-backup before migration:", backupErr);
+      }
+
       db.serialize(() => {
         db.run("PRAGMA foreign_keys = OFF", (err) => {
           if (err) {
@@ -593,47 +634,65 @@ db.serialize(() => {
               db.run("PRAGMA foreign_keys = ON");
               return;
             }
-            db.run(`
-              CREATE TABLE products (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sku TEXT UNIQUE,
-                name TEXT NOT NULL,
-                category_id INTEGER,
-                unit TEXT NOT NULL DEFAULT 'Piece',
-                price REAL DEFAULT 0,
-                quantity INTEGER DEFAULT 0,
-                base_price REAL NOT NULL DEFAULT 0,
-                wholesale_price REAL NOT NULL DEFAULT 0,
-                cost_price REAL NOT NULL DEFAULT 0,
-                current_stock REAL NOT NULL DEFAULT 0,
-                low_stock_level REAL NOT NULL DEFAULT 0,
-                active INTEGER NOT NULL DEFAULT 1,
-                notes TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                deleted_at TEXT,
-                FOREIGN KEY (category_id) REFERENCES categories(id)
-              )
-            `, (err) => {
+
+            // Build CREATE TABLE statement dynamically from live schema columns
+            const colDefs = columns.map(c => {
+              let def = `"${c.name}" ${c.type}`;
+              if (c.pk) {
+                def += " PRIMARY KEY AUTOINCREMENT";
+              } else {
+                // Stripping NOT NULL constraint from price/quantity
+                if (c.name === 'price' || c.name === 'quantity') {
+                  def += " DEFAULT 0";
+                } else {
+                  if (c.notnull) {
+                    def += " NOT NULL";
+                  }
+                  if (c.dflt_value !== null) {
+                    def += ` DEFAULT ${c.dflt_value}`;
+                  }
+                }
+              }
+              return def;
+            });
+
+            // Append Category Foreign Key constraint
+            colDefs.push("FOREIGN KEY (category_id) REFERENCES categories(id)");
+
+            const createSql = `CREATE TABLE products (\n  ${colDefs.join(",\n  ")}\n)`;
+
+            db.run(createSql, (err) => {
               if (err) {
                 console.error("Migration failed to create new products table:", err);
                 db.run("ALTER TABLE products_old RENAME TO products");
                 db.run("PRAGMA foreign_keys = ON");
                 return;
               }
-              db.run(`
-                INSERT INTO products (
-                  id, sku, name, category_id, unit, price, quantity,
-                  base_price, wholesale_price, cost_price, current_stock,
-                  low_stock_level, active, notes, created_at, updated_at, deleted_at
-                )
-                SELECT 
-                  id, sku, name, category_id, unit, price, quantity,
-                  COALESCE(base_price, price, 0), wholesale_price, COALESCE(cost_price, price, 0), 
-                  COALESCE(current_stock, quantity, 0), low_stock_level, active, notes, 
-                  created_at, updated_at, deleted_at
-                FROM products_old
-              `, (err) => {
+
+              // Build INSERT INTO query dynamically from live schema columns to prevent drift
+              const colNames = columns.map(c => `"${c.name}"`).join(", ");
+              const selectNames = columns.map(c => {
+                if (c.name === 'base_price') {
+                  return `COALESCE("${c.name}", price, 0)`;
+                }
+                if (c.name === 'cost_price') {
+                  return `COALESCE("${c.name}", price, 0)`;
+                }
+                if (c.name === 'current_stock') {
+                  return `COALESCE("${c.name}", quantity, 0)`;
+                }
+                if (c.name === 'price' || c.name === 'quantity' || c.name === 'current_retail_price') {
+                  return `COALESCE("${c.name}", 0)`;
+                }
+                return `"${c.name}"`;
+              }).join(", ");
+
+              const insertSql = `
+                INSERT INTO products (${colNames})
+                SELECT ${selectNames} FROM products_old
+              `;
+
+              db.run(insertSql, (err) => {
                 if (err) {
                   console.error("Migration failed to copy product data:", err);
                   db.run("DROP TABLE IF EXISTS products");
@@ -667,6 +726,7 @@ db.serialize(() => {
     
     db.serialize(() => {
       db.run("PRAGMA foreign_keys = OFF");
+      db.run("DROP VIEW IF EXISTS sale_returns_summary");
       
       rows.forEach(row => {
         const tableName = row.name;
@@ -679,6 +739,18 @@ db.serialize(() => {
         db.run(`INSERT INTO "${tableName}" SELECT * FROM "${oldTableName}"`);
         db.run(`DROP TABLE "${oldTableName}"`);
       });
+
+      db.run(`
+        CREATE VIEW IF NOT EXISTS sale_returns_summary AS
+        SELECT
+          sale_id,
+          MIN(returned_at) AS returned_at,
+          SUM(refund_amount) AS total_refund,
+          SUM(quantity) AS total_qty,
+          GROUP_CONCAT(product_name || ' x' || quantity, ', ') AS items_summary
+        FROM sales_returns
+        GROUP BY sale_id
+      `);
 
       db.run("PRAGMA foreign_keys = ON", (err) => {
         if (!err) {

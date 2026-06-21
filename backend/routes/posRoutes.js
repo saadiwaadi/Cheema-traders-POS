@@ -2,6 +2,17 @@ const express = require("express");
 const router = express.Router();
 const store = require("../store");
 
+router.get("/diagnostics", async (req, res) => {
+  try {
+    const result = await store.getDiagnostics();
+    return res.json(result);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+
+
 router.post("/login", async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -121,6 +132,36 @@ router.post("/products", async (req, res) => {
     return res.status(201).json({ product });
   } catch (error) {
     return res.status(400).json({ message: error.message });
+  }
+});
+
+router.patch("/products/:id/retail-price", async (req, res) => {
+  try {
+    const { retailPrice } = req.body;
+    const result = await store.updateProductRetailPrice(Number(req.params.id), retailPrice);
+    return res.json(result);
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+router.post("/products/adjust-stock", async (req, res) => {
+  try {
+    const { productId, batchId, quantityChange, reason, notes, adjustedBy } = req.body;
+    const result = await store.adjustStock(productId, batchId, quantityChange, reason, notes, adjustedBy);
+    return res.json({ result });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+router.get("/stock-adjustments", async (req, res) => {
+  try {
+    const limit = req.query.limit ? Number(req.query.limit) : 50;
+    const adjustments = await store.listStockAdjustments({ limit });
+    return res.json({ adjustments });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
   }
 });
 
