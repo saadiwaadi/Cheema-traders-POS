@@ -1034,7 +1034,6 @@ class PosStore {
               SELECT SUM(amount)
               FROM customer_withdrawals
               WHERE customer_id = customers.id
-                AND type = 'loan'
             ), 0)
           - COALESCE((
               SELECT SUM(COALESCE(unapplied_amount, amount))
@@ -1438,42 +1437,6 @@ class PosStore {
       ).get(customerId);
       if (!customer) throw new Error('Customer not found');
 
-      if (type === 'advance_draw') {
-        const availableCredit = customer.cached_balance < 0
-          ? Math.abs(customer.cached_balance)
-          : 0;
-
-        if (amount > availableCredit) {
-          throw new Error(
-            `Insufficient advance balance. Available: Rs ${availableCredit.toLocaleString()}`
-          );
-        }
-
-        let remaining = amount;
-        const advances = dbBetter.prepare(
-          `SELECT id, unapplied_amount FROM customer_payments
-           WHERE customer_id = ? AND unapplied_amount > 0 AND type = 'advance'
-           ORDER BY payment_date ASC, created_at ASC`
-        ).all(customerId);
-
-        for (const adv of advances) {
-          if (remaining <= 0) break;
-          const deduct = Math.min(remaining, adv.unapplied_amount);
-          dbBetter.prepare(
-            `UPDATE customer_payments
-             SET unapplied_amount = MAX(unapplied_amount - ?, 0)
-             WHERE id = ?`
-          ).run(deduct, adv.id);
-          remaining -= deduct;
-        }
-
-        if (remaining > 0 && customer.opening_balance < 0) {
-          const fromOpening = Math.min(remaining, Math.abs(customer.opening_balance));
-          dbBetter.prepare(
-            `UPDATE customers SET opening_balance = opening_balance + ? WHERE id = ?`
-          ).run(fromOpening, customerId);
-        }
-      }
 
       const result = dbBetter.prepare(
         `INSERT INTO customer_withdrawals
@@ -3198,7 +3161,6 @@ class PosStore {
               SELECT SUM(amount)
               FROM customer_withdrawals
               WHERE customer_id = customers.id
-                AND type = 'loan'
             ), 0)
           - COALESCE((
               SELECT SUM(COALESCE(unapplied_amount, amount))

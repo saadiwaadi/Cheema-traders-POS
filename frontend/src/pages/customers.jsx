@@ -1341,12 +1341,6 @@ function CustomerHistoryView({ customer, onRefresh }) {
     const amount = parseFloat(payAmount);
     if (!amount || amount <= 0) return;
 
-    const available = currentBalance < 0 ? Math.abs(currentBalance) : 0;
-    if (amount > available) {
-      alert("Amount exceeds available advance balance of Rs " + available.toLocaleString());
-      return;
-    }
-
     setPaying(true);
 
     try {

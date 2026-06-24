@@ -340,14 +340,22 @@ export default function PaymentsPage() {
       const refreshed = await listCustomers();
       if (refreshed?.customers) {
         const updated = refreshed.customers.find(c => c.id === partyId);
-        if (updated) setSelectedParty({ ...updated, partyType: "customer", uniqueId: `customer-${updated.id}` });
+        if (updated) {
+          const updatedParty = { ...updated, partyType: "customer", uniqueId: `customer-${updated.id}` };
+          setSelectedParty(updatedParty);
+          loadHistory(updatedParty);
+        }
       }
     } else {
       await loadSuppliers();
       const refreshed = await listSuppliers();
       if (refreshed?.suppliers) {
         const updated = refreshed.suppliers.find(s => s.id === partyId);
-        if (updated) setSelectedParty({ ...updated, partyType: "supplier", uniqueId: `supplier-${updated.id}` });
+        if (updated) {
+          const updatedParty = { ...updated, partyType: "supplier", uniqueId: `supplier-${updated.id}` };
+          setSelectedParty(updatedParty);
+          loadHistory(updatedParty);
+        }
       }
     }
   };
@@ -433,19 +441,7 @@ export default function PaymentsPage() {
     const amount = Number(drawAmount);
 
     // Check advance balance limit: customer balance is negative for credit (advance)
-    if (selectedParty.partyType === "customer") {
-      const available = selectedParty.current_balance < 0 ? Math.abs(selectedParty.current_balance) : 0;
-      if (amount > available) {
-        return setWarnData({
-          title: "Insufficient Advance",
-          lines: [
-            { label: "Requested", value: `Rs ${amount.toLocaleString()}`, mono: true },
-            { label: "Available Advance", value: `Rs ${available.toLocaleString()}`, mono: true },
-            { label: "Error", value: "Amount exceeds available advance balance." }
-          ]
-        });
-      }
-    }
+    // Removed restriction to allow unrestricted running balance withdrawals
 
     setDrawing(true);
     try {
