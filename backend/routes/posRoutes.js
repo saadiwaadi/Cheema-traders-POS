@@ -294,10 +294,29 @@ router.post("/customer-payments", async (req, res) => {
   }
 });
 
+router.delete("/customer-payments/:id", async (req, res) => {
+  try {
+    const result = await store.deleteCustomerPayment(Number(req.params.id));
+    return res.json(result);
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+
 router.post("/customer-withdrawals", async (req, res) => {
   try {
     const withdrawal = await store.saveWithdrawal(req.body);
     return res.status(201).json({ withdrawal });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+router.delete("/customer-withdrawals/:id", async (req, res) => {
+  try {
+    const result = await store.deleteCustomerWithdrawal(Number(req.params.id));
+    return res.json(result);
   } catch (error) {
     return res.status(400).json({ message: error.message });
   }
@@ -434,6 +453,15 @@ router.post("/supplier-payments", async (req, res) => {
   try {
     const payment = await store.saveSupplierPayment(req.body);
     return res.status(201).json({ payment });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+router.delete("/supplier-payments/:id", async (req, res) => {
+  try {
+    const result = await store.deleteSupplierPayment(Number(req.params.id));
+    return res.json(result);
   } catch (error) {
     return res.status(400).json({ message: error.message });
   }

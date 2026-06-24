@@ -10,7 +10,10 @@ import {
   saveSupplierPayment,
   getCustomerHistory,
   getSupplierHistory,
-  listBanks
+  listBanks,
+  deleteCustomerPayment,
+  deleteSupplierPayment,
+  deleteCustomerWithdrawal
 } from "../lib/posApi";
 
 const st = {
@@ -245,6 +248,7 @@ export default function PaymentsPage() {
   const [selectedParty, setSelectedParty] = useState(null);
   const [history, setHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
 
   const loadHistory = useCallback(async (party) => {
     if (!party) {
@@ -491,6 +495,32 @@ export default function PaymentsPage() {
       setWarnData({ title: "Error", lines: [{ label: "Details", value: e.message }] });
     } finally {
       setDrawing(false);
+    }
+  };
+
+  const handleDeletePayment = async (paymentId, row) => {
+    try {
+      if (selectedParty.partyType === "customer") {
+        if (row.type === 'Withdrawal') {
+          await deleteCustomerWithdrawal(paymentId);
+        } else {
+          await deleteCustomerPayment(paymentId);
+        }
+      } else {
+        await deleteSupplierPayment(paymentId);
+      }
+      setSuccessData({
+        title: row.type === 'Withdrawal' ? "Withdrawal Deleted" : "Payment Deleted",
+        lines: [
+          { label: "Amount", value: `Rs ${Number(row.paid_amount || row.total_amount || 0).toLocaleString()}`, mono: true },
+          { label: "Method", value: row.method || "-" },
+          { label: "Date", value: formatDate(row.date) },
+        ]
+      });
+      setDeleteConfirmId(null);
+      await refreshSelectedParty(selectedParty.id, selectedParty.partyType);
+    } catch (e) {
+      setWarnData({ title: row.type === 'Withdrawal' ? "Error Deleting Withdrawal" : "Error Deleting Payment", lines: [{ label: "Details", value: e.message }] });
     }
   };
 
@@ -771,6 +801,7 @@ export default function PaymentsPage() {
                   <th style={{ ...st.th, textAlign: "right" }}>Debit (Dr)</th>
                   <th style={{ ...st.th, textAlign: "right" }}>Credit (Cr)</th>
                   <th style={{ ...st.th, textAlign: "right" }}>Balance</th>
+                  <th style={{ ...st.th, textAlign: "center", width: 140 }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -812,6 +843,64 @@ export default function PaymentsPage() {
                         color: runBal === 0 ? "#2e3d30" : (selectedParty.partyType === "customer" ? (runBal > 0 ? "#c62828" : "#2e7d32") : (runBal > 0 ? "#2e7d32" : "#c62828"))
                       }}>
                         Rs {Math.abs(runBal).toLocaleString()} {suffix}
+                      </td>
+                      <td style={{ ...st.td, textAlign: "center" }}>
+                        {((selectedParty.partyType === "customer" &&
+                           ((row.type === 'Payment' && ['payment', 'advance', 'advance_draw'].includes(row.payment_type)) ||
+                            (row.type === 'Withdrawal' && row.payment_type === 'advance_draw'))) ||
+                          (selectedParty.partyType === "supplier" && row.type === 'Payment')) ? (
+                          deleteConfirmId === row.ref_id ? (
+                            <div style={{ display: "flex", gap: 6, justifyContent: "center", alignItems: "center" }}>
+                              <span style={{ fontSize: 11, color: "#c62828", fontWeight: "bold" }}>Sure?</span>
+                              <button
+                                onClick={() => handleDeletePayment(row.ref_id, row)}
+                                style={{
+                                  padding: "2px 6px",
+                                  background: "#c62828",
+                                  color: "#fff",
+                                  border: "none",
+                                  borderRadius: 3,
+                                  cursor: "pointer",
+                                  fontSize: 11,
+                                  fontWeight: "bold",
+                                }}
+                              >
+                                Delete
+                              </button>
+                              <button
+                                onClick={() => setDeleteConfirmId(null)}
+                                style={{
+                                  padding: "2px 6px",
+                                  background: "#fff",
+                                  color: "#555",
+                                  border: "1px solid #ccc",
+                                  borderRadius: 3,
+                                  cursor: "pointer",
+                                  fontSize: 11,
+                                  fontWeight: "bold",
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setDeleteConfirmId(row.ref_id)}
+                              style={{
+                                padding: "2px 8px",
+                                background: "none",
+                                color: "#c62828",
+                                border: "1px solid #ffbbbb",
+                                borderRadius: 4,
+                                cursor: "pointer",
+                                fontSize: 12,
+                                fontWeight: "600",
+                              }}
+                            >
+                              Delete
+                            </button>
+                          )
+                        ) : "-"}
                       </td>
                     </tr>
                   );

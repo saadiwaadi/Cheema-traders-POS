@@ -311,7 +311,7 @@ function CustomerListView({ customers, loading, onSelectHistory, onDelete, onEdi
     <>
       <div style={st.tableWrap}>
         <div style={st.tableSearch}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
             <Search size={14} style={{ color: '#708571' }} />
             <input
               value={search}
@@ -320,7 +320,7 @@ function CustomerListView({ customers, loading, onSelectHistory, onDelete, onEdi
               style={st.searchInput}
             />
           </div>
-          <div style={{ display: "flex", gap: 16 }}>
+          <div style={{ display: "flex", gap: 16, minWidth: 0 }}>
             {[["all", "All"], ["debit", "Debits"], ["credit", "Credits"]].map(([val, label]) => (
               <button
                 key={val}
@@ -1975,7 +1975,7 @@ function CustomerHistoryView({ customer, onRefresh }) {
 }
 
 const st = {
-  page: { display: 'flex', flexDirection: 'column', height: '100%', background: '#f0f6f0', padding: 24, overflowY: 'auto', fontFamily: 'system-ui, sans-serif', position: 'relative', maxWidth: 1600, width: '100%', margin: '0 auto', boxSizing: 'border-box' },
+  page: { display: 'flex', flexDirection: 'column', height: '100%', background: '#f0f6f0', padding: 24, overflow: 'hidden', fontFamily: 'system-ui, sans-serif', position: 'relative', maxWidth: 1600, width: '100%', margin: '0 auto', boxSizing: 'border-box' },
   pageHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
   title: { margin: 0, fontSize: 24, fontWeight: 'bold', color: '#1b3a1d' },
   subtitle: { margin: '4px 0 0 0', fontSize: 14, color: '#6a8f6c' },

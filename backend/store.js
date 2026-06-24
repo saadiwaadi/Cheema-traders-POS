@@ -457,6 +457,40 @@ class PosStore {
     return result;
   }
 
+  deleteSupplierPayment(id) {
+    const dbBetter = this.getBetterDb();
+
+    const result = dbBetter.transaction(() => {
+      const payment = dbBetter.prepare(`SELECT * FROM supplier_payments WHERE id = ?`).get(id);
+      if (!payment) throw new Error("Payment not found");
+
+      const supplierId = payment.supplier_id;
+
+      // Delete journal entries/lines posted for this supplier payment
+      const je = dbBetter.prepare(`
+        SELECT id FROM journal_entries WHERE source_type = 'supplier_payment' AND source_id = ?
+      `).get(id);
+      if (je) {
+        dbBetter.prepare(`DELETE FROM journal_lines WHERE entry_id = ?`).run(je.id);
+        dbBetter.prepare(`DELETE FROM journal_entries WHERE id = ?`).run(je.id);
+      }
+
+      // Delete supplier_payments record
+      dbBetter.prepare(`DELETE FROM supplier_payments WHERE id = ?`).run(id);
+
+      // Re-sync cached supplier balance
+      this._syncSupplierBalanceSync(dbBetter, supplierId);
+
+      return { deleted: true, id, supplierId };
+    })();
+
+    if (result.supplierId) {
+      this._notifyUpdate("supplier:updated", result.supplierId);
+    }
+
+    return result;
+  }
+
   // ============================================================================
   // BANK ACCOUNTS & TRANSFERS
   // ============================================================================
@@ -1570,6 +1604,149 @@ class PosStore {
 
     if (customerId) {
       this._notifyUpdate("customer:updated", customerId);
+    }
+
+    return result;
+  }
+
+  deleteCustomerPayment(id) {
+    const dbBetter = this.getBetterDb();
+
+    const result = dbBetter.transaction(() => {
+      // 1. Fetch the payment record
+      const payment = dbBetter.prepare(`SELECT * FROM customer_payments WHERE id = ?`).get(id);
+      if (!payment) throw new Error("Payment not found");
+
+      const customerId = payment.customer_id;
+      const appliedAmount = Number(payment.applied_amount || 0);
+
+      // 2. Reverse applied amount from invoices
+      if (appliedAmount > 0) {
+        if (!customerId) {
+          // Walk-in customer, reverse ONLY that sale
+          if (payment.sale_id) {
+            const sale = dbBetter.prepare(`SELECT * FROM sales WHERE id = ?`).get(payment.sale_id);
+            if (sale) {
+              const newAmountPaid = Math.max(0, Number(sale.amount_paid || 0) - appliedAmount);
+              const newBalanceDue = Number(sale.total || 0) - newAmountPaid;
+              const newStatus = newAmountPaid === 0 ? 'Unpaid' : newBalanceDue <= 0 ? 'Paid' : 'Partial';
+              const paidAt = newBalanceDue <= 0 ? (sale.paid_at || payment.payment_date) : null;
+              dbBetter.prepare(`
+                UPDATE sales 
+                SET amount_paid = ?, balance_due = ?, payment_status = ?, paid_at = ?, updated_at = CURRENT_TIMESTAMP 
+                WHERE id = ?
+              `).run(newAmountPaid, newBalanceDue, newStatus, paidAt, sale.id);
+            }
+          }
+        } else {
+          // If payment.sale_id is set, reverse ONLY that sale by exactly payment.applied_amount
+          if (payment.sale_id) {
+            const sale = dbBetter.prepare(`SELECT * FROM sales WHERE id = ?`).get(payment.sale_id);
+            if (sale) {
+              const reverseFromSale = Math.min(appliedAmount, Number(sale.amount_paid || 0));
+              if (reverseFromSale > 0) {
+                const newAmountPaid = Math.max(0, Number(sale.amount_paid || 0) - reverseFromSale);
+                const newBalanceDue = Number(sale.total || 0) - newAmountPaid;
+                const newStatus = newAmountPaid === 0 ? 'Unpaid' : newBalanceDue <= 0 ? 'Paid' : 'Partial';
+                const paidAt = newBalanceDue <= 0 ? (sale.paid_at || payment.payment_date) : null;
+                dbBetter.prepare(`
+                  UPDATE sales 
+                  SET amount_paid = ?, balance_due = ?, payment_status = ?, paid_at = ?, updated_at = CURRENT_TIMESTAMP 
+                  WHERE id = ?
+                `).run(newAmountPaid, newBalanceDue, newStatus, paidAt, sale.id);
+              }
+            }
+          } else {
+            // If sale_id is null, query unpaid/partial sales in FIFO order matching the original application order,
+            // and reverse up to payment.applied_amount total across them.
+            let remainingToReverse = appliedAmount;
+            const customerSales = dbBetter.prepare(`
+              SELECT * FROM sales 
+              WHERE customer_id = ? 
+                AND amount_paid > 0 
+                AND COALESCE(voided_at, '') = ''
+              ORDER BY sale_date ASC, id ASC
+            `).all(customerId);
+
+            for (const sale of customerSales) {
+              if (remainingToReverse <= 0) break;
+              const reverseFromSale = Math.min(remainingToReverse, Number(sale.amount_paid || 0));
+              if (reverseFromSale > 0) {
+                const newAmountPaid = Math.max(0, Number(sale.amount_paid || 0) - reverseFromSale);
+                const newBalanceDue = Number(sale.total || 0) - newAmountPaid;
+                const newStatus = newAmountPaid === 0 ? 'Unpaid' : newBalanceDue <= 0 ? 'Paid' : 'Partial';
+                const paidAt = newBalanceDue <= 0 ? (sale.paid_at || payment.payment_date) : null;
+                dbBetter.prepare(`
+                  UPDATE sales 
+                  SET amount_paid = ?, balance_due = ?, payment_status = ?, paid_at = ?, updated_at = CURRENT_TIMESTAMP 
+                  WHERE id = ?
+                `).run(newAmountPaid, newBalanceDue, newStatus, paidAt, sale.id);
+                remainingToReverse -= reverseFromSale;
+              }
+            }
+          }
+        }
+      }
+
+      // 3. Delete journal lines and entries posted for this record
+      const je = dbBetter.prepare(`
+        SELECT id FROM journal_entries WHERE source_type = 'payment' AND source_id = ?
+      `).get(id);
+      if (je) {
+        dbBetter.prepare(`DELETE FROM journal_lines WHERE entry_id = ?`).run(je.id);
+        dbBetter.prepare(`DELETE FROM journal_entries WHERE id = ?`).run(je.id);
+      }
+
+      // 4. Delete the customer_payments record itself
+      dbBetter.prepare(`DELETE FROM customer_payments WHERE id = ?`).run(id);
+
+      // 5. Re-sync cached customer balance
+      if (customerId) {
+        this._syncCustomerBalanceSync(dbBetter, customerId);
+      }
+
+      return { deleted: true, id, customerId };
+    })();
+
+    if (result.customerId) {
+      this._notifyUpdate("customer:updated", result.customerId);
+    }
+
+    return result;
+  }
+
+  deleteCustomerWithdrawal(id) {
+    const dbBetter = this.getBetterDb();
+
+    const result = dbBetter.transaction(() => {
+      // 1. Fetch the withdrawal record
+      const withdrawal = dbBetter.prepare(`SELECT * FROM customer_withdrawals WHERE id = ?`).get(id);
+      if (!withdrawal) throw new Error("Withdrawal not found");
+
+      const customerId = withdrawal.customer_id;
+
+      // 2. Delete journal entries/lines posted for this customer withdrawal
+      const je = dbBetter.prepare(`
+        SELECT id FROM journal_entries WHERE source_type = 'withdrawal' AND source_id = ?
+      `).get(id);
+      if (je) {
+        dbBetter.prepare(`DELETE FROM journal_lines WHERE entry_id = ?`).run(je.id);
+        dbBetter.prepare(`DELETE FROM journal_entries WHERE id = ?`).run(je.id);
+      }
+
+      // 3. Delete customer_withdrawals record itself
+      dbBetter.prepare(`DELETE FROM customer_withdrawals WHERE id = ?`).run(id);
+
+      // 4. Re-sync cached customer balance
+      if (customerId) {
+        this._syncCustomerBalanceSync(dbBetter, customerId);
+      }
+
+      return { deleted: true, id, customerId };
+    })();
+
+    if (result.customerId) {
+      this._notifyUpdate("customer:updated", result.customerId);
     }
 
     return result;

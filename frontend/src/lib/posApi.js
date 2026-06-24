@@ -248,11 +248,25 @@ export async function saveCustomerPayment(payload) {
   });
 }
 
+export async function deleteCustomerPayment(id) {
+  if (usingIpc()) return window.pos.deleteCustomerPayment(id);
+  return httpJson(`/customer-payments/${id}`, {
+    method: "DELETE",
+  });
+}
+
 export async function saveWithdrawal(payload) {
   if (usingIpc()) return window.pos.saveWithdrawal(payload);
   return httpJson("/customer-withdrawals", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteCustomerWithdrawal(id) {
+  if (usingIpc()) return window.pos.deleteCustomerWithdrawal(id);
+  return httpJson(`/customer-withdrawals/${id}`, {
+    method: "DELETE",
   });
 }
 
@@ -348,6 +362,13 @@ export async function saveSupplierPayment(payload) {
   return httpJson("/supplier-payments", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteSupplierPayment(id) {
+  if (usingIpc()) return window.pos.deleteSupplierPayment(id);
+  return httpJson(`/supplier-payments/${id}`, {
+    method: "DELETE",
   });
 }
 
