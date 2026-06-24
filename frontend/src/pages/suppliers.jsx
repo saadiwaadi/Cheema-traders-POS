@@ -551,12 +551,35 @@ function SupplierHistoryView({ supplier, onRefresh }) {
 
   const baseRows = history.map(h => {
     const isPurchase = h.type === 'Purchase';
+    const isOpening = h.type === 'Opening';
+    const isJournal = h.type === 'Journal';
+    const isWithdrawal = h.payment_type === 'refund';
+    
     const totalAmount = Number(h.total_amount || 0);
-    const isWithdrawal = !isPurchase && totalAmount < 0;
-    const remainingAmount = isPurchase ? Math.max(0, Number(h.balance_change || 0)) : 0;
-    const paidAmount = isPurchase ? Math.max(0, totalAmount - remainingAmount) : totalAmount;
+    const balanceChange = Number(h.balance_change || 0);
 
-    const balanceChange = isPurchase ? remainingAmount : -paidAmount;
+    let debit = 0;
+    let credit = 0;
+
+    if (isOpening) {
+      if (balanceChange > 0) credit = balanceChange;
+      else debit = Math.abs(balanceChange);
+    } else if (isJournal) {
+      if (balanceChange > 0) credit = balanceChange;
+      else debit = Math.abs(balanceChange);
+    } else if (isPurchase) {
+      credit = totalAmount;
+      debit = Math.max(0, totalAmount - balanceChange);
+    } else {
+      if (isWithdrawal) {
+        credit = totalAmount;
+      } else {
+        debit = totalAmount;
+      }
+    }
+
+    const remainingAmount = isPurchase ? Math.max(0, balanceChange) : 0;
+    const paidAmount = isPurchase ? debit : totalAmount;
 
     return {
       ...h,
@@ -564,6 +587,8 @@ function SupplierHistoryView({ supplier, onRefresh }) {
       paid_amount: paidAmount,
       remaining_amount: remainingAmount,
       balance_change: balanceChange,
+      debit,
+      credit,
       isWithdrawal,
       payment_status: isPurchase
         ? (remainingAmount <= 0 ? 'Paid' : paidAmount > 0 ? 'Partial' : 'Unpaid')
@@ -571,20 +596,7 @@ function SupplierHistoryView({ supplier, onRefresh }) {
     };
   });
 
-  const openingRow = {
-    ref_id: 'opening',
-    type: 'Opening',
-    date: supplier.created_at ? supplier.created_at.split('T')[0] : '2026-01-01',
-    reference: 'Opening Balance',
-    method: '-',
-    payment_status: '-',
-    total_amount: Number(supplier.openingBalance || supplier.opening_balance || 0) > 0 ? Math.abs(supplier.openingBalance || supplier.opening_balance || 0) : 0,
-    paid_amount: Number(supplier.openingBalance || supplier.opening_balance || 0) < 0 ? Math.abs(supplier.openingBalance || supplier.opening_balance || 0) : 0,
-    remaining_amount: 0,
-    balance_change: Number(supplier.openingBalance || supplier.opening_balance || 0)
-  };
-
-  const chronological = [openingRow, ...baseRows];
+  const chronological = baseRows;
   let running = 0;
   const withRunning = chronological.map(row => {
     running += row.balance_change;
@@ -612,7 +624,7 @@ function SupplierHistoryView({ supplier, onRefresh }) {
   const currentBalance = statementRows.length > 0 ? statementRows[0].runningBalance : Number(supplier.openingBalance || supplier.opening_balance || 0);
 
   const totalPurchased = baseRows.filter(h => h.type === 'Purchase').reduce((sum, h) => sum + Number(h.total_amount || 0), 0);
-  const totalPaid = baseRows.reduce((sum, h) => sum + Number(h.paid_amount || 0), 0);
+  const totalPaid = baseRows.filter(h => h.type === 'Payment' && !h.isWithdrawal).reduce((sum, h) => sum + Number(h.paid_amount || 0), 0);
   const outstandingPayables = baseRows.filter(h => h.type === 'Purchase').reduce((sum, h) => sum + Number(h.remaining_amount || 0), 0);
   const transactionsCount = baseRows.length;
   const lastActivity = baseRows.length > 0 ? baseRows[baseRows.length - 1].date : "-";
@@ -831,27 +843,26 @@ function SupplierHistoryView({ supplier, onRefresh }) {
 
     // Table Data
     let sNo = 1;
-    const currentBilled = visibleRows.filter(h => h.type === 'Purchase').reduce((sum, h) => sum + Number(h.total_amount || 0), 0);
-    const currentPaid = visibleRows.filter(h => h.type !== 'Opening').reduce((sum, h) => sum + Number(h.paid_amount || 0), 0);
+    const currentBilled = visibleRows.reduce((sum, h) => sum + Number(h.credit || 0), 0);
+    const currentPaid = visibleRows.reduce((sum, h) => sum + Number(h.debit || 0), 0);
 
     [...visibleRows].reverse().forEach((h) => {
       const isPurchase = h.type === 'Purchase';
       const isOpening = h.type === 'Opening';
       const desc = isOpening 
         ? 'Opening Balance' 
-        : isPurchase 
+        : h.type === 'Purchase' 
           ? `Purchase Invoice${h.reference ? ` (${h.reference})` : ""}` 
-          : `Payment Made${h.reference ? ` (${h.reference})` : ""}`;
+          : h.type === 'Journal'
+            ? `Journal Entry${h.reference ? ` (${h.reference})` : ""}`
+            : h.isWithdrawal
+              ? `Refund/Withdrawal${h.reference ? ` (${h.reference})` : ""}`
+              : `Payment Made${h.reference ? ` (${h.reference})` : ""}`;
 
-      const status = isOpening ? "-" : isPurchase ? h.payment_status || "Unpaid" : "Paid";
+      const status = isOpening ? "-" : h.type === 'Purchase' ? h.payment_status || "Unpaid" : h.type === 'Journal' ? "-" : h.payment_status || "Paid";
       
-      const debit = isOpening 
-        ? (h.balance_change < 0 ? Math.abs(h.balance_change) : 0)
-        : (isPurchase ? 0 : Number(h.paid_amount || 0));
-        
-      const credit = isOpening
-        ? (h.balance_change > 0 ? h.balance_change : 0)
-        : (isPurchase ? Number(h.total_amount || 0) : 0);
+      const debit = h.debit;
+      const credit = h.credit;
 
       writeCell(r, 0, sNo++, 'n', sDataCenter);
       writeCell(r, 1, h.date, 's', sDataCenter);
@@ -904,13 +915,8 @@ function SupplierHistoryView({ supplier, onRefresh }) {
   };
 
   const handlePrintStatement = async () => {
-    const currentBilled = visibleRowsWithBalance
-      .filter((h) => h.type === "Purchase")
-      .reduce((s, h) => s + Number(h.total_amount || 0), 0);
-
-    const currentReceived = visibleRowsWithBalance
-      .filter((h) => h.type !== "Opening")
-      .reduce((s, h) => s + Number(h.paid_amount || 0), 0);
+    const currentBilled = visibleRowsWithBalance.reduce((s, h) => s + Number(h.credit || 0), 0);
+    const currentReceived = visibleRowsWithBalance.reduce((s, h) => s + Number(h.debit || 0), 0);
 
     const earliest = visibleRows[visibleRows.length - 1]; // visibleRows is newest-first
     const openingBF = earliest 
@@ -940,23 +946,22 @@ function SupplierHistoryView({ supplier, onRefresh }) {
     const tableRowsHtml = [...visibleRowsWithBalance].reverse().map((h) => {
       const isPurchase = h.type === "Purchase";
       const isOpening = h.type === "Opening";
-      const status = isOpening ? "-" : isPurchase ? h.payment_status || "Unpaid" : "Paid";
+      const status = isOpening ? "-" : h.type === 'Purchase' ? h.payment_status || "Unpaid" : h.type === 'Journal' ? "-" : h.payment_status || "Paid";
       const statusColor = status === "Paid" ? "#16a34a" : status === "Partial" ? "#d97706" : status === "-" ? "#64748b" : "#dc2626";
       const statusBg = status === "Paid" ? "#f0fdf4" : status === "Partial" ? "#fef3c7" : status === "-" ? "#f1f5f9" : "#fef2f2";
 
-      const debit = isOpening 
-        ? (h.balance_change < 0 ? Math.abs(h.balance_change) : 0)
-        : Number(h.paid_amount || 0);
-        
-      const credit = isOpening
-        ? (h.balance_change > 0 ? h.balance_change : 0)
-        : (isPurchase ? Number(h.total_amount || 0) : 0);
+      const debit = h.debit;
+      const credit = h.credit;
 
       const desc = isOpening 
         ? "Opening Balance" 
-        : isPurchase 
+        : h.type === 'Purchase' 
           ? `Purchase Invoice ${h.reference ? `<span class="ref-no">(${h.reference})</span>` : ""}` 
-          : `Payment Made ${h.reference ? `<span class="ref-no">(${h.reference})</span>` : ""}`;
+          : h.type === 'Journal'
+            ? `Journal Entry ${h.reference ? `<span class="ref-no">(${h.reference})</span>` : ""}`
+            : h.isWithdrawal
+              ? `Refund/Withdrawal ${h.reference ? `<span class="ref-no">(${h.reference})</span>` : ""}`
+              : `Payment Made ${h.reference ? `<span class="ref-no">(${h.reference})</span>` : ""}`;
 
       const runningBalFormatted = formatMoney(Math.abs(h.runningBalance));
       const runningIndicator = h.runningBalance > 0 ? "Cr" : h.runningBalance < 0 ? "Dr" : "";
@@ -1746,12 +1751,12 @@ function SupplierHistoryView({ supplier, onRefresh }) {
                         )}
                       </div>
 
-                      <div className="supp-bill-money" style={{ color: isOpening && h.total_amount > 0 ? '#c62828' : isPurchase ? '#1b3a1d' : '#888' }}>
-                        {isOpening && h.total_amount > 0 ? `Rs ${h.total_amount.toLocaleString()}` : isPurchase ? `Rs ${Math.abs(h.total_amount || 0).toLocaleString()}` : '-'}
+                      <div className="supp-bill-money" style={{ color: h.credit > 0 ? '#1b3a1d' : '#888' }}>
+                        {h.credit > 0 ? `Rs ${h.credit.toLocaleString()}` : '-'}
                       </div>
 
-                      <div className="supp-bill-money" style={{ color: '#2e7d32' }}>
-                        {isOpening && h.paid_amount > 0 ? `Rs ${h.paid_amount.toLocaleString()}` : !isOpening ? `Rs ${Number(h.paid_amount || 0).toLocaleString()}` : '-'}
+                      <div className="supp-bill-money" style={{ color: h.debit > 0 ? '#2e7d32' : '#888' }}>
+                        {h.debit > 0 ? `Rs ${h.debit.toLocaleString()}` : '-'}
                       </div>
 
                       <div className="supp-bill-money" style={{ color: isPurchase ? '#c62828' : '#888' }}>

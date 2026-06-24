@@ -404,64 +404,6 @@ class PosStore {
     await this._syncSupplierBalance(db, id);
   }
 
-  async getSupplierHistory(supplierId) {
-    const db = await this._db();
-    return all(
-      db,
-      `
-        SELECT 
-          id AS ref_id,
-          'Purchase' AS type,
-          purchase_date AS date,
-          invoice_no AS reference,
-          payment_method AS method,
-          subtotal AS total_amount,
-          balance_due AS balance_change,
-          notes,
-          created_at
-        FROM purchases
-        WHERE supplier_id = ?
-        
-        UNION ALL
-        
-        SELECT 
-          id AS ref_id,
-          'Payment' AS type,
-          payment_date AS date,
-          notes AS reference,
-          payment_method AS method,
-          amount AS total_amount,
-          -amount AS balance_change,
-          notes,
-          created_at
-        FROM supplier_payments
-        WHERE supplier_id = ?
-        
-        UNION ALL
-        
-        SELECT 
-          jl.id AS ref_id,
-          'Journal' AS type,
-          je.date AS date,
-          je.entry_no AS reference,
-          '-' AS method,
-          ABS(jl.credit - jl.debit) / 100.0 AS total_amount,
-          (jl.credit - jl.debit) / 100.0 AS balance_change,
-          je.narration || COALESCE(' - ' || jl.line_memo, '') AS notes,
-          je.created_at
-        FROM journal_lines jl
-        JOIN journal_entries je ON jl.entry_id = je.id
-        JOIN accounts a ON jl.account_id = a.id
-        WHERE jl.supplier_id = ?
-          AND a.code = '2000'
-          AND je.status = 'posted'
-        
-        ORDER BY date DESC, created_at DESC
-      `,
-      [supplierId, supplierId, supplierId]
-    );
-  }
-
   async getPurchaseItems(purchaseId) {
     const db = await this._db();
     return all(
@@ -1258,7 +1200,7 @@ class PosStore {
           amount AS paid_amount,
           0 AS remaining_amount,
           CASE
-            WHEN type = 'loan' THEN amount
+            WHEN type = 'loan' OR type = 'advance_draw' THEN amount
             ELSE 0
           END AS balance_change,
           created_at || '_4' AS sort_key,
