@@ -406,16 +406,39 @@ export async function deleteSupplier(id) {
 }
 
 export async function getSettings() {
-  if (usingIpc()) return window.pos.getSettings();
+  if (usingIpc()) {
+    if (window.pos && typeof window.pos.getSettings === "function") {
+      return window.pos.getSettings();
+    } else if (window.ipc) {
+      return window.ipc.invoke("pos:settings:get");
+    }
+  }
   return httpJson("/settings");
 }
 
 export async function saveSetting(payload) {
-  if (usingIpc()) return window.pos.saveSetting(payload);
+  if (usingIpc()) {
+    if (window.pos && typeof window.pos.saveSetting === "function") {
+      return window.pos.saveSetting(payload);
+    } else if (window.ipc) {
+      return window.ipc.invoke("pos:settings:save", payload);
+    }
+  }
   return httpJson("/settings", {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export async function saveSettings(data) {
+  if (usingIpc()) {
+    if (window.pos && typeof window.pos.saveSettings === "function") {
+      return window.pos.saveSettings(data);
+    } else if (window.ipc) {
+      return window.ipc.invoke("pos:settings:save_all", data);
+    }
+  }
+  return httpJson("/settings", { method: "POST", body: JSON.stringify(data) });
 }
 
 export async function exportBackup(targetPath) {
@@ -487,6 +510,13 @@ export async function updateCoaAccount(payload) {
 export async function deactivateCoaAccount(id) {
   if (usingIpc() && window.ipc) return window.ipc.invoke("coa:deactivate", { id });
   return httpJson(`/coa/${id}/deactivate`, { method: "POST" });
+}
+
+export async function getAccountLedger(accountId, startDate, endDate) {
+  if (usingIpc() && window.ipc) {
+    return window.ipc.invoke('pos:accounts:getLedger', { accountId, startDate, endDate });
+  }
+  return httpJson(`/accounts/${accountId}/ledger?startDate=${startDate}&endDate=${endDate}`);
 }
 
 export async function getAnalysisOverview() {

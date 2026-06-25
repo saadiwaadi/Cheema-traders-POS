@@ -541,7 +541,7 @@ router.post("/bank-transfers", async (req, res) => {
 router.get("/settings", async (_req, res) => {
   try {
     const settings = await store.getSettings();
-    return res.json({ settings });
+    return res.json(settings);
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -549,8 +549,8 @@ router.get("/settings", async (_req, res) => {
 
 router.post("/settings", async (req, res) => {
   try {
-    const setting = await store.updateSetting(req.body.key, req.body.value);
-    return res.status(201).json({ setting });
+    const result = await store.saveSettings(req.body);
+    return res.json(result);
   } catch (error) {
     return res.status(400).json({ message: error.message });
   }
@@ -692,6 +692,16 @@ router.post("/coa/:id/deactivate", async (req, res) => {
     return res.json(result);
   } catch (error) {
     return res.status(400).json({ message: error.message });
+  }
+});
+
+router.get("/accounts/:id/ledger", async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const data = await store.getAccountLedger(Number(req.params.id), startDate, endDate);
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
   }
 });
 

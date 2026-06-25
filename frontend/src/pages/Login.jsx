@@ -12,6 +12,17 @@ function Login() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
+  const [businessName, setBusinessName] = useState("Cheema Traders");
+
+  useEffect(() => {
+    if (window.ipc) {
+      window.ipc.invoke("pos:settings:get").then(res => {
+        if (res && res.business_name) {
+          setBusinessName(res.business_name);
+        }
+      }).catch(e => console.error("Failed to load business name on login page", e));
+    }
+  }, []);
 
   useEffect(() => {
     const splashTimer = setTimeout(() => {
@@ -96,7 +107,7 @@ function Login() {
               transition={{ delay: 0.8, duration: 0.6 }}
               style={styles.splashSubtitle}
             >
-              CHEEMA TRADERS
+              {businessName.toUpperCase()}
             </motion.h2>
           </motion.div>
         ) : (
@@ -108,7 +119,7 @@ function Login() {
             transition={{ duration: 0.6, type: "spring", stiffness: 100 }}
           >
             <div style={styles.header}>
-              <h2 style={styles.title}>Cheema Traders</h2>
+              <h2 style={styles.title}>{businessName}</h2>
               <p style={styles.subtitle}>Sign in to your account</p>
             </div>
 

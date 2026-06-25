@@ -11,6 +11,7 @@ import {
   getPurchaseItems,
   saveSupplierPayment as recordPayment,
   deleteSupplier,
+  getSettings,
 } from "../lib/posApi";
 
 const BUSINESS_NAME = "Cheema Traders";
@@ -516,6 +517,33 @@ function SupplierListView({ suppliers, loading, onSelectHistory, onDelete, onEdi
 function SupplierHistoryView({ supplier, onRefresh }) {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [businessProfile, setBusinessProfile] = useState({
+    business_name: "Cheema Traders",
+    business_tagline: "Agro Inputs & Fertilizer Distributors",
+    business_address: "Main Bazar, Sahiwal, Pakistan",
+    business_phone: "+92 300 7890123",
+    business_email: "info@cheematraders.com",
+    business_whatsapp: "",
+    business_ntn: "",
+    business_strn: ""
+  });
+
+  useEffect(() => {
+    getSettings().then(res => {
+      if (res) {
+        setBusinessProfile({
+          business_name: res.business_name || "Cheema Traders",
+          business_tagline: res.business_tagline || "Agro Inputs & Fertilizer Distributors",
+          business_address: res.business_address || "Main Bazar, Sahiwal, Pakistan",
+          business_phone: res.business_phone || "+92 300 7890123",
+          business_email: res.business_email || "info@cheematraders.com",
+          business_whatsapp: res.business_whatsapp || "",
+          business_ntn: res.business_ntn || "",
+          business_strn: res.business_strn || ""
+        });
+      }
+    }).catch(e => console.error("Failed to load business profile settings", e));
+  }, []);
   const [expandedRows, setExpandedRows] = useState({});
   const [purchaseItems, setPurchaseItems] = useState({});
   const [itemsLoading, setItemsLoading] = useState({});
@@ -800,11 +828,11 @@ function SupplierHistoryView({ supplier, onRefresh }) {
     };
 
     // Header Letterhead
-    writeCell(r, 0, BUSINESS_NAME, 's', sTitle);
+    writeCell(r, 0, businessProfile.business_name, 's', sTitle);
     r++;
-    writeCell(r, 0, "AGRO INPUTS & FERTILIZER DISTRIBUTORS", 's', sSub);
+    writeCell(r, 0, businessProfile.business_tagline || "", 's', sSub);
     r++;
-    writeCell(r, 0, "Main Bazar, Sahiwal, Pakistan | Tel: +92 300 7890123 | Email: info@cheematraders.com", 's', sContact);
+    writeCell(r, 0, `${businessProfile.business_address} | Tel: ${businessProfile.business_phone} | Email: ${businessProfile.business_email}`, 's', sContact);
     r++;
     r++; // Empty row
 
@@ -1238,15 +1266,15 @@ function SupplierHistoryView({ supplier, onRefresh }) {
           <div class="header-container">
             <div>
               <div class="brand-section">
-                <div class="logo-mark">CT</div>
+                <div class="logo-mark">${(businessProfile.business_name || "CT").split(' ').map(w => w[0]).join('').substring(0, 3).toUpperCase()}</div>
                 <div class="company-title-block">
-                  <div class="company-name">${BUSINESS_NAME}</div>
-                  <div class="company-sub">Agro Inputs & Fertilizer Distributors</div>
+                  <div class="company-name">${businessProfile.business_name}</div>
+                  <div class="company-sub">${businessProfile.business_tagline}</div>
                 </div>
               </div>
               <div class="company-details">
-                Main Bazar, Sahiwal, Pakistan<br>
-                Tel: +92 300 7890123 | Email: info@cheematraders.com
+                ${businessProfile.business_address}<br>
+                Tel: ${businessProfile.business_phone} | Email: ${businessProfile.business_email}
               </div>
             </div>
             <div class="doc-title-section">
@@ -1317,12 +1345,12 @@ function SupplierHistoryView({ supplier, onRefresh }) {
 
           <div class="footer-container">
             <div class="footer-stamp">
-              <strong>Cheema Traders POS System</strong><br>
+              <strong>${businessProfile.business_name} POS System</strong><br>
               This is a computer-generated statement and does not require a physical stamp. For any discrepancies, contact us within 7 days of statement receipt.
             </div>
             <div class="sig-block">
               <div class="sig-line">Authorized Signature</div>
-              <span class="muted">Cheema Traders</span>
+              <span class="muted">${businessProfile.business_name}</span>
             </div>
           </div>
         </body>

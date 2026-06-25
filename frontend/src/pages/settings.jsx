@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import * as api from "../lib/posApi";
 import { useThemeLanguage } from "../context/ThemeLanguageContext";
 import WarningNotification from "../components/Warningnotification";
+import SuccessNotification from "../components/SuccessNotification";
 import { Save, Folder, RefreshCw, AlertTriangle, Trash2, Copy, Check, X } from "lucide-react";
 
 const ALL_MODULES = [
@@ -52,6 +53,17 @@ export default function SettingsPage({ user, onLicenseUpdate }) {
   const [syncFreq, setSyncFreq] = useState("hourly");
   const [syncSaveSuccess, setSyncSaveSuccess] = useState(false);
 
+  // Business Profile states
+  const [businessName, setBusinessName] = useState("");
+  const [businessTagline, setBusinessTagline] = useState("");
+  const [businessAddress, setBusinessAddress] = useState("");
+  const [businessPhone, setBusinessPhone] = useState("");
+  const [businessEmail, setBusinessEmail] = useState("");
+  const [businessWhatsapp, setBusinessWhatsapp] = useState("");
+  const [businessNtn, setBusinessNtn] = useState("");
+  const [businessStrn, setBusinessStrn] = useState("");
+  const [showSuccessMsg, setShowSuccessMsg] = useState("");
+
   const fetchDbInfo = async () => {
     try {
       const info = await api.getDbInfo();
@@ -67,15 +79,23 @@ export default function SettingsPage({ user, onLicenseUpdate }) {
 
       // Fetch settings
       api.getSettings().then(res => {
-        const list = res?.settings || [];
-        const mode = list.find(s => s.key === "db_mode")?.value || "local";
-        const url = list.find(s => s.key === "sync_url")?.value || "";
-        const key = list.find(s => s.key === "sync_api_key")?.value || "";
-        const freq = list.find(s => s.key === "sync_frequency")?.value || "hourly";
+        const mode = res?.db_mode || "local";
+        const url = res?.sync_url || "";
+        const key = res?.sync_api_key || "";
+        const freq = res?.sync_frequency || "hourly";
         setDbMode(mode);
         setSyncUrl(url);
         setSyncApiKey(key);
         setSyncFreq(freq);
+
+        setBusinessName(res?.business_name || "");
+        setBusinessTagline(res?.business_tagline || "");
+        setBusinessAddress(res?.business_address || "");
+        setBusinessPhone(res?.business_phone || "");
+        setBusinessEmail(res?.business_email || "");
+        setBusinessWhatsapp(res?.business_whatsapp || "");
+        setBusinessNtn(res?.business_ntn || "");
+        setBusinessStrn(res?.business_strn || "");
       }).catch(console.error);
 
       // Fetch license info
@@ -87,7 +107,7 @@ export default function SettingsPage({ user, onLicenseUpdate }) {
         }
       }).catch(console.error);
     }
-  }, [activeTab, isAdmin]);
+  }, [isAdmin]);
 
   const formatBytes = (bytes) => {
     if (!bytes) return "0 Bytes";
@@ -533,6 +553,31 @@ export default function SettingsPage({ user, onLicenseUpdate }) {
     }
   };
 
+  const handleSaveBusinessProfile = async (e) => {
+    e.preventDefault();
+    try {
+      await api.saveSettings({
+        business_name: businessName,
+        business_tagline: businessTagline,
+        business_address: businessAddress,
+        business_phone: businessPhone,
+        business_email: businessEmail,
+        business_whatsapp: businessWhatsapp,
+        business_ntn: businessNtn,
+        business_strn: businessStrn,
+      });
+      setShowSuccessMsg("Business profile settings saved successfully!");
+      setTimeout(() => setShowSuccessMsg(""), 3000);
+    } catch (err) {
+      setWarnData({
+        title: "Save Profile Failed",
+        lines: [
+          { label: "Error Message", value: err.message || "An unknown error occurred" }
+        ]
+      });
+    }
+  };
+
   return (
     <div style={st.container}>
       {/* Settings Navigation */}
@@ -592,6 +637,103 @@ export default function SettingsPage({ user, onLicenseUpdate }) {
       <div style={st.card}>
         {activeTab === "general" && isAdmin && (
           <div>
+            {/* Business Profile Section */}
+            <div style={{ marginBottom: 32 }}>
+              <h3 style={st.sectionTitle}>Business Profile</h3>
+              <p style={st.subText}>Manage your company details used across invoices, print templates, and statements.</p>
+              
+              <form onSubmit={handleSaveBusinessProfile} style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 600, marginBottom: 32 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <label style={st.formLabel}>Business Name</label>
+                    <input
+                      type="text"
+                      value={businessName}
+                      onChange={e => setBusinessName(e.target.value)}
+                      style={st.thresholdInputText}
+                      required
+                    />
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <label style={st.formLabel}>Tagline / Description</label>
+                    <input
+                      type="text"
+                      value={businessTagline}
+                      onChange={e => setBusinessTagline(e.target.value)}
+                      style={st.thresholdInputText}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <label style={st.formLabel}>Address</label>
+                  <textarea
+                    rows={2}
+                    value={businessAddress}
+                    onChange={e => setBusinessAddress(e.target.value)}
+                    style={{ ...st.thresholdInputText, height: "auto", padding: "8px 12px" }}
+                  />
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <label style={st.formLabel}>Phone</label>
+                    <input
+                      type="text"
+                      value={businessPhone}
+                      onChange={e => setBusinessPhone(e.target.value)}
+                      style={st.thresholdInputText}
+                    />
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <label style={st.formLabel}>Email</label>
+                    <input
+                      type="email"
+                      value={businessEmail}
+                      onChange={e => setBusinessEmail(e.target.value)}
+                      style={st.thresholdInputText}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <label style={st.formLabel}>WhatsApp (Optional)</label>
+                    <input
+                      type="text"
+                      value={businessWhatsapp}
+                      onChange={e => setBusinessWhatsapp(e.target.value)}
+                      style={st.thresholdInputText}
+                    />
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <label style={st.formLabel}>NTN Number (Optional)</label>
+                    <input
+                      type="text"
+                      value={businessNtn}
+                      onChange={e => setBusinessNtn(e.target.value)}
+                      style={st.thresholdInputText}
+                    />
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <label style={st.formLabel}>STRN Number (Optional)</label>
+                    <input
+                      type="text"
+                      value={businessStrn}
+                      onChange={e => setBusinessStrn(e.target.value)}
+                      style={st.thresholdInputText}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 8 }}>
+                  <button type="submit" style={st.btnPrimary}>
+                    Save Profile
+                  </button>
+                </div>
+              </form>
+            </div>
+
             <h3 style={st.sectionTitle}>General Alert Preferences</h3>
             <p style={st.subText}>Configure generic alerts and warning parameters across the system.</p>
 
@@ -1216,7 +1358,7 @@ export default function SettingsPage({ user, onLicenseUpdate }) {
         {activeTab === "license" && isAdmin && (
           <div>
             <h3 style={st.sectionTitle}>License Key Management</h3>
-            <p style={st.subText}>Monitor and activate your software license for Cheema Traders POS.</p>
+            <p style={st.subText}>Monitor and activate your software license for {businessName || "Cheema Traders"} POS.</p>
             
             <div style={{ display: "flex", flexDirection: "column", gap: "20px", marginTop: "16px" }}>
               <div style={{
@@ -1508,6 +1650,12 @@ export default function SettingsPage({ user, onLicenseUpdate }) {
         cancelLabel={warnData?.cancelLabel}
         onClose={() => setWarnData(null)}
       />
+      {showSuccessMsg && (
+        <SuccessNotification
+          message={showSuccessMsg}
+          onClose={() => setShowSuccessMsg("")}
+        />
+      )}
     </div>
   );
 }

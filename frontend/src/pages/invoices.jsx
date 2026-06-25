@@ -19,7 +19,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 
-import { listSales, getSale, voidSale, saveCustomerPayment, returnSale, listBanks } from "../lib/posApi";
+import { listSales, getSale, voidSale, saveCustomerPayment, returnSale, listBanks, getSettings } from "../lib/posApi";
 
 const BUSINESS_NAME = "Cheema Traders";
 const BUSINESS_EMAIL = "contact@cheematraders.com";
@@ -53,6 +53,27 @@ export default function InvoiceHistoryModule() {
   const { t, language } = useThemeLanguage();
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [businessProfile, setBusinessProfile] = useState({
+    business_name: "Cheema Traders",
+    business_tagline: "Quality Agro Inputs & Products",
+    business_address: "Main Bazar, Sahiwal, Pakistan",
+    business_phone: "+92 300 7890123",
+    business_email: "info@cheematraders.com"
+  });
+
+  useEffect(() => {
+    getSettings().then(res => {
+      if (res) {
+        setBusinessProfile({
+          business_name: res.business_name || "Cheema Traders",
+          business_tagline: res.business_tagline || "Quality Agro Inputs & Products",
+          business_address: res.business_address || "Main Bazar, Sahiwal, Pakistan",
+          business_phone: res.business_phone || "+92 300 7890123",
+          business_email: res.business_email || "info@cheematraders.com"
+        });
+      }
+    }).catch(e => console.error("Failed to load business profile settings", e));
+  }, []);
   const [error, setError] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("All");
   const [search, setSearch] = useState("");
@@ -377,8 +398,8 @@ export default function InvoiceHistoryModule() {
         <body>
           <div class="header">
             <div>
-              <div class="title">${BUSINESS_NAME}</div>
-              <p style="margin: 4px 0 0 0; font-size: 12px; color: #666;">Quality Agro Inputs & Products</p>
+              <div class="title">${businessProfile.business_name}</div>
+              <p style="margin: 4px 0 0 0; font-size: 12px; color: #666;">${businessProfile.business_tagline}</p>
             </div>
             <div style="text-align: ${language === 'ur' ? 'left' : 'right'};">
               <h1 style="margin: 0; font-size: 20px; color: #1b3a1d;">${t("invoices.invoice_caps", "INVOICE")}</h1>
@@ -495,7 +516,7 @@ export default function InvoiceHistoryModule() {
         </head>
         <body>
           <div class="header">
-            <div class="title">${BUSINESS_NAME} - ${t("invoices.sales_report", "SALES REPORT")}</div>
+            <div class="title">${businessProfile.business_name} - ${t("invoices.sales_report", "SALES REPORT")}</div>
             <p style="margin: 4px 0 0 0; font-size: 12px; color: #666;">${t("invoices.generated", "Generated:")} ${new Date().toLocaleDateString()}</p>
           </div>
           <table>

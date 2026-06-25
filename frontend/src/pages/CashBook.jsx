@@ -7,7 +7,16 @@ const BUSINESS_NAME = "Cheema Traders";
 
 function fmt(n) { return (n || 0).toLocaleString(); }
 
-function printCashBook(entries, startDate, endDate) {
+async function printCashBook(entries, startDate, endDate) {
+    let settings = {};
+    if (window.ipc) {
+        try {
+            settings = await window.ipc.invoke("pos:settings:get");
+        } catch (e) {
+            console.error("Failed to load settings in printCashBook", e);
+        }
+    }
+    const businessName = settings.business_name || "Cheema Traders";
     const withBalance = computeRunning(entries);
 
     const totalCashIn = entries.reduce((s, e) => s + (e.cash_in || 0), 0);
@@ -53,7 +62,7 @@ function printCashBook(entries, startDate, endDate) {
         @media print { body { padding: 0; } }
     </style>
     </head><body>
-    <h2>${BUSINESS_NAME}</h2>
+    <h2>${businessName}</h2>
     <div class="sub">Cash Book — ${startDate} to ${endDate}</div>
     <div class="meta"><span>${entries.length} entries</span><span>Printed: ${new Date().toLocaleDateString()}</span></div>
     <table>

@@ -338,9 +338,21 @@ db.serialize(() => {
   db.run(`
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
-      value TEXT NOT NULL,
+      value TEXT,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
+  `);
+
+  db.run(`
+    INSERT OR IGNORE INTO settings (key, value) VALUES
+      ('business_name', 'Cheema Traders'),
+      ('business_tagline', 'Agro Inputs & Fertilizer Distributors'),
+      ('business_address', 'Main Bazar, Sahiwal, Pakistan'),
+      ('business_phone', '+92 300 7890123'),
+      ('business_email', 'info@cheematraders.com'),
+      ('business_whatsapp', ''),
+      ('business_ntn', ''),
+      ('business_strn', '')
   `);
 
   db.run(`

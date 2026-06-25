@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, Search, MoreVertical, Edit2, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
+import { Plus, Search, MoreVertical, Edit2, Trash2, ChevronDown, ChevronRight, BookOpen } from 'lucide-react';
 import { fmtPKR, drcr } from '../lib/money';
 import { listCoaAccounts, createCoaAccount, updateCoaAccount, deactivateCoaAccount } from '../lib/posApi';
+import AccountLedgerPanel from '../components/AccountLedgerPanel';
 
 const getNormalSide = (type) => {
   return (type === 'asset' || type === 'expense') ? 'Dr' : 'Cr';
@@ -74,6 +75,7 @@ function ChartOfAccountsContent() {
   const [formParentId, setFormParentId] = useState('');
   const [formIsControl, setFormIsControl] = useState(false);
   const [formIsActive, setFormIsActive] = useState(true);
+  const [expandedLedgerId, setExpandedLedgerId] = useState(null);
 
   // Close menus on outside click
   useEffect(() => {
@@ -355,73 +357,88 @@ function ChartOfAccountsContent() {
                     </tr>
                     
                     {/* Data Rows */}
-                    {rows.map(acc => (
-                      <tr key={acc.id} style={s.tr}>
-                        <td style={s.td}>
-                          <div style={{ display: 'flex', alignItems: 'center', paddingLeft: acc.depth * 20 }}>
-                            {acc.hasChildren ? (
-                              <div onClick={() => toggleNode(acc.id)} style={s.treeToggle}>
-                                {collapsedNodes.has(acc.id) ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-                              </div>
-                            ) : (
-                              <div style={s.treeLeafSpacer} />
-                            )}
-                            <span style={s.codeText}>{acc.code}</span>
-                          </div>
-                        </td>
-                        <td style={{...s.td, color: acc.hasChildren ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: acc.hasChildren ? 600 : 400}}>
-                          {acc.name}
-                        </td>
-                        <td style={s.td}>
-                          <span style={s.typeLabel}>{acc.type}</span>
-                        </td>
-                        <td style={{...s.td, textAlign: 'center', color: 'var(--text-secondary)'}}>
-                          {getNormalSide(acc.type)}
-                        </td>
-                        <td style={s.td}>
-                          <div style={s.badgeWrap}>
-                            {acc.is_active === 1 ? (
-                              <span style={s.badgeActive}>ACTIVE</span>
-                            ) : (
-                              <span style={s.badgeInactive}>INACTIVE</span>
-                            )}
-                            {acc.is_control === 1 && (
-                              <span style={s.badgeControl}>CONTROL</span>
-                            )}
-                            {acc.hasChildren ? (
-                              <span style={s.badgeHeader}>HEADER</span>
-                            ) : (
-                              <span style={s.badgePostable}>POSTABLE</span>
-                            )}
-                          </div>
-                        </td>
-                        <td style={{...s.td, textAlign: 'right', fontWeight: 600, fontFamily: 'monospace'}}>
-                          {formatBalance(acc.balance || 0)}
-                        </td>
-                        <td style={{...s.td, textAlign: 'center'}}>
-                          <div style={{position: 'relative'}}>
-                            <button 
-                              style={s.menuBtn} 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setOpenMenuId(openMenuId === acc.id ? null : acc.id);
-                              }}
-                            >
-                              <MoreVertical size={16} />
-                            </button>
-                            {openMenuId === acc.id && (
-                              <div style={s.dropdown}>
-                                <div style={s.dropdownItem} onClick={(e) => { e.stopPropagation(); handleEditClick(acc); setOpenMenuId(null); }}>
-                                  <Edit2 size={14} /> Edit Account
+                     {rows.map(acc => (
+                      <React.Fragment key={acc.id}>
+                        <tr style={s.tr}>
+                          <td style={s.td}>
+                            <div style={{ display: 'flex', alignItems: 'center', paddingLeft: acc.depth * 20 }}>
+                              {acc.hasChildren ? (
+                                <div onClick={() => toggleNode(acc.id)} style={s.treeToggle}>
+                                  {collapsedNodes.has(acc.id) ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                                 </div>
-                                <div style={{...s.dropdownItem, color: 'var(--danger)'}} onClick={(e) => { e.stopPropagation(); handleDeleteClick(acc.id, acc.name); setOpenMenuId(null); }}>
-                                  <Trash2 size={14} /> Deactivate
+                              ) : (
+                                <div style={s.treeLeafSpacer} />
+                              )}
+                              <span style={s.codeText}>{acc.code}</span>
+                            </div>
+                          </td>
+                          <td style={{...s.td, color: acc.hasChildren ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: acc.hasChildren ? 600 : 400}}>
+                            {acc.name}
+                          </td>
+                          <td style={s.td}>
+                            <span style={s.typeLabel}>{acc.type}</span>
+                          </td>
+                          <td style={{...s.td, textAlign: 'center', color: 'var(--text-secondary)'}}>
+                            {getNormalSide(acc.type)}
+                          </td>
+                          <td style={s.td}>
+                            <div style={s.badgeWrap}>
+                              {acc.is_active === 1 ? (
+                                <span style={s.badgeActive}>ACTIVE</span>
+                              ) : (
+                                <span style={s.badgeInactive}>INACTIVE</span>
+                              )}
+                              {acc.is_control === 1 && (
+                                <span style={s.badgeControl}>CONTROL</span>
+                              )}
+                              {acc.hasChildren ? (
+                                <span style={s.badgeHeader}>HEADER</span>
+                              ) : (
+                                <span style={s.badgePostable}>POSTABLE</span>
+                              )}
+                            </div>
+                          </td>
+                          <td style={{...s.td, textAlign: 'right', fontWeight: 600, fontFamily: 'monospace'}}>
+                            {formatBalance(acc.balance || 0)}
+                          </td>
+                          <td style={{...s.td, textAlign: 'center'}}>
+                            <div style={{position: 'relative'}}>
+                              <button 
+                                style={s.menuBtn} 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setOpenMenuId(openMenuId === acc.id ? null : acc.id);
+                                }}
+                              >
+                                <MoreVertical size={16} />
+                              </button>
+                              {openMenuId === acc.id && (
+                                <div style={s.dropdown}>
+                                  <div style={s.dropdownItem} onClick={(e) => { e.stopPropagation(); setExpandedLedgerId(expandedLedgerId === acc.id ? null : acc.id); setOpenMenuId(null); }}>
+                                    <BookOpen size={14} /> View Ledger
+                                  </div>
+                                  <div style={s.dropdownItem} onClick={(e) => { e.stopPropagation(); handleEditClick(acc); setOpenMenuId(null); }}>
+                                    <Edit2 size={14} /> Edit Account
+                                  </div>
+                                  <div style={{...s.dropdownItem, color: 'var(--danger)'}} onClick={(e) => { e.stopPropagation(); handleDeleteClick(acc.id, acc.name); setOpenMenuId(null); }}>
+                                    <Trash2 size={14} /> Deactivate
+                                  </div>
                                 </div>
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                        {expandedLedgerId === acc.id && (
+                          <tr>
+                            <td colSpan={7} style={{ padding: '8px 16px 16px 16px', background: 'var(--bg, #F8FAFC)' }}>
+                              <AccountLedgerPanel 
+                                account={acc} 
+                                onClose={() => setExpandedLedgerId(null)} 
+                              />
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     ))}
                   </React.Fragment>
                 );

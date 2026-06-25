@@ -93,6 +93,21 @@ export default function Dashboard() {
 
   const navigate = useNavigate();
   const [electronVersion, setElectronVersion] = useState("");
+  const [businessProfile, setBusinessProfile] = useState({
+    business_name: "Cheema Traders"
+  });
+
+  useEffect(() => {
+    if (window.ipc) {
+      window.ipc.invoke("pos:settings:get").then(res => {
+        if (res && res.business_name) {
+          setBusinessProfile({
+            business_name: res.business_name
+          });
+        }
+      }).catch(e => console.error("Failed to load business name in dashboard", e));
+    }
+  }, []);
 
   useEffect(() => {
     if (window.pos && typeof window.pos.getVersions === "function") {
@@ -168,7 +183,7 @@ export default function Dashboard() {
       <aside style={{ ...s.sidebar, width: sidebarCollapsed ? 56 : 210 }}>
         <div style={s.sidebarTop}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
-            <div style={s.logoMark}>CT</div>
+            <div style={s.logoMark}>{(businessProfile.business_name || "CT").split(' ').map(w => w[0]).join('').substring(0, 3).toUpperCase()}</div>
             <div style={{
               display: "flex",
               flexDirection: "column",
@@ -178,7 +193,7 @@ export default function Dashboard() {
               whiteSpace: "nowrap",
               transition: "opacity 0.2s ease, width 0.2s ease",
             }}>
-              <div style={s.brandName}>Cheema Traders</div>
+              <div style={s.brandName}>{businessProfile.business_name}</div>
               <div style={s.brandTag}>Point of Sale</div>
             </div>
           </div>

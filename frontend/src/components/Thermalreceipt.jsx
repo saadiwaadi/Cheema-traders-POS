@@ -21,8 +21,23 @@
  *   prevBalance,   // customer balance BEFORE this sale (pass selectedCustomerObj.current_balance)
  *   notes
  */
-export function printReceipt(data) {
+export async function printReceipt(data) {
     if (!data) return;
+
+    let settings = {};
+    if (window.ipc) {
+        try {
+            settings = await window.ipc.invoke("pos:settings:get");
+        } catch (e) {
+            console.error("Failed to load settings in printReceipt", e);
+        }
+    }
+
+    const name = settings.business_name || "Cheema Traders";
+    const tagline = settings.business_tagline || "We Do. Pests Obey.";
+    const address = settings.business_address || "Shop No. [XX], [Market Name], [City]";
+    const phoneNum = settings.business_phone || "Ph: 0300-XXXXXXX";
+    const initials = name.split(' ').map(w => w[0]).join('').substring(0, 3).toUpperCase();
 
     const {
         invoiceNo = "—",
@@ -191,15 +206,15 @@ export function printReceipt(data) {
 </head>
 <body>
 
-  <div class="logo-art">.-----.<br>| C T |<br>'-----'</div>
-  <div class="shop-name">Cheema Traders</div>
-  <div class="tagline">We Do. Pests Obey.</div>
+  <div class="logo-art">.-----.<br>| ${initials} |<br>'-----'</div>
+  <div class="shop-name">${name}</div>
+  <div class="tagline">${tagline}</div>
 
   <hr class="dash mt8">
 
   <div class="center small">
-    Shop No. [XX], [Market Name], [City]<br>
-    Ph: 0300-XXXXXXX
+    ${address}<br>
+    Ph: ${phoneNum}
   </div>
 
   <hr class="dash">

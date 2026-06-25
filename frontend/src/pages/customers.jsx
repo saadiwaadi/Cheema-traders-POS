@@ -12,6 +12,7 @@ import {
   saveCustomerPayment as recordPayment,
   saveWithdrawal,
   deleteCustomer,
+  getSettings,
 } from "../lib/posApi";
 
 const BUSINESS_NAME = "Cheema Traders";
@@ -510,6 +511,33 @@ function CustomerListView({ customers, loading, onSelectHistory, onDelete, onEdi
 function CustomerHistoryView({ customer, onRefresh }) {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [businessProfile, setBusinessProfile] = useState({
+    business_name: "Cheema Traders",
+    business_tagline: "Agro Inputs & Fertilizer Distributors",
+    business_address: "Main Bazar, Sahiwal, Pakistan",
+    business_phone: "+92 300 7890123",
+    business_email: "info@cheematraders.com",
+    business_whatsapp: "",
+    business_ntn: "",
+    business_strn: ""
+  });
+
+  useEffect(() => {
+    getSettings().then(res => {
+      if (res) {
+        setBusinessProfile({
+          business_name: res.business_name || "Cheema Traders",
+          business_tagline: res.business_tagline || "Agro Inputs & Fertilizer Distributors",
+          business_address: res.business_address || "Main Bazar, Sahiwal, Pakistan",
+          business_phone: res.business_phone || "+92 300 7890123",
+          business_email: res.business_email || "info@cheematraders.com",
+          business_whatsapp: res.business_whatsapp || "",
+          business_ntn: res.business_ntn || "",
+          business_strn: res.business_strn || ""
+        });
+      }
+    }).catch(e => console.error("Failed to load business profile settings", e));
+  }, []);
   const [expandedRows, setExpandedRows] = useState({});
   const [saleItems, setSaleItems] = useState({});
   const [itemsLoading, setItemsLoading] = useState({});
@@ -779,11 +807,11 @@ function CustomerHistoryView({ customer, onRefresh }) {
     };
 
     // Header Letterhead
-    writeCell(r, 0, BUSINESS_NAME, 's', sTitle);
+    writeCell(r, 0, businessProfile.business_name, 's', sTitle);
     r++;
-    writeCell(r, 0, "AGRO INPUTS & FERTILIZER DISTRIBUTORS", 's', sSub);
+    writeCell(r, 0, businessProfile.business_tagline || "", 's', sSub);
     r++;
-    writeCell(r, 0, "Main Bazar, Sahiwal, Pakistan | Tel: +92 300 7890123 | Email: info@cheematraders.com", 's', sContact);
+    writeCell(r, 0, `${businessProfile.business_address} | Tel: ${businessProfile.business_phone} | Email: ${businessProfile.business_email}`, 's', sContact);
     r++;
     r++; // Empty row
 
@@ -893,6 +921,25 @@ function CustomerHistoryView({ customer, onRefresh }) {
   };
 
   const handlePrintStatement = async () => {
+    let activeProfile = { ...businessProfile };
+    try {
+      const freshSettings = await getSettings();
+      if (freshSettings) {
+        activeProfile = {
+          business_name: freshSettings.business_name || "Cheema Traders",
+          business_tagline: freshSettings.business_tagline || "Agro Inputs & Fertilizer Distributors",
+          business_address: freshSettings.business_address || "Main Bazar, Sahiwal, Pakistan",
+          business_phone: freshSettings.business_phone || "+92 300 7890123",
+          business_email: freshSettings.business_email || "info@cheematraders.com",
+          business_whatsapp: freshSettings.business_whatsapp || "",
+          business_ntn: freshSettings.business_ntn || "",
+          business_strn: freshSettings.business_strn || ""
+        };
+      }
+    } catch (e) {
+      console.error("Failed to load fresh settings for print statement, using state fallback", e);
+    }
+
     let rowsHtml = "";
     let sNo = 1;
 
@@ -943,350 +990,147 @@ function CustomerHistoryView({ customer, onRefresh }) {
     rowsHtml += tableRowsHtml;
 
     const html = `
-      <html>
-        <head>
-          <title>Account Statement - ${customer.name}</title>
-          <style>
-            @page {
-              size: A4;
-              margin: 15mm;
-            }
-            @media print {
-              body { padding: 0; color: #1e293b; background: #fff; }
-              thead { display: table-header-group; }
-              tfoot { display: table-footer-group; }
-              .no-print { display: none; }
-              .page-break { page-break-before: always; }
-              .summary-box { background: #f8fafc !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-              .summary-box.highlight { background: #f0fdf4 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-              thead tr { background: #1b5e20 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-              tr.bf-row { background: #f8fafc !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-            }
-            body {
-              font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-              color: #1e293b;
-              background: #fff;
-              font-size: 11px;
-              line-height: 1.5;
-              margin: 0;
-              padding: 20px;
-            }
-            .header-container {
-              display: flex;
-              justify-content: space-between;
-              align-items: flex-start;
-              border-bottom: 2px solid #e2e8f0;
-              padding-bottom: 20px;
-              margin-bottom: 25px;
-            }
-            .brand-section {
-              display: flex;
-              align-items: center;
-              gap: 12px;
-            }
-            .logo-mark {
-              width: 42px;
-              height: 42px;
-              border-radius: 8px;
-              background: linear-gradient(135deg, #1b5e20, #2e7d32);
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              font-size: 18px;
-              font-weight: 800;
-              color: #fff;
-              letter-spacing: 0.5px;
-            }
-            .company-title-block {
-              display: flex;
-              flex-direction: column;
-            }
-            .company-name {
-              font-size: 24px;
-              font-weight: 800;
-              color: #1b5e20;
-              line-height: 1.1;
-              letter-spacing: -0.5px;
-            }
-            .company-sub {
-              font-size: 9.5px;
-              color: #64748b;
-              font-weight: 700;
-              text-transform: uppercase;
-              letter-spacing: 1px;
-              margin-top: 3px;
-            }
-            .company-details {
-              font-size: 9px;
-              color: #64748b;
-              margin-top: 5px;
-              line-height: 1.4;
-            }
-            .doc-title-section {
-              text-align: right;
-            }
-            .doc-title {
-              margin: 0;
-              font-size: 20px;
-              font-weight: 800;
-              color: #0f172a;
-              text-transform: uppercase;
-              letter-spacing: 0.5px;
-            }
-            .doc-sub {
-              margin: 4px 0 0 0;
-              color: #64748b;
-              font-size: 11px;
-              font-weight: 500;
-            }
-            .doc-period {
-              margin: 4px 0 0 0;
-              font-size: 10.5px;
-              font-weight: 600;
-              color: #1b5e20;
-              background: #f0fdf4;
-              padding: 2px 8px;
-              border-radius: 4px;
-              display: inline-block;
-            }
-            .meta-grid {
-              display: grid;
-              grid-template-columns: 1.5fr 1fr;
-              gap: 20px;
-              margin-bottom: 25px;
-            }
-            .party-card {
-              border: 1px solid #e2e8f0;
-              border-radius: 6px;
-              padding: 12px 16px;
-              background: #fff;
-            }
-            .card-title {
-              font-size: 9px;
-              font-weight: 700;
-              color: #64748b;
-              text-transform: uppercase;
-              letter-spacing: 0.5px;
-              margin-bottom: 6px;
-              border-bottom: 1px solid #f1f5f9;
-              padding-bottom: 4px;
-            }
-            .party-name {
-              font-size: 14px;
-              font-weight: 700;
-              color: #0f172a;
-              margin-bottom: 4px;
-            }
-            .party-info {
-              font-size: 10px;
-              color: #475569;
-              margin: 2px 0;
-            }
-            .summary-grid {
-              display: grid;
-              grid-template-columns: repeat(4, 1fr);
-              gap: 12px;
-              margin-bottom: 25px;
-            }
-            .summary-box {
-              border: 1px solid #e2e8f0;
-              border-radius: 6px;
-              padding: 12px 14px;
-              background: #f8fafc;
-              border-left: 3.5px solid #64748b;
-            }
-            .summary-box.debit-accent { border-left-color: #ef4444; }
-            .summary-box.credit-accent { border-left-color: #22c55e; }
-            .summary-box.highlight {
-              background: #f0fdf4;
-              border-color: #1b5e20;
-              border-left-width: 4px;
-              border-left-color: #1b5e20;
-            }
-            .summary-label {
-              font-size: 9px;
-              font-weight: 700;
-              color: #64748b;
-              text-transform: uppercase;
-              letter-spacing: 0.5px;
-              margin-bottom: 4px;
-            }
-            .summary-val {
-              font-size: 14px;
-              font-weight: 800;
-              color: #0f172a;
-              font-family: 'Consolas', 'Courier New', monospace;
-            }
-            .summary-box.highlight .summary-val {
-              font-size: 15px;
-              color: #1b5e20;
-            }
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              margin-top: 15px;
-            }
-            thead tr {
-              background: #1b5e20;
-              color: #fff;
-            }
-            th {
-              padding: 9px 10px;
-              text-align: left;
-              font-weight: 700;
-              font-size: 9.5px;
-              text-transform: uppercase;
-              letter-spacing: 0.5px;
-            }
-            th.num, td.num {
-              text-align: right;
-            }
-            td {
-              padding: 9px 10px;
-              color: #334155;
-              border-bottom: 1px solid #e2e8f0;
-              font-size: 10.5px;
-            }
-            tr:nth-child(even) {
-              background: #f8fafc;
-            }
-            tr.bf-row {
-              background: #f1f5f9;
-              font-weight: 600;
-            }
-            .bold { font-weight: 700; }
-            .muted { color: #64748b; }
-            .text-success { color: #16a34a; }
-            .text-danger { color: #dc2626; }
-            .ref-no {
-              color: #64748b;
-              font-size: 9px;
-              font-family: 'Consolas', monospace;
-              margin-left: 4px;
-            }
-            .footer-container {
-              margin-top: 50px;
-              display: flex;
-              justify-content: space-between;
-              align-items: flex-end;
-              border-top: 1px solid #e2e8f0;
-              padding-top: 20px;
-              font-size: 9px;
-              color: #64748b;
-              page-break-inside: avoid;
-            }
-            .sig-block {
-              text-align: center;
-              width: 180px;
-            }
-            .sig-line {
-              border-top: 1.5px solid #475569;
-              margin-bottom: 5px;
-              padding-top: 6px;
-              font-weight: 700;
-              color: #334155;
-              text-transform: uppercase;
-              letter-spacing: 0.5px;
-            }
-            .footer-stamp {
-              max-width: 320px;
-              line-height: 1.4;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="header-container">
-            <div>
-              <div class="brand-section">
-                <div class="logo-mark">CT</div>
-                <div class="company-title-block">
-                  <div class="company-name">${BUSINESS_NAME}</div>
-                  <div class="company-sub">Agro Inputs & Fertilizer Distributors</div>
-                </div>
-              </div>
-              <div class="company-details">
-                Main Bazar, Sahiwal, Pakistan<br>
-                Tel: +92 300 7890123 | Email: info@cheematraders.com
-              </div>
-            </div>
-            <div class="doc-title-section">
-              <h1 class="doc-title">Account Statement</h1>
-              <div class="doc-sub">Generated: ${new Date().toLocaleDateString("en-PK", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
-              <div class="doc-period">Period: ${fromDate || "Inception"} &mdash; ${toDate || "Today"}</div>
-            </div>
-          </div>
+<html>
+<head>
+<title>Account Statement - ${customer.name}</title>
+<style>
+@page { size: A4; margin: 12mm 15mm; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: Arial, sans-serif; font-size: 11px; color: #000; background: #fff; padding: 0; }
+.header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2.5px solid #000; padding-bottom: 12px; margin-bottom: 14px; }
+.brand { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; color: #000; }
+.tagline { font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: #444; margin-top: 2px; }
+.contact { font-size: 9px; color: #555; margin-top: 6px; line-height: 1.6; }
+.doc-title { font-size: 17px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1.5px solid #000; padding-bottom: 4px; margin-bottom: 6px; text-align: right; }
+.doc-meta { font-size: 9px; color: #444; line-height: 1.7; text-align: right; }
+.party-row { display: flex; border: 1px solid #000; margin-bottom: 10px; }
+.party-cell { padding: 8px 12px; flex: 1; }
+.party-cell + .party-cell { border-left: 1px solid #000; flex: 0 0 200px; text-align: right; }
+.cell-label { font-size: 8px; text-transform: uppercase; letter-spacing: 0.08em; color: #555; font-weight: 700; margin-bottom: 3px; }
+.cell-value { font-size: 13px; font-weight: 700; }
+.cell-sub { font-size: 9px; color: #444; margin-top: 2px; }
+.summary-strip { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid #000; margin-bottom: 12px; }
+.sc { padding: 7px 10px; }
+.sc + .sc { border-left: 1px solid #000; }
+.sc-label { font-size: 8px; text-transform: uppercase; letter-spacing: 0.06em; color: #555; font-weight: 700; margin-bottom: 3px; }
+.sc-val { font-size: 12px; font-weight: 700; font-family: 'Courier New', monospace; }
+.sc.closing { background: #000; color: #fff; }
+.sc.closing .sc-label { color: #bbb; }
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+thead tr { background: #000; color: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+th { padding: 7px 8px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; border: 1px solid #000; text-align: left; }
+th.num { text-align: right; }
+td { padding: 6px 8px; border: 1px solid #ccc; font-size: 10px; vertical-align: top; }
+td.num { text-align: right; font-family: 'Courier New', monospace; }
+tr:nth-child(even) td { background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.group-hdr td { background: #e0e0e0 !important; font-weight: 700; font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; padding: 4px 8px; border-color: #999; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.totals-row td { background: #000 !important; color: #fff; font-weight: 700; font-size: 10px; border-color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.totals-row td.num { font-family: 'Courier New', monospace; }
+.badge { font-size: 8px; font-weight: 700; text-transform: uppercase; padding: 1px 4px; border: 1px solid #000; display: inline-block; letter-spacing: 0.04em; }
+.part-main { font-weight: 700; font-size: 10px; }
+.part-sub { font-size: 9px; color: #555; margin-top: 1px; }
+.footer { margin-top: 28px; border-top: 1.5px solid #000; padding-top: 12px; display: flex; justify-content: space-between; align-items: flex-end; }
+.footer-note { font-size: 8px; color: #555; line-height: 1.6; max-width: 340px; }
+.sig-block { text-align: center; border-top: 1px solid #000; padding-top: 6px; font-size: 9px; font-weight: 700; min-width: 180px; }
+.dr { font-family: 'Courier New', monospace; }
+.cr { font-family: 'Courier New', monospace; font-weight: 700; }
+.bal { font-family: 'Courier New', monospace; font-weight: 700; }
+.disc { font-size: 8px; color: #aaa; text-align: center; margin-top: 8px; }
+</style>
+</head>
+<body>
 
-          <div class="meta-grid">
-            <div class="party-card">
-              <div class="card-title">Statement For Customer</div>
-              <div class="party-name">${customer.name}</div>
-              ${customer.phone ? `<div class="party-info"><strong>Phone:</strong> ${customer.phone}</div>` : ""}
-              ${customer.address ? `<div class="party-info"><strong>Address:</strong> ${customer.address}</div>` : ""}
-            </div>
-            <div class="party-card">
-              <div class="card-title">Account Summary</div>
-              <div class="party-info">
-                <strong>Status:</strong> 
-                ${closing === 0 ? "Settled" : closing > 0 ? '<span class="text-danger bold">Receivable (Dr)</span>' : '<span class="text-success bold">Advance Credit (Cr)</span>'}
-              </div>
-              <div class="party-info">
-                <strong>Final Balance:</strong> 
-                <span class="bold ${closing > 0 ? 'text-danger' : closing < 0 ? 'text-success' : ''}">
-                  ${formatMoney(Math.abs(closing))} ${closing > 0 ? "Dr" : closing < 0 ? "Cr" : ""}
-                </span>
-              </div>
-            </div>
-          </div>
+<div class="header">
+  <div>
+    <div class="brand">${activeProfile.business_name}</div>
+    <div class="tagline">${activeProfile.business_tagline}</div>
+    <div class="contact">${activeProfile.business_address}<br>Tel: ${activeProfile.business_phone} &nbsp;|&nbsp; ${activeProfile.business_email}</div>
+  </div>
+  <div>
+    <div class="doc-title">Account Statement</div>
+    <div class="doc-meta">
+      Generated: ${new Date().toLocaleDateString("en-PK", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}<br>
+      Period: ${fromDate || "Inception"} &mdash; ${toDate || "Today"}
+    </div>
+  </div>
+</div>
 
-          <div class="summary-grid">
-            <div class="summary-box">
-              <div class="summary-label">Opening Balance</div>
-              <div class="summary-val">${formatMoney(Math.abs(openingBF))} ${openingBF > 0 ? "Dr" : openingBF < 0 ? "Cr" : ""}</div>
-            </div>
-            <div class="summary-box debit-accent">
-              <div class="summary-label">Total Debits (+)</div>
-              <div class="summary-val">${formatMoney(periodDebit)}</div>
-            </div>
-            <div class="summary-box credit-accent">
-              <div class="summary-label">Total Credits (-)</div>
-              <div class="summary-val text-success">${formatMoney(periodCredit)}</div>
-            </div>
-            <div class="summary-box highlight">
-              <div class="summary-label">Closing Balance</div>
-              <div class="summary-val">${formatMoney(Math.abs(closing))} ${closing > 0 ? "Dr" : closing < 0 ? "Cr" : ""}</div>
-            </div>
-          </div>
+<div class="party-row">
+  <div class="party-cell">
+    <div class="cell-label">Statement For</div>
+    <div class="cell-value">${customer.name}</div>
+    <div class="cell-sub">Customer Account &nbsp;|&nbsp; A/R Subledger${customer.phone ? " &nbsp;|&nbsp; " + customer.phone : ""}</div>
+  </div>
+  <div class="party-cell">
+    <div class="cell-label">Current Balance</div>
+    <div class="cell-value">${closing === 0 ? "Rs. 0.00 — Settled" : closing > 0 ? "Dr Rs. " + Math.abs(closing).toLocaleString("en-PK", {minimumFractionDigits:2}) : "Cr Rs. " + Math.abs(closing).toLocaleString("en-PK", {minimumFractionDigits:2})}</div>
+    <div class="cell-sub">${closing > 0 ? "Receivable — amount owed to us" : closing < 0 ? "Advance credit in customer favour" : "Account fully settled"}</div>
+  </div>
+</div>
 
-          <table>
-            <thead>
-              <tr>
-                <th style="width: 25px;">#</th>
-                <th style="width: 80px;">Date</th>
-                <th>Particulars</th>
-                <th style="width: 80px;">Method</th>
-                <th class="num" style="width: 100px;">Debit (Dr)</th>
-                <th class="num" style="width: 100px;">Credit (Cr)</th>
-                <th class="num" style="width: 120px;">Balance</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rowsHtml}
-            </tbody>
-          </table>
+<div class="summary-strip">
+  <div class="sc">
+    <div class="sc-label">Opening Balance</div>
+    <div class="sc-val">${formatMoney(Math.abs(openingBF))} ${openingBF > 0 ? "Dr" : openingBF < 0 ? "Cr" : ""}</div>
+  </div>
+  <div class="sc">
+    <div class="sc-label">Total Debits (Dr)</div>
+    <div class="sc-val">${formatMoney(periodDebit)}</div>
+  </div>
+  <div class="sc">
+    <div class="sc-label">Total Credits (Cr)</div>
+    <div class="sc-val">${formatMoney(periodCredit)}</div>
+  </div>
+  <div class="sc closing">
+    <div class="sc-label">Closing Balance</div>
+    <div class="sc-val">${formatMoney(Math.abs(closing))} ${closing > 0 ? "Dr" : closing < 0 ? "Cr" : ""}</div>
+  </div>
+</div>
 
-          <div class="footer-container">
-            <div class="footer-stamp">
-              <strong>Cheema Traders POS System</strong><br>
-              This is a computer-generated statement and does not require a physical stamp. For any discrepancies, contact us within 7 days of statement receipt.
-            </div>
-            <div class="sig-block">
-              <div class="sig-line">Authorized Signature</div>
-              <span class="muted">Cheema Traders</span>
-            </div>
-          </div>
-        </body>
-      </html>
-    `;
+<table>
+  <colgroup>
+    <col style="width:28px">
+    <col style="width:70px">
+    <col">
+    <col style="width:60px">
+    <col style="width:70px">
+    <col style="width:90px">
+    <col style="width:90px">
+    <col style="width:100px">
+  </colgroup>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Date</th>
+      <th>Particulars</th>
+      <th>Method</th>
+      <th>Ref / Type</th>
+      <th class="num">Debit (Dr)</th>
+      <th class="num">Credit (Cr)</th>
+      <th class="num">Balance</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${rowsHtml}
+  </tbody>
+</table>
+
+<div class="footer">
+  <div class="footer-note">
+    <strong>${activeProfile.business_name} POS System</strong><br>
+    Computer-generated statement — no physical stamp required.<br>
+    For discrepancies contact us within 7 days of statement receipt.
+  </div>
+  <div class="sig-block">
+    Authorized Signature<br>
+    <span style="font-weight:400;">${activeProfile.business_name}</span>
+  </div>
+</div>
+<div class="disc">Dr = receivable from customer &nbsp;|&nbsp; Cr = advance / credit in customer's favour</div>
+
+</body>
+</html>
+`;
 
     if (window.ipc) {
       await window.ipc.invoke("db:print-html-report", html);

@@ -9,7 +9,8 @@ import {
   getEmployeeHistory,
   recordEmployeeTransaction,
   getEmployeeStats,
-  listBanks
+  listBanks,
+  getSettings
 } from "../lib/posApi";
 
 const BUSINESS_NAME = "Cheema Traders";
@@ -675,6 +676,17 @@ function EmployeeHistoryView({ employee, onOpenTx, onRefresh }) {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [loading, setLoading] = useState(true);
+  const [businessProfile, setBusinessProfile] = useState({
+    business_name: "Cheema Traders"
+  });
+
+  useEffect(() => {
+    getSettings().then(res => {
+      if (res && res.business_name) {
+        setBusinessProfile({ business_name: res.business_name });
+      }
+    }).catch(e => console.error("Failed to load business profile settings", e));
+  }, []);
 
   const fetchHistory = useCallback(async () => {
     try {
@@ -707,7 +719,7 @@ function EmployeeHistoryView({ employee, onOpenTx, onRefresh }) {
     const wsData = [];
     
     wsData.push(["PAYROLL LEDGER STATEMENT"]);
-    wsData.push([BUSINESS_NAME]);
+    wsData.push([businessProfile.business_name]);
     wsData.push([]);
     wsData.push(["Employee:", employee.name]);
     wsData.push(["Designation:", employee.designation || "Staff"]);
@@ -773,7 +785,7 @@ function EmployeeHistoryView({ employee, onOpenTx, onRefresh }) {
         <body>
           <div class="header">
             <div>
-              <div class="brand">${BUSINESS_NAME}</div>
+              <div class="brand">${businessProfile.business_name}</div>
               <div style="font-size:12px;margin-top:4px;">Payroll Subledger Ledger</div>
             </div>
             <div style="text-align:right;">

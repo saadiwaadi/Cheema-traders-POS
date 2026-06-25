@@ -334,6 +334,26 @@ class PosStore {
     return get(db, `SELECT value FROM settings WHERE key = 'company_name'`);
   }
 
+  async getSettings() {
+    const db = await this._db();
+    const rows = await all(db, "SELECT key, value FROM settings");
+    const settingsObj = {};
+    rows.forEach(r => {
+      settingsObj[r.key] = r.value;
+    });
+    return settingsObj;
+  }
+
+  async saveSettings(data) {
+    const db = await this._db();
+    await this.transaction(async (txDb) => {
+      for (const [key, value] of Object.entries(data)) {
+        await run(txDb, "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", [key, value]);
+      }
+    });
+    return { success: true };
+  }
+
   async listSuppliers(search = "") {
     const db = await this._db();
     await this._syncAllSupplierBalances(db);
@@ -3043,7 +3063,12 @@ class PosStore {
 
   async getSettings() {
     const db = await this._db();
-    return all(db, `SELECT key, value FROM settings ORDER BY key ASC`);
+    const rows = await all(db, "SELECT key, value FROM settings");
+    const settingsObj = {};
+    rows.forEach(r => {
+      settingsObj[r.key] = r.value;
+    });
+    return settingsObj;
   }
 
   async updateSetting(key, value) {
@@ -3187,6 +3212,51 @@ class PosStore {
       await run(db, "DELETE FROM accounts WHERE id = ?", [id]);
       return { action: "deleted" };
     }
+  }
+
+  async getAccountLedger(accountId, startDate, endDate) {
+    const db = await this._db();
+    const account = await get(db, "SELECT type FROM accounts WHERE id = ?", [accountId]);
+    const accountType = account?.type || "asset";
+    const rows = await all(
+      db,
+      `SELECT
+        je.date AS entry_date,
+        je.narration AS description,
+        je.source_type,
+        je.source_id,
+        jl.debit,
+        jl.credit
+      FROM journal_lines jl
+      JOIN journal_entries je ON je.id = jl.entry_id
+      WHERE jl.account_id = ?
+        AND je.date >= ?
+        AND je.date <= ?
+      ORDER BY je.date ASC, je.id ASC`,
+      [accountId, startDate, endDate]
+    );
+
+    let balance = 0;
+    const typeLower = String(accountType || "").toLowerCase();
+    const isAssetOrExpense = typeLower === "asset" || typeLower === "expense";
+
+    return rows.map(row => {
+      const debit = Number(row.debit || 0);
+      const credit = Number(row.credit || 0);
+      
+      if (isAssetOrExpense) {
+        balance += (debit - credit);
+      } else {
+        balance += (credit - debit);
+      }
+
+      return {
+        ...row,
+        debit,
+        credit,
+        running_balance: balance
+      };
+    });
   }
 
   assertBalanced(lines) {
