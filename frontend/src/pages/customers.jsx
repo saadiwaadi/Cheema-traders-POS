@@ -628,7 +628,7 @@ function CustomerHistoryView({ customer, onRefresh }) {
   const periodDebit = visible.reduce((s, r) => s + r.debit, 0);
   const periodCredit = visible.reduce((s, r) => s + r.credit, 0);
 
-  const currentBalance = statementRows.length > 0 ? statementRows[0].runningBalance : Number(customer.opening_balance || 0);
+  const currentBalance = Number(customer.current_balance ?? customer.cached_balance ?? 0);
 
   const totalBilled = baseRows.filter(h => h.type === 'Sale').reduce((sum, h) => sum + Number(h.total_amount || 0), 0);
   const totalPaid = baseRows.filter(h => h.type !== 'Withdrawal' && h.type !== 'Opening').reduce((sum, h) => sum + Number(h.paid_amount || 0), 0);
