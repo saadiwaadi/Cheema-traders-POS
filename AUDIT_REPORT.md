@@ -24,10 +24,16 @@ Reproducible test harness added under `backend/tests/`:
 |---|---|
 | Core sales / purchase / inventory / ledger math | **Working** — 26/26 functional checks pass |
 | Concurrency safety | **Was broken → now FIXED** (data loss + freeze) |
-| The financial "books" surface (Cash Book, General Ledger, Analysis, Expenses) | **Not wired to real data — mock only** |
-| Cash-in-hand accounting | **Missing** — cash never posts to any account |
+| The financial "books" surface (Cash Book, General Ledger, Analysis, Expenses) | **Was mock → now WIRED to live data** (see §8) |
+| Cash-in-hand accounting | **Was missing → now BUILT** (cash_ledger, reconcilable) (§8) |
 | Cross-module leakage | One real aliasing issue (Companies == Suppliers) |
 | Auth / access control | **Weak** — plaintext PINs, no server-side authz |
+
+> **Update (reporting build):** Stages 1–3 of the accounting layer are now
+> implemented — expenses persist, a cash/bank money ledger makes cash-in-hand
+> reconcilable, and the Cash Book, General Ledger and Analysis dashboards read
+> live data. Detail in **§8**. The findings below are preserved as the original
+> audit record; items resolved by the build are marked there.
 
 **The one fix implemented this pass:** the random freeze while searching. Root
 cause was a backend concurrency defect, proven and fixed (details in §4).
@@ -253,7 +259,70 @@ Measured on throwaway DBs (`stress-test.js`):
 
 ---
 
-## 7. What changed in this commit
+## 8. Reporting build — the accounting layer (Stages 1–3)
+
+Implemented after the audit, in three committed stages, to close the §2 gap.
+
+### Stage 1 — Expenses backend
+`store.saveExpense/listExpenses/deleteExpense` + routes/IPC/preload/posApi; the
+Expenses page now saves and lists real records. Non-positive amounts are rejected.
+
+### Stage 2 — Cash / bank money ledger (`cash_ledger`)
+A single source of truth for actual money movement. Every cash/bank inflow and
+outflow now posts to it: sale payments received, purchase payments made,
+customer/supplier payments, expenses, and both legs of bank transfers. Voiding a
+sale reverses its cash posting. Opening cash comes from `settings.opening_cash`.
+This makes **cash-in-hand reconcilable** for the first time.
+
+New store methods (with routes + IPC):
+- `getAccountsBalances` — cash-in-hand + per-bank balances from the ledger.
+- `getCashBook` — two-column (cash/bank) cash book with opening balance,
+  brought-forward, running balances, and period totals.
+- `getGeneralLedger` — **double-entry** rows derived from the source
+  transactions (Sales Revenue, Accounts Receivable/Payable, Inventory, Expenses,
+  money accounts). Overpayments are booked to Customer/Supplier Advances so every
+  transaction balances. Returns a **trial balance** that sums to zero.
+- `getAnalysis` — revenue, COGS, gross/net profit, receivables/payables,
+  sales-by-day, by-method, top products, category sales, expense-by-category,
+  customer/supplier dues, inventory value, low-stock and expiring batches.
+
+### Stage 3 — Reports wired to live data
+- **Cash Book** (`CashBook.jsx`) → `getCashBook` (also fixed a misplaced
+  mid-file `import React` that would have crashed the build).
+- **General Ledger** (`ledger.jsx`) → `getGeneralLedger` with account filter and
+  per-account running balance.
+- **Analysis** (`AnalysisShell` + Sales/Inventory/CustomerDues/Supplier
+  workspaces) → `getAnalysis`; headline tiles (today's sales, cash-in-hand, dues,
+  inventory value, gross/net profit) and each workspace's primary tables now show
+  real figures.
+
+### Verified
+- `backend/tests/books-audit.js` — **14/14**: cash reconciliation, bank balance,
+  cash-book/accounts agreement, **balanced trial balance**, void reversal,
+  analysis aggregates.
+- Functional suite **26/26**, freeze repro still clean, frontend `npm run build`
+  succeeds.
+
+### Resolved by the build (were findings in §1–§3)
+- §1.8 Expenses had no backend → **built**.
+- §2 Cash Book / Ledger / Analysis / Expenses were mock → **live**.
+- §2 No cash-in-hand ledger → **built and reconcilable**.
+- §3 #6 Negative payments accepted → **now rejected** (validation added).
+- §1.5 partial: a **voided sale now reverses its own cash posting** (standalone
+  customer payments are still not auto-refunded — a credit-note flow remains a
+  recommendation).
+
+### Still open (recommendations, not done)
+- Per-invoice **aging** for customer/supplier dues (needs invoice-level due
+  dates); dashboards currently show concentration/share, not day-buckets.
+- **Refund / credit-note** flow for money already received on a voided sale.
+- Tax/GST, returns, barcode, server-side auth (unchanged from §6).
+- The Analysis "Recommendations" and "Recent Activity" side panels remain static
+  placeholder text (advisory copy, not books data).
+
+---
+
+## 7. What changed in the original audit commit
 
 - `backend/store.js` — concurrency serialization fix for the search-bar freeze /
   data-loss bug (§4). **Only backend logic changed; no UX/UI changes made.**

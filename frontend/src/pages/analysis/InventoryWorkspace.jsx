@@ -1,20 +1,44 @@
 import { st } from "./shared/analysisStyles";
 
-export default function InventoryWorkspace() {
+export default function InventoryWorkspace({ analysis }) {
+  const inv = analysis?.inventory || {};
+  const lowStock = inv.lowStock || [];
+  const expiringSoon = inv.expiringSoon || [];
+
+  // Real alerts: low/out of stock + batches nearing expiry.
   const stockAlerts = [
-    { product: "Roundup", issue: "Expiry Risk", detail: "Expires in 18 days", status: "warning" },
-    { product: "Mospilan", issue: "Low Stock", detail: "Only 8 bottles left", status: "danger" },
-    { product: "Coragen", issue: "Slow Movement", detail: "No sales in 22 days", status: "neutral" },
+    ...lowStock.map((p) => ({
+      product: p.name,
+      issue: Number(p.stock || 0) <= 0 ? "Out of Stock" : "Low Stock",
+      detail: `${Number(p.stock || 0)} in stock (reorder at ${Number(p.low_stock_level || 0)})`,
+      status: Number(p.stock || 0) <= 0 ? "danger" : "warning",
+    })),
+    ...expiringSoon.map((b) => ({
+      product: b.productName,
+      issue: "Expiry Risk",
+      detail: `Batch ${b.batchNo} expires ${b.expiryDate} (${Number(b.qty || 0)} left)`,
+      status: "warning",
+    })),
   ];
 
-  const inventoryData = [
-    { product: "Roundup", category: "Herbicide", stock: 88, value: "Rs 124,000", expiry: "12 Aug 2026", trend: "Fast" },
-    { product: "Mospilan", category: "Insecticide", stock: 14, value: "Rs 45,000", expiry: "08 Jul 2026", trend: "Low Stock" },
-    { product: "Coragen", category: "Pesticide", stock: 42, value: "Rs 210,000", expiry: "18 Sep 2026", trend: "Stable" },
-    { product: "Confidor", category: "Insecticide", stock: 20, value: "Rs 60,000", expiry: "22 Nov 2026", trend: "Normal" },
-    { product: "Nativo", category: "Fungicide", stock: 5, value: "Rs 15,000", expiry: "01 Dec 2026", trend: "Low Stock" },
-    { product: "Belt", category: "Insecticide", stock: 0, value: "Rs 0", expiry: "-", trend: "Out of Stock" },
-  ];
+  // Real batch valuation view.
+  const inventoryData = expiringSoon.map((b) => ({
+    product: b.productName,
+    category: `Batch ${b.batchNo}`,
+    stock: Number(b.qty || 0),
+    value: "—",
+    expiry: b.expiryDate || "—",
+    trend: "Expiring",
+  })).concat(
+    lowStock.map((p) => ({
+      product: p.name,
+      category: "—",
+      stock: Number(p.stock || 0),
+      value: "—",
+      expiry: "—",
+      trend: Number(p.stock || 0) <= 0 ? "Out of Stock" : "Low Stock",
+    }))
+  );
 
   return (
     <>

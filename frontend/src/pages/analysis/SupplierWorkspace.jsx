@@ -1,19 +1,28 @@
 import { st } from "./shared/analysisStyles";
 
-export default function SupplierWorkspace() {
+export default function SupplierWorkspace({ analysis }) {
+  const rs = (n) => `Rs ${Math.round(Number(n || 0)).toLocaleString()}`;
+  // Suppliers we owe (positive balance = payable).
+  const all = analysis?.supplierDues || [];
+  const payables = all.filter((s) => Number(s.balance || 0) > 0);
+  const advances = all.filter((s) => Number(s.balance || 0) < 0);
+  const totalPayable = payables.reduce((s, x) => s + Number(x.balance || 0), 0);
+  const top = payables.slice().sort((a, b) => b.balance - a.balance);
+
   const summaryData = [
-    { label: "Total Pending Liability", value: "Rs 245,000" },
-    { label: "Overdue Amount", value: "Rs 90,000" },
-    { label: "Partially Paid", value: "Rs 45,000" },
-    { label: "Settled This Month", value: "Rs 110,000" },
+    { label: "Total Pending Liability", value: rs(totalPayable) },
+    { label: "Suppliers Owed", value: String(payables.length) },
+    { label: "Largest Liability", value: rs(top[0]?.balance || 0) },
+    { label: "Advances / Overpaid", value: rs(Math.abs(advances.reduce((s, x) => s + Number(x.balance || 0), 0))) },
   ];
 
-  const supplierData = [
-    { supplier: "Bayer CropScience", pending: "Rs 90,000", invoice: "INV-B-442", dueDate: "10 Aug 2026", status: "Overdue" },
-    { supplier: "Syngenta", pending: "Rs 45,000", invoice: "INV-S-102", dueDate: "25 Aug 2026", status: "Partially Paid" },
-    { supplier: "FMC Corporation", pending: "Rs 110,000", invoice: "INV-F-881", dueDate: "05 Sep 2026", status: "Unpaid" },
-    { supplier: "Corteva Agriscience", pending: "Rs 0", invoice: "INV-C-339", dueDate: "01 Aug 2026", status: "Settled" },
-  ];
+  const supplierData = top.map((s) => ({
+    supplier: s.name,
+    pending: rs(s.balance),
+    invoice: s.phone || "—",
+    dueDate: "—",
+    status: "Unpaid",
+  }));
 
   return (
     <>
@@ -37,7 +46,7 @@ export default function SupplierWorkspace() {
         <div style={st.tableWrap}>
           <div style={st.tableHead}>
             <span style={{ flex: 2 }}>Supplier Name</span>
-            <span style={{ flex: 1.2 }}>Invoice Ref</span>
+            <span style={{ flex: 1.2 }}>Contact</span>
             <span style={{ flex: 1 }}>Pending Amount</span>
             <span style={{ flex: 1.2 }}>Due Date</span>
             <span style={{ width: 110 }}>Payment State</span>

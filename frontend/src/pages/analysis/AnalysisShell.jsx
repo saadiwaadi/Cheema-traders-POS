@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { st } from "./shared/analysisStyles";
 import InventoryWorkspace from "./InventoryWorkspace";
 import CustomerDuesWorkspace from "./CustomerDuesWorkspace";
 import SupplierWorkspace from "./SupplierWorkspace";
 import SalesWorkspace from "./SalesWorkspace";
+import { getAnalysis } from "../../lib/posApi";
 
 const WORKSPACES = [
   { id: "sales", label: "Sales" },
@@ -12,15 +13,42 @@ const WORKSPACES = [
   { id: "suppliers", label: "Suppliers" },
 ];
 
+export function rs(n) {
+  const v = Number(n || 0);
+  return `Rs ${Math.round(v).toLocaleString()}`;
+}
+
 export default function AnalysisShell() {
   const [activeWorkspace, setActiveWorkspace] = useState("sales");
+  const [analysis, setAnalysis] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const data = await getAnalysis({});
+        if (alive) setAnalysis(data);
+      } catch (e) {
+        console.error("Failed to load analysis", e);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const ov = analysis?.overview || {};
+  const today = new Date().toISOString().slice(0, 10);
+  const todaySales = (analysis?.salesByDay || []).filter(d => d.date === today).reduce((s, d) => s + Number(d.total || 0), 0);
+  const expensesToday = 0; // per-day expense split not surfaced; overall shown in Expenses page
 
   function renderWorkspace() {
     switch (activeWorkspace) {
-      case "inventory": return <InventoryWorkspace />;
-      case "customerDues": return <CustomerDuesWorkspace />;
-      case "suppliers": return <SupplierWorkspace />;
-      case "sales": default: return <SalesWorkspace />;
+      case "inventory": return <InventoryWorkspace analysis={analysis} />;
+      case "customerDues": return <CustomerDuesWorkspace analysis={analysis} />;
+      case "suppliers": return <SupplierWorkspace analysis={analysis} />;
+      case "sales": default: return <SalesWorkspace analysis={analysis} />;
     }
   }
 
@@ -51,11 +79,11 @@ export default function AnalysisShell() {
 
         {/* STABLE STATUS BAR */}
         <div style={st.statusBar}>
-          <StatusCard label="Today's Sales" value="Rs 148,200" />
-          <StatusCard label="Cash In Hand" value="Rs 84,000" />
-          <StatusCard label="Supplier Dues" value="Rs 245,000" />
-          <StatusCard label="Credit Outstanding" value="Rs 212,400" />
-          <StatusCard label="Inventory Value" value="Rs 2.8M" />
+          <StatusCard label="Today's Sales" value={loading ? "…" : rs(todaySales)} />
+          <StatusCard label="Cash In Hand" value={loading ? "…" : rs(ov.cashInHand)} />
+          <StatusCard label="Supplier Dues" value={loading ? "…" : rs(ov.totalPayable)} />
+          <StatusCard label="Credit Outstanding" value={loading ? "…" : rs(ov.totalReceivable)} />
+          <StatusCard label="Inventory Value" value={loading ? "…" : rs(analysis?.inventory?.stockValue)} />
         </div>
 
         {/* MAIN GRID: WORKSPACE BODY + STABLE RIGHT PANEL */}
@@ -69,10 +97,11 @@ export default function AnalysisShell() {
             <div style={st.sideCard}>
               <h3 style={st.sideTitle}>Financial Overview</h3>
               <div style={st.metricList}>
-                <MetricRow label="Today's Profit" value="Rs 18,400" highlight />
-                <MetricRow label="Pending Supplier Payments" value="Rs 245,000" />
-                <MetricRow label="Customer Credit" value="Rs 212,400" />
-                <MetricRow label="Expenses Today" value="Rs 8,200" />
+                <MetricRow label="Net Profit (period)" value={loading ? "…" : rs(ov.netProfit)} highlight />
+                <MetricRow label="Gross Profit (period)" value={loading ? "…" : rs(ov.grossProfit)} />
+                <MetricRow label="Pending Supplier Payments" value={loading ? "…" : rs(ov.totalPayable)} />
+                <MetricRow label="Customer Credit" value={loading ? "…" : rs(ov.totalReceivable)} />
+                <MetricRow label="Total Expenses (period)" value={loading ? "…" : rs(ov.expenses)} />
               </div>
             </div>
 

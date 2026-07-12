@@ -1,30 +1,36 @@
 import { st } from "./shared/analysisStyles";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
-export default function SalesWorkspace() {
+export default function SalesWorkspace({ analysis }) {
+  const ov = analysis?.overview || {};
+  const salesByDay = analysis?.salesByDay || [];
+  const topProducts = analysis?.topProducts || [];
+  const categorySales = analysis?.categorySales || [];
+
+  const rs = (n) => `Rs ${Math.round(Number(n || 0)).toLocaleString()}`;
+  const dayCount = salesByDay.length || 1;
+  const dailyAverage = (ov.revenue || 0) / dayCount;
+  const avgBill = ov.salesCount ? (ov.revenue || 0) / ov.salesCount : 0;
+
   const salesSummary = [
-    { label: "Daily Average", value: "Rs 112,000" },
-    { label: "Invoice Count (MTD)", value: "342" },
-    { label: "Average Bill Value", value: "Rs 8,400" },
-    { label: "Top Category", value: "Insecticides" },
+    { label: "Total Revenue", value: rs(ov.revenue) },
+    { label: "Invoice Count", value: String(ov.salesCount || 0) },
+    { label: "Average Bill Value", value: rs(avgBill) },
+    { label: "Top Category", value: categorySales[0]?.category || "—" },
   ];
 
-  const salesData = [
-    { product: "Roundup (1L)", category: "Herbicide", unitsSold: 142, turnover: "High", velocity: "Fast" },
-    { product: "Mospilan (50g)", category: "Insecticide", unitsSold: 118, turnover: "High", velocity: "Fast" },
-    { product: "Coragen (50ml)", category: "Pesticide", unitsSold: 74, turnover: "Medium", velocity: "Stable" },
-    { product: "Confidor (250ml)", category: "Insecticide", unitsSold: 52, turnover: "Medium", velocity: "Stable" },
-    { product: "Nativo (65g)", category: "Fungicide", unitsSold: 12, turnover: "Low", velocity: "Slow" },
-    { product: "Aliette (250g)", category: "Fungicide", unitsSold: 9, turnover: "Low", velocity: "Slow" },
-    { product: "DAP Fertilizer (50kg)", category: "Fertilizer", unitsSold: 85, turnover: "High", velocity: "Fast" },
-  ];
+  // Real product movement from sale items; velocity classed by quantity rank.
+  const maxQty = topProducts.reduce((m, p) => Math.max(m, Number(p.qty || 0)), 0) || 1;
+  const salesData = topProducts.map((p) => {
+    const qty = Number(p.qty || 0);
+    const ratio = qty / maxQty;
+    const velocity = ratio >= 0.66 ? "Fast" : ratio >= 0.33 ? "Stable" : "Slow";
+    const turnover = ratio >= 0.66 ? "High" : ratio >= 0.33 ? "Medium" : "Low";
+    return { product: p.name, category: rs(p.revenue), unitsSold: qty, turnover, velocity };
+  });
 
-  const performanceData = [
-    { week: "Week 1", actual: 420000, target: 400000 },
-    { week: "Week 2", actual: 480000, target: 420000 },
-    { week: "Week 3", actual: 390000, target: 450000 },
-    { week: "Week 4", actual: 510000, target: 450000 },
-  ];
+  // Actual revenue per day (last 8 days present); no target data, so target omitted.
+  const performanceData = salesByDay.slice(-8).map((d) => ({ week: d.date, actual: Number(d.total || 0), target: 0 }));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -74,8 +80,8 @@ export default function SalesWorkspace() {
         <div style={st.tableWrap}>
           <div style={st.tableHead}>
             <span style={{ flex: 2 }}>Product</span>
-            <span style={{ flex: 1.2 }}>Category</span>
-            <span style={{ flex: 1, textAlign: "right" }}>Units Sold (MTD)</span>
+            <span style={{ flex: 1.2 }}>Revenue</span>
+            <span style={{ flex: 1, textAlign: "right" }}>Units Sold</span>
             <span style={{ flex: 1, textAlign: "center" }}>Turnover</span>
             <span style={{ width: 100, textAlign: "right" }}>Velocity</span>
           </div>

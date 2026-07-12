@@ -1,19 +1,27 @@
 import { st } from "./shared/analysisStyles";
 
-export default function CustomerDuesWorkspace() {
+export default function CustomerDuesWorkspace({ analysis }) {
+  const rs = (n) => `Rs ${Math.round(Number(n || 0)).toLocaleString()}`;
+  // Only customers who actually owe us (positive balance).
+  const dues = (analysis?.customerDues || []).filter((c) => Number(c.balance || 0) > 0);
+  const total = dues.reduce((s, c) => s + Number(c.balance || 0), 0);
+  const top = dues.slice().sort((a, b) => b.balance - a.balance);
+
+  // Concentration buckets (per-invoice aging needs invoice dates not yet exposed).
   const agingData = [
-    { bucket: "0-30 Days", value: "Rs 45,000", count: "12 Invoices" },
-    { bucket: "31-60 Days", value: "Rs 82,400", count: "8 Invoices" },
-    { bucket: "61-90 Days", value: "Rs 35,000", count: "3 Invoices" },
-    { bucket: "90+ Days", value: "Rs 50,000", count: "4 Invoices" },
+    { bucket: "Total Outstanding", value: rs(total), count: `${dues.length} customers` },
+    { bucket: "Largest Single Due", value: rs(top[0]?.balance || 0), count: top[0]?.name || "—" },
+    { bucket: "Top 3 Concentration", value: rs(top.slice(0, 3).reduce((s, c) => s + Number(c.balance || 0), 0)), count: "of receivables" },
+    { bucket: "Average Due", value: rs(dues.length ? total / dues.length : 0), count: "per customer" },
   ];
 
-  const customerData = [
-    { customer: "Ali Traders", pending: "Rs 50,000", lastPayment: "12 May 2026", overdue: 95, status: "Critical" },
-    { customer: "Raza Farms", pending: "Rs 35,000", lastPayment: "01 Jul 2026", overdue: 62, status: "Warning" },
-    { customer: "Hassan Agrochemicals", pending: "Rs 82,400", lastPayment: "20 Jul 2026", overdue: 45, status: "Watch" },
-    { customer: "Usman Ali", pending: "Rs 45,000", lastPayment: "10 Aug 2026", overdue: 15, status: "Normal" },
-  ];
+  const customerData = top.map((c) => ({
+    customer: c.name,
+    pending: rs(c.balance),
+    lastPayment: c.phone || "—",
+    overdue: total ? `${Math.round((Number(c.balance || 0) / total) * 100)}%` : "—",
+    status: c.balance >= (total / (dues.length || 1)) ? "Warning" : "Normal",
+  }));
 
   return (
     <>
@@ -48,8 +56,8 @@ export default function CustomerDuesWorkspace() {
           <div style={st.tableHead}>
             <span style={{ flex: 2 }}>Customer Name</span>
             <span style={{ flex: 1 }}>Pending Amount</span>
-            <span style={{ flex: 1.2 }}>Last Payment</span>
-            <span style={{ flex: 1 }}>Days Overdue</span>
+            <span style={{ flex: 1.2 }}>Contact</span>
+            <span style={{ flex: 1 }}>Share</span>
             <span style={{ width: 100 }}>Risk Status</span>
           </div>
 
@@ -58,7 +66,7 @@ export default function CustomerDuesWorkspace() {
               <span style={{ flex: 2, ...st.cellBold }}>{item.customer}</span>
               <span style={{ flex: 1 }}>{item.pending}</span>
               <span style={{ flex: 1.2 }}>{item.lastPayment}</span>
-              <span style={{ flex: 1 }}>{item.overdue} Days</span>
+              <span style={{ flex: 1 }}>{item.overdue}</span>
               <div style={{ width: 100 }}>
                 <div style={{
                   ...st.badge,

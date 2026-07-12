@@ -1,33 +1,34 @@
-import { useState } from "react";
-
-const MOCK_LEDGER_DATA = [
-  { id: 1, date: "2026-05-18", ref: "INV-1042", description: "Sale to Walk-in Customer", account: "Cash", type: "debit", amount: 15400, balance: 15400 },
-  { id: 2, date: "2026-05-18", ref: "EXP-089", description: "WAPDA Electricity Bill", account: "Cash", type: "credit", amount: 4500, balance: 10900 },
-  { id: 3, date: "2026-05-19", ref: "INV-1043", description: "Sale to Ali Traders", account: "Accounts Receivable", type: "debit", amount: 42000, balance: 42000 },
-  { id: 4, date: "2026-05-20", ref: "RCP-211", description: "Payment from Ali Traders", account: "HBL Bank", type: "debit", amount: 20000, balance: 20000 },
-  { id: 5, date: "2026-05-20", ref: "RCP-211", description: "Payment applied to Ali Traders", account: "Accounts Receivable", type: "credit", amount: 20000, balance: 22000 },
-  { id: 6, date: "2026-05-21", ref: "BILL-55", description: "Supplier Payment (Bayer)", account: "HBL Bank", type: "credit", amount: 12000, balance: 8000 },
-];
+import { useState, useEffect, useCallback } from "react";
+import { getGeneralLedger } from "../lib/posApi";
 
 export default function LedgerPage() {
   const [selectedAccount, setSelectedAccount] = useState("All");
-  
-  const accounts = ["All", "Cash", "HBL Bank", "Accounts Receivable", "Accounts Payable", "Inventory"];
+  const [rows, setRows] = useState([]);
+  const [accountList, setAccountList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  // Filter the ledger rows based on the selected account
-  const filteredData = selectedAccount === "All" 
-    ? MOCK_LEDGER_DATA 
-    : MOCK_LEDGER_DATA.filter(row => row.account === selectedAccount);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await getGeneralLedger({ account: selectedAccount === "All" ? "" : selectedAccount });
+      setRows(res.rows || []);
+      setAccountList(res.accounts || []);
+    } catch (e) {
+      setError(e.message || "Failed to load ledger");
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedAccount]);
 
-  // Recalculate balance for the filtered view if viewing a specific account
-  let runningBalance = 0;
-  const displayData = selectedAccount === "All" 
-    ? filteredData 
-    : filteredData.map(row => {
-        if (row.type === "debit") runningBalance += row.amount;
-        else runningBalance -= row.amount;
-        return { ...row, balance: runningBalance };
-      });
+  useEffect(() => { load(); }, [load]);
+
+  const accounts = ["All", ...accountList];
+
+  // Backend supplies a running balance per row when a single account is selected.
+  const displayData = rows.map((r, i) => ({ id: r.ref ? `${r.ref}-${i}` : i, ...r }));
 
   const totalDebits = displayData.filter(r => r.type === "debit").reduce((sum, r) => sum + r.amount, 0);
   const totalCredits = displayData.filter(r => r.type === "credit").reduce((sum, r) => sum + r.amount, 0);
@@ -94,7 +95,11 @@ export default function LedgerPage() {
               <span style={{ width: 120, textAlign: "right" }}>Balance</span>
             </div>
 
-            {displayData.length === 0 ? (
+            {loading ? (
+              <div style={st.emptyState}>Loading ledger…</div>
+            ) : error ? (
+              <div style={{ ...st.emptyState, color: "#c62828" }}>{error}</div>
+            ) : displayData.length === 0 ? (
               <div style={st.emptyState}>No transactions found for this account.</div>
             ) : (
               displayData.map((row) => (
@@ -112,7 +117,7 @@ export default function LedgerPage() {
                   </span>
                   
                   <span style={{ width: 120, textAlign: "right", fontWeight: "bold", color: "#1b3a1d", fontSize: 14 }}>
-                    Rs {row.balance.toLocaleString()}
+                    {row.balance == null ? "—" : `Rs ${row.balance.toLocaleString()}`}
                   </span>
                 </div>
               ))
