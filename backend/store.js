@@ -49,6 +49,22 @@ class PosStore {
   constructor() {
     this.dbPath = dbPath;
     this.db = dbModule;
+    // All DB access funnels through a single shared SQLite connection. Without
+    // serialization, two overlapping BEGINs on that connection throw
+    // "cannot start a transaction within a transaction", which silently drops
+    // one operation and can leave the connection wedged (the source of the
+    // random UI freeze while searching during a save). This promise chain
+    // guarantees write transactions run one at a time.
+    this._writeChain = Promise.resolve();
+  }
+
+  // Serialize a unit of work so no two write transactions overlap on the
+  // shared connection. Reads are unaffected.
+  _serialize(work) {
+    const run = this._writeChain.then(work, work);
+    // Keep the chain alive regardless of whether `work` resolved or rejected.
+    this._writeChain = run.then(() => {}, () => {});
+    return run;
   }
 
   async reopen() {
@@ -79,16 +95,18 @@ class PosStore {
   }
 
   async transaction(work) {
-    const db = await this._db();
-    await run(db, "BEGIN IMMEDIATE TRANSACTION");
-    try {
-      const result = await work(db);
-      await run(db, "COMMIT");
-      return result;
-    } catch (err) {
-      await run(db, "ROLLBACK").catch(() => {});
-      throw err;
-    }
+    return this._serialize(async () => {
+      const db = await this._db();
+      await run(db, "BEGIN IMMEDIATE TRANSACTION");
+      try {
+        const result = await work(db);
+        await run(db, "COMMIT");
+        return result;
+      } catch (err) {
+        await run(db, "ROLLBACK").catch(() => {});
+        throw err;
+      }
+    });
   }
 
   async loginByPin(pin) {
@@ -352,33 +370,32 @@ class PosStore {
     if (fromAccount === toAccount) throw new Error("Cannot transfer to the same account");
     
     const txDate = date || new Date().toISOString().split('T')[0];
-    
-    await run(db, "BEGIN TRANSACTION");
-    try {
+
+    // Run through the shared serialized transaction helper so this manual
+    // BEGIN/COMMIT can never overlap a sale/purchase transaction on the shared
+    // connection (which previously threw "cannot start a transaction within a
+    // transaction").
+    return this.transaction(async (txDb) => {
         if (fromAccount !== 'cih') {
             // Withdrawal from Source Bank
             await run(
-                db,
+                txDb,
                 `INSERT INTO bank_transactions (bank_account_id, type, amount, reference, date) VALUES (?, 'Withdrawal', ?, ?, ?)`,
                 [fromAccount, transferAmount, reference, txDate]
             );
         }
-        
+
         if (toAccount !== 'cih') {
             // Deposit to Target Bank
             await run(
-                db,
+                txDb,
                 `INSERT INTO bank_transactions (bank_account_id, type, amount, reference, date) VALUES (?, 'Deposit', ?, ?, ?)`,
                 [toAccount, transferAmount, reference, txDate]
             );
         }
-        
-        await run(db, "COMMIT");
+
         return { success: true, fromAccount, toAccount, amount: transferAmount };
-    } catch (err) {
-        await run(db, "ROLLBACK");
-        throw err;
-    }
+    });
   }
 
   // ============================================================================
