@@ -1,5 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Search, PlusCircle, List, FileDown } from "lucide-react";
+import { saveExpense, listExpenses } from "../lib/posApi";
+
+const PAYMENT_METHODS = ["Cash", "HBL Bank", "UBL Bank", "Meezan Bank", "JazzCash", "EasyPaisa"];
 
 export default function ExpensesPage() {
   const [activeTab, setActiveTab] = useState("log");
@@ -37,14 +40,34 @@ export default function ExpensesPage() {
 function RecordExpenseTab({ onSaved }) {
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("Utility");
-  const [moneyFrom, setMoneyFrom] = useState("Main Cash Drawer");
-  const [moneyTo, setMoneyTo] = useState("WAPDA (Electricity)");
+  const [moneyFrom, setMoneyFrom] = useState("Cash");
+  const [moneyTo, setMoneyTo] = useState("");
   const [description, setDescription] = useState("");
   const [expenseDate, setExpenseDate] = useState(new Date().toISOString().split("T")[0]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
-  const handleSave = () => {
-    console.log("Saving expense...", { amount, category, moneyFrom, moneyTo, description, expenseDate });
-    onSaved();
+  const handleSave = async () => {
+    setError("");
+    const amt = parseFloat(amount);
+    if (!(amt > 0)) { setError("Enter an amount greater than 0."); return; }
+    // Compose the description with the payee ("money to") so the ledger keeps it.
+    const fullDescription = [moneyTo && `To: ${moneyTo}`, description].filter(Boolean).join(" — ");
+    setSaving(true);
+    try {
+      await saveExpense({
+        amount: amt,
+        category,
+        description: fullDescription,
+        paymentMethod: moneyFrom,
+        expenseDate,
+      });
+      onSaved();
+    } catch (e) {
+      setError(e.message || "Failed to save expense");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -80,20 +103,17 @@ function RecordExpenseTab({ onSaved }) {
 
       <div style={{ ...st.formGrid, marginTop: 20 }}>
         <div style={st.fieldWrap}>
-          <label style={st.fieldLabel}>Credit (Money From)</label>
+          <label style={st.fieldLabel}>Paid From (Money From)</label>
           <select style={st.input} value={moneyFrom} onChange={e => setMoneyFrom(e.target.value)}>
-            <option>Main Cash Drawer</option>
-            <option>HBL Bank Account</option>
-            <option>Petty Cash</option>
-            <option>Owner's Equity</option>
+            {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
           </select>
-          <span style={st.fieldHint}>Asset or liability account decreasing.</span>
+          <span style={st.fieldHint}>Cash drawer or bank account the money leaves.</span>
         </div>
 
         <div style={st.fieldWrap}>
-          <label style={st.fieldLabel}>Debit (Money To)</label>
+          <label style={st.fieldLabel}>Paid To (Payee)</label>
           <input style={st.input} placeholder="e.g. WAPDA, Vendor Name" value={moneyTo} onChange={e => setMoneyTo(e.target.value)} />
-          <span style={st.fieldHint}>Expense account or vendor receiving the funds.</span>
+          <span style={st.fieldHint}>Vendor or party receiving the funds.</span>
         </div>
       </div>
 
@@ -108,8 +128,12 @@ function RecordExpenseTab({ onSaved }) {
         />
       </div>
 
+      {error && <div style={{ marginTop: 16, color: "#b3261e", fontSize: 13 }}>{error}</div>}
+
       <div style={{ marginTop: 24, display: "flex", justifyContent: "flex-end" }}>
-        <button style={st.primaryBtn} onClick={handleSave}>Save Expense Entry</button>
+        <button style={{ ...st.primaryBtn, opacity: saving ? 0.6 : 1 }} onClick={handleSave} disabled={saving}>
+          {saving ? "Saving…" : "Save Expense Entry"}
+        </button>
       </div>
     </div>
   );
@@ -117,17 +141,39 @@ function RecordExpenseTab({ onSaved }) {
 
 function ExpenseLogTab() {
   const [search, setSearch] = useState("");
-  const [expenses] = useState([
-    { id: 1, date: "2026-05-18", category: "Utility", amount: 14500, description: "Electricity bill for the month", debit: "WAPDA (Utility Expense)", credit: "HBL Bank Account" },
-    { id: 2, date: "2026-05-18", category: "Transport", amount: 1200, description: "Delivery fuel", debit: "Fuel & Travel", credit: "Petty Cash" },
-    { id: 3, date: "2026-05-17", category: "Maintenance", amount: 2500, description: "AC filter cleaning and gas check", debit: "Store Maintenance", credit: "Petty Cash" },
-    { id: 4, date: "2026-05-15", category: "Transport", amount: 800, description: "Delivery fuel for urgent order", debit: "Fuel & Travel", credit: "Main Cash Drawer" },
-  ]);
+  const [expenses, setExpenses] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await listExpenses();
+      setExpenses(res.expenses || []);
+    } catch (e) {
+      setError(e.message || "Failed to load expenses");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
 
   const q = search.toLowerCase();
+  // Normalise backend shape (expenseDate/paymentMethod) into the row fields the table renders.
+  const rows = expenses.map(e => ({
+    id: e.id,
+    date: e.expenseDate || e.date,
+    category: e.category,
+    amount: e.amount,
+    description: e.description || "",
+    debit: e.category,
+    credit: e.paymentMethod || "Cash",
+  }));
   const filtered = q
-      ? expenses.filter(e => e.description?.toLowerCase().includes(q) || e.category?.toLowerCase().includes(q))
-      : expenses;
+      ? rows.filter(e => e.description?.toLowerCase().includes(q) || e.category?.toLowerCase().includes(q))
+      : rows;
 
   const totalAmount = filtered.reduce((sum, e) => sum + e.amount, 0);
 
@@ -173,7 +219,15 @@ function ExpenseLogTab() {
                       </tr>
                   </thead>
                   <tbody>
-                      {filtered.length === 0 ? (
+                      {loading ? (
+                          <tr><td colSpan={6} style={{ textAlign: 'center', padding: 36, color: '#708571', fontSize: 13 }}>
+                              Loading expenses…
+                          </td></tr>
+                      ) : error ? (
+                          <tr><td colSpan={6} style={{ textAlign: 'center', padding: 36, color: '#b3261e', fontSize: 13 }}>
+                              {error}
+                          </td></tr>
+                      ) : filtered.length === 0 ? (
                           <tr><td colSpan={6} style={{ textAlign: 'center', padding: 36, color: '#708571', fontSize: 13 }}>
                               No expenses recorded yet.
                           </td></tr>

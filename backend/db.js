@@ -296,6 +296,24 @@ db.serialize(() => {
   `);
 
   db.run(`
+    CREATE TABLE IF NOT EXISTS cash_ledger (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entry_date TEXT NOT NULL DEFAULT CURRENT_DATE,
+      account TEXT NOT NULL DEFAULT 'Cash',
+      is_cash INTEGER NOT NULL DEFAULT 1,
+      direction TEXT NOT NULL,
+      amount REAL NOT NULL DEFAULT 0,
+      source_type TEXT NOT NULL,
+      source_id INTEGER,
+      description TEXT,
+      payment_method TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_cash_ledger_source ON cash_ledger(source_type, source_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_cash_ledger_date ON cash_ledger(entry_date)`);
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,

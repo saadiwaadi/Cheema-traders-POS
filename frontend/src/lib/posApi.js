@@ -198,6 +198,66 @@ export async function deleteSupplier(id) {
   return httpJson(`/suppliers/${id}`, { method: "DELETE" });
 }
 
+// --- EXPENSES ---
+
+export async function listExpenses(args = {}) {
+  if (usingIpc()) return window.pos.listExpenses(args);
+  const query = new URLSearchParams();
+  if (args.search) query.set("search", args.search);
+  if (args.category) query.set("category", args.category);
+  if (args.from) query.set("from", args.from);
+  if (args.to) query.set("to", args.to);
+  if (args.limit) query.set("limit", String(args.limit));
+  return httpJson(`/expenses?${query.toString()}`);
+}
+
+export async function listExpenseCategories() {
+  if (usingIpc()) return window.pos.listExpenseCategories();
+  return httpJson(`/expenses/categories`);
+}
+
+export async function saveExpense(payload) {
+  if (usingIpc()) return window.pos.saveExpense(payload);
+  return httpJson("/expenses", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function deleteExpense(id) {
+  if (usingIpc()) return window.pos.deleteExpense(id);
+  return httpJson(`/expenses/${id}`, { method: "DELETE" });
+}
+
+// --- BOOKS (cash book, general ledger, accounts, analysis) ---
+
+export async function getCashBook(args = {}) {
+  if (usingIpc()) return window.pos.getCashBook(args);
+  const query = new URLSearchParams();
+  if (args.from) query.set("from", args.from);
+  if (args.to) query.set("to", args.to);
+  return httpJson(`/books/cash-book?${query.toString()}`);
+}
+
+export async function getGeneralLedger(args = {}) {
+  if (usingIpc()) return window.pos.getGeneralLedger(args);
+  const query = new URLSearchParams();
+  if (args.account) query.set("account", args.account);
+  if (args.from) query.set("from", args.from);
+  if (args.to) query.set("to", args.to);
+  return httpJson(`/books/ledger?${query.toString()}`);
+}
+
+export async function getAccountsBalances() {
+  if (usingIpc()) return window.pos.getAccountsBalances();
+  return httpJson(`/books/accounts`);
+}
+
+export async function getAnalysis(args = {}) {
+  if (usingIpc()) return window.pos.getAnalysis(args);
+  const query = new URLSearchParams();
+  if (args.from) query.set("from", args.from);
+  if (args.to) query.set("to", args.to);
+  return httpJson(`/analysis?${query.toString()}`);
+}
+
 export async function getSettings() {
   if (usingIpc()) return window.pos.getSettings();
   return httpJson("/settings");

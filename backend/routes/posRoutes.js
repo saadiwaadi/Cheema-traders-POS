@@ -278,6 +278,92 @@ router.post("/bank-transfers", async (req, res) => {
   }
 });
 
+// ============================================================================
+// EXPENSES
+// ============================================================================
+
+router.get("/expenses", async (req, res) => {
+  try {
+    const expenses = await store.listExpenses({
+      search: req.query.search || "",
+      category: req.query.category || "",
+      from: req.query.from || "",
+      to: req.query.to || "",
+      limit: Number(req.query.limit || 500),
+    });
+    return res.json({ expenses });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/expenses/categories", async (_req, res) => {
+  try {
+    const categories = await store.listExpenseCategories();
+    return res.json({ categories });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.post("/expenses", async (req, res) => {
+  try {
+    const expense = await store.saveExpense(req.body);
+    return res.status(201).json({ expense });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+router.delete("/expenses/:id", async (req, res) => {
+  try {
+    const result = await store.deleteExpense(Number(req.params.id));
+    return res.json(result);
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+// ============================================================================
+// BOOKS: cash book, general ledger, accounts
+// ============================================================================
+
+router.get("/books/cash-book", async (req, res) => {
+  try {
+    const data = await store.getCashBook({ from: req.query.from || "", to: req.query.to || "" });
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/books/ledger", async (req, res) => {
+  try {
+    const data = await store.getGeneralLedger({ account: req.query.account || "", from: req.query.from || "", to: req.query.to || "" });
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/books/accounts", async (_req, res) => {
+  try {
+    const accounts = await store.getAccountsBalances();
+    return res.json({ accounts });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/analysis", async (req, res) => {
+  try {
+    const data = await store.getAnalysis({ from: req.query.from || "", to: req.query.to || "" });
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
 router.get("/settings", async (_req, res) => {
   try {
     const settings = await store.getSettings();
