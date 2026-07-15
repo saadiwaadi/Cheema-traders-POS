@@ -541,11 +541,21 @@ function RecordTransactionPanel({ isOpen, onClose, onSaved, employee }) {
 
     setSaving(true);
     try {
+      const tMap = {
+        accrual: "salary",
+        payout: "payment",
+        advance: "advance",
+        deduction: "deduction",
+        bonus: "bonus"
+      };
       await recordEmployeeTransaction({
         employeeId: employee.id,
+        transactionType: tMap[type],
         type,
         amount: parsedAmount,
+        transactionDate: date,
         date,
+        notes: description.trim(),
         description: description.trim(),
         paymentMethod: ["payout", "advance", "deduction"].includes(type) ? paymentMethod : null
       });

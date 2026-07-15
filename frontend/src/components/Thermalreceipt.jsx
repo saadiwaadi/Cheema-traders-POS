@@ -105,10 +105,18 @@ export async function printReceipt(data) {
     <div class="dash"></div>
     <div class="small center">${notes}</div>` : "";
 
-    const nowStr = new Date().toLocaleString("en-PK", {
-        day: "2-digit", month: "short", year: "numeric",
-        hour: "2-digit", minute: "2-digit",
-    });
+    const formatDateStr = (dStr) => {
+        if (!dStr) return "—";
+        try {
+            const dateObj = new Date(dStr.includes("T") ? dStr : dStr + "T00:00:00");
+            return dateObj.toLocaleDateString("en-PK", {
+                day: "2-digit", month: "short", year: "numeric"
+            });
+        } catch (e) {
+            return dStr;
+        }
+    };
+    const printedDate = formatDateStr(saleDate);
 
     const html = `<!DOCTYPE html>
 <html>
@@ -220,7 +228,7 @@ export async function printReceipt(data) {
   <hr class="dash">
 
   <div class="meta-row"><span>Invoice:</span> <span class="bold">${invoiceNo}</span></div>
-  <div class="meta-row"><span>Date:</span>    <span>${nowStr}</span></div>
+  <div class="meta-row"><span>Date:</span>    <span>${printedDate}</span></div>
   <div class="meta-row"><span>Cashier:</span> <span>${cashier}</span></div>
 
   <hr class="dash">

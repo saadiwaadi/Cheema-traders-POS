@@ -53,7 +53,7 @@ export default function BillingWorkspace() {
     return !customers.some(c => c.name.toLowerCase() === trimmed.toLowerCase());
   }, [customer, customers]);
 
-  const billingDate = useMemo(() => new Date().toISOString().split("T")[0], []);
+  const [billingDate, setBillingDate] = useState(() => new Date().toISOString().split("T")[0]);
 
   useEffect(() => {
     async function loadData() {
@@ -95,11 +95,18 @@ export default function BillingWorkspace() {
     return rows.reduce((acc, row) => acc + row.total, 0);
   }, [rows]);
 
+  const isWalkInOrCashOnly = useMemo(() => {
+    return !selectedCustomerObj || selectedCustomerObj.is_cash_only || selectedCustomerObj.cash_only || selectedCustomerObj.customer_type === 'cash';
+  }, [selectedCustomerObj]);
+
   useEffect(() => {
-    if (!selectedCustomerObj && subtotal > 0) {
-      setReceivedAmount(subtotal.toFixed(0));
+    if (isWalkInOrCashOnly) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setReceivedAmount(subtotal > 0 ? subtotal.toFixed(0) : "");
     }
-  }, [subtotal, selectedCustomerObj]);
+  }, [subtotal, isWalkInOrCashOnly]);
+
+  const isReceivedAmountWarning = !isWalkInOrCashOnly && (receivedAmount === "" || parseFloat(receivedAmount) === 0);
 
   const addRow = () => {
     setRows((prev) => [...prev, createRow()]);
@@ -204,18 +211,16 @@ export default function BillingWorkspace() {
         ? "Partial"
         : "Paid";
 
-  const proceedGenerateInvoice = useCallback(async (activeRows, saleItems) => {
-    if (!selectedCustomerObj && parsedReceived < subtotal) {
-      setWarnData({
-        title: t("billing.warn_payment_required_title", "Payment Required"),
-        lines: [
-          { label: t("billing.warn_customer_label", "Customer"), value: t("billing.walkin_customer", "Walk-in Customer") },
-          { label: t("billing.warn_rule_label", "Rule"), value: t("billing.walkin_warning", "Must pay full invoice amount") }
-        ]
-      });
-      return;
-    }
+  const clearInvoiceState = useCallback(() => {
+    setRows([createRow()]);
+    setCustomer("");
+    setSelectedCustomerObj(null);
+    setReceivedAmount("");
+    setApplyCredit(false);
+    setNotes("");
+  }, []);
 
+  const executeSaveSale = useCallback(async (activeRows, saleItems, computedValues) => {
     const payload = {
       invoiceNo: invoiceNo,
       saleDate: billingDate,
@@ -223,11 +228,11 @@ export default function BillingWorkspace() {
       customerName: customer?.trim() || "Walk-in Customer",
       phone: selectedCustomerObj?.phone || null,
       paymentMethod: paymentType,
-      totalAmount: subtotal,
-      amountPaid: Math.min(totalCovered, subtotal),
-      remainingAmount: remainingAmount,
-      paymentStatus: paymentStatus,
-      creditApplied: creditApplied,
+      totalAmount: computedValues.subtotal,
+      amountPaid: Math.min(computedValues.totalCovered, computedValues.subtotal),
+      remainingAmount: computedValues.remainingAmount,
+      paymentStatus: computedValues.paymentStatus,
+      creditApplied: computedValues.creditApplied,
       notes: notes,
       items: saleItems,
     };
@@ -245,6 +250,7 @@ export default function BillingWorkspace() {
           ],
           onPrint: () => printReceipt({
             invoiceNo:      res.sale.invoiceNo,
+            saleDate:       billingDate,
             cashier:        "Ahmad Cheema",
             customerName:   payload.customerName,
             phone:          payload.phone || "",
@@ -256,22 +262,19 @@ export default function BillingWorkspace() {
               discount:     parseFloat(r.discount) || 0,
               lineTotal:    r.total,
             })),
-            subtotal:       subtotal,
+            subtotal:       computedValues.subtotal,
             totalDiscount:  totalDiscount,
-            creditApplied:  creditApplied,
-            grandTotal:     subtotal - creditApplied,
+            creditApplied:  computedValues.creditApplied,
+            grandTotal:     computedValues.subtotal - computedValues.creditApplied,
             paymentMethod:  paymentType,
-            amountPaid:     Math.min(totalCovered, subtotal),
-            remainingAmount: remainingAmount,
-            changeAmount:   changeAmount,
+            amountPaid:     Math.min(computedValues.totalCovered, computedValues.subtotal),
+            remainingAmount: computedValues.remainingAmount,
+            changeAmount:   computedValues.changeAmount,
             prevBalance:    selectedCustomerObj?.current_balance ?? 0,
             notes:          notes,
           })
         });
-        setRows([createRow()]);
-        setCustomer(""); setSelectedCustomerObj(null);
-        setNotes(""); setReceivedAmount("");
-        setApplyCredit(false);
+        clearInvoiceState();
         const nextInv = await getNextInvoiceNo(billingDate);
         if (nextInv?.invoiceNo) setInvoiceNo(nextInv.invoiceNo);
       }
@@ -283,20 +286,85 @@ export default function BillingWorkspace() {
       });
     }
   }, [
-    selectedCustomerObj,
-    parsedReceived,
-    subtotal,
     invoiceNo,
     billingDate,
+    selectedCustomerObj,
     customer,
     paymentType,
-    totalCovered,
-    remainingAmount,
-    paymentStatus,
-    creditApplied,
     notes,
     totalDiscount,
-    changeAmount
+    clearInvoiceState,
+    t
+  ]);
+
+  const proceedGenerateInvoice = useCallback(async (activeRows, saleItems) => {
+    // 1. Calculate live values to prevent closures or out-of-order state updates
+    const liveSubtotal = activeRows.reduce((acc, row) => acc + row.total, 0);
+    const liveCustomerCredit = selectedCustomerObj?.current_balance < 0
+      ? Math.abs(selectedCustomerObj.current_balance)
+      : 0;
+    const liveCreditApplied = applyCredit ? Math.min(liveCustomerCredit, liveSubtotal) : 0;
+    const liveParsedReceived = parseFloat(receivedAmount) || 0;
+    const liveTotalCovered = liveCreditApplied + liveParsedReceived;
+    const liveRemainingAmount = Math.max(0, liveSubtotal - liveTotalCovered);
+    const liveChangeAmount = Math.max(0, liveTotalCovered - liveSubtotal);
+    const livePaymentStatus =
+      liveTotalCovered <= 0
+        ? "Unpaid"
+        : liveTotalCovered < liveSubtotal
+          ? "Partial"
+          : "Paid";
+
+    // 2. Validate walk-in rules
+    if (isWalkInOrCashOnly && liveParsedReceived < liveSubtotal) {
+      setWarnData({
+        title: t("billing.warn_payment_required_title", "Payment Required"),
+        lines: [
+          { label: t("billing.warn_customer_label", "Customer"), value: selectedCustomerObj?.name || t("billing.walkin_customer", "Walk-in Customer") },
+          { label: t("billing.warn_rule_label", "Rule"), value: t("billing.walkin_warning", "Must pay full invoice amount") }
+        ]
+      });
+      return;
+    }
+
+    const computedValues = {
+      subtotal: liveSubtotal,
+      creditApplied: liveCreditApplied,
+      totalCovered: liveTotalCovered,
+      remainingAmount: liveRemainingAmount,
+      changeAmount: liveChangeAmount,
+      paymentStatus: livePaymentStatus,
+    };
+
+    // 3. Confirm guard: empty/0 received amount for credit-eligible named customer with balance due
+    if (!isWalkInOrCashOnly && (receivedAmount === "" || parseFloat(receivedAmount) === 0) && liveRemainingAmount > 0) {
+      setWarnData({
+        title: t("billing.confirm_credit_title", "Confirm Credit Sale"),
+        lines: [
+          { label: t("billing.warn_customer_label", "Customer"), value: selectedCustomerObj?.name || customer },
+          { label: t("billing.grand_total", "Grand Total"), value: `Rs ${liveSubtotal.toLocaleString()}`, mono: true },
+          { label: t("billing.remaining_due", "Remaining Due"), value: `Rs ${liveRemainingAmount.toLocaleString()}`, mono: true },
+          { label: t("billing.warn_note_label", "Note"), value: t("billing.confirm_credit_msg", "No payment amount has been entered. The remaining due of Rs {Due} will be added to the customer's balance. Proceed?").replace("{Due}", liveRemainingAmount.toLocaleString()) }
+        ],
+        confirmLabel: t("billing.btn_confirm", "Confirm"),
+        cancelLabel: t("billing.btn_cancel", "Cancel"),
+        onConfirm: () => {
+          setWarnData(null);
+          executeSaveSale(activeRows, saleItems, computedValues);
+        }
+      });
+      return;
+    }
+
+    await executeSaveSale(activeRows, saleItems, computedValues);
+  }, [
+    selectedCustomerObj,
+    customer,
+    receivedAmount,
+    applyCredit,
+    isWalkInOrCashOnly,
+    executeSaveSale,
+    t
   ]);
 
   const handleGenerateInvoice = useCallback(async () => {
@@ -406,7 +474,22 @@ export default function BillingWorkspace() {
 
             <div style={st.metaBlock}>
               <span style={st.metaLabel}>{t("billing.date", "Date")}</span>
-              <strong style={st.metaValue}>{billingDate}</strong>
+              <input
+                type="date"
+                value={billingDate}
+                onChange={(e) => setBillingDate(e.target.value)}
+                style={{
+                  border: "1px solid #cde0cd",
+                  borderRadius: 4,
+                  padding: "4px 8px",
+                  fontSize: 14,
+                  background: "#fafff9",
+                  color: "#1b3a1d",
+                  outline: "none",
+                  fontWeight: "bold",
+                  fontFamily: "monospace",
+                }}
+              />
             </div>
           </div>
 
@@ -418,10 +501,19 @@ export default function BillingWorkspace() {
               getOptionValue={(c) => c.id}
               placeholder={t("billing.search_customer", "Search or Select Customer Name")}
               onChange={(val, obj) => {
-                setRows([createRow()]);
+                const wasWalkIn = !selectedCustomerObj;
+                const isWalkIn = !obj;
+                const typeChanged = wasWalkIn !== isWalkIn;
+
+                if (typeChanged) {
+                  setReceivedAmount("");
+                  setApplyCredit(false);
+                } else {
+                  setApplyCredit(false);
+                }
+
                 setSelectedCustomerObj(obj || null);
                 setCustomer(obj ? obj.name : val || "");
-                setApplyCredit(false);
               }}
             />
           </div>
@@ -604,8 +696,15 @@ export default function BillingWorkspace() {
                     type="number"
                     value={receivedAmount}
                     onChange={(e) => setReceivedAmount(e.target.value)}
-                    style={st.paymentInput}
-                    placeholder="0"
+                    style={{
+                      ...st.paymentInput,
+                      ...(isReceivedAmountWarning ? {
+                        border: "2px solid #ef6c00",
+                        background: "#fffde7",
+                        boxShadow: "0 0 0 3px rgba(255, 152, 0, 0.15)",
+                      } : {})
+                    }}
+                    placeholder={isReceivedAmountWarning ? t("billing.enter_amount_placeholder", "Enter amount received") : "0"}
                   />
                 </div>
 

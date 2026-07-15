@@ -29,6 +29,7 @@ const statusStyles = {
   Pending: "bg-[#FAEEDA] text-[#854F0B] border-l-[3px] border-[#854F0B] rounded-sm font-semibold tracking-wider",
   Overdue: "bg-[#FCEBEB] text-[#A32D2D] border-l-[3px] border-[#A32D2D] rounded-sm font-semibold tracking-wider",
   Returned: "bg-[#F1EFE8] text-[#7a5c00] border-l-[3px] border-[#7a5c00] rounded-sm font-semibold tracking-wider",
+  "Partially Returned": "bg-[#FAEEDA] text-[#854F0B] border-l-[3px] border-[#854F0B] rounded-sm font-semibold tracking-wider",
 };
 
 const statusFilters = ["All", "Paid", "Pending", "Overdue", "Returned"];
@@ -87,6 +88,7 @@ export default function InvoiceHistoryModule() {
   const [returnSelections, setReturnSelections] = useState({});
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const [returnDate, setReturnDate] = useState(() => new Date().toISOString().split("T")[0]);
 
   // Drawer Payment Form states
   const [drawerPayAmount, setDrawerPayAmount] = useState("");
@@ -122,6 +124,8 @@ export default function InvoiceHistoryModule() {
             status = "Paid";
           } else if (s.paymentStatus === "Returned") {
             status = "Returned";
+          } else if (s.paymentStatus === "Partially Returned") {
+            status = "Partially Returned";
           } else {
             const today = new Date();
             today.setHours(0,0,0,0);
@@ -181,7 +185,8 @@ export default function InvoiceHistoryModule() {
           qty: item.quantity || item.qty,
           price: item.unitPrice || item.price,
           discount: item.discount || 0,
-          lineTotal: item.lineTotal || ((item.quantity || item.qty) * (item.unitPrice || item.price))
+          lineTotal: item.lineTotal || ((item.quantity || item.qty) * (item.unitPrice || item.price)),
+          already_returned: item.already_returned || 0
         }));
         const updatedInvoice = {
           ...inv,
@@ -903,10 +908,11 @@ export default function InvoiceHistoryModule() {
               >
                 {t("invoices.action_delete", "Void")}
               </button>
-              {drawerInvoice.status !== "Returned" && (
+              {!["Returned", "Voided"].includes(drawerInvoice.status) && (
                 <button
                   onClick={() => {
                     setReturnInvoice(drawerInvoice);
+                    setReturnDate(new Date().toISOString().split("T")[0]);
                     setDrawerInvoice(null);
                   }}
                   className="flex-1 rounded-sm border border-[#cde0cd] bg-white py-2 px-3 font-semibold text-neutral-700 hover:bg-neutral-50 outline-none cursor-pointer"
@@ -1117,13 +1123,49 @@ export default function InvoiceHistoryModule() {
               {returnInvoice.invoiceNo || returnInvoice.id} · {returnInvoice.client}
             </p>
 
+            <div className="mb-4">
+              <label className="block text-[10px] font-bold text-[#6a8f6c] uppercase tracking-wider mb-1">
+                {t("invoices.return_date", "Return Date")}
+              </label>
+              <input
+                type="date"
+                value={returnDate}
+                onChange={(e) => setReturnDate(e.target.value)}
+                className="w-full rounded-sm border border-[#cde0cd] p-2 bg-white text-xs outline-none font-mono"
+              />
+            </div>
+
             {!returnInvoice.itemsLoaded ? (
               <div className="py-12 text-center text-xs text-[#2e7d32] font-semibold">{t("invoices.loading_items", "Loading items...")}</div>
             ) : (
               <div className="space-y-2 mb-6 max-h-[300px] overflow-y-auto">
                 {(returnInvoice.items || []).map((item, idx) => {
                   const key = `${returnInvoice.id}-${idx}`;
-                  const sel = returnSelections[key] || { checked: false, qty: item.qty };
+                  const maxReturnable = item.qty - (item.already_returned || 0);
+                  const sel = returnSelections[key] || { checked: false, qty: maxReturnable };
+
+                  if (maxReturnable <= 0) {
+                    return (
+                      <div key={idx} className="flex items-center gap-4 rounded-sm border border-neutral-200 p-3 bg-neutral-50 opacity-60">
+                        <div className="w-4 h-4 rounded-sm border border-neutral-300 bg-neutral-200 flex items-center justify-center">
+                          <span className="text-[10px] text-neutral-500 font-bold">✓</span>
+                        </div>
+                        <div className="flex-1">
+                          <p className="font-semibold text-xs text-neutral-500 line-through">{item.name}</p>
+                          <p className="text-[10px] text-neutral-400 font-mono">
+                            {t("invoices.already_returned_note", "Already returned: ") || "Already returned: "}{item.already_returned} of {item.qty}
+                          </p>
+                        </div>
+                        <span className="px-2 py-0.5 text-[10px] font-bold bg-neutral-200 text-neutral-600 rounded-sm uppercase">
+                          {t("invoices.fully_returned", "Fully returned") || "Fully returned"}
+                        </span>
+                        <span className="text-xs font-semibold w-24 text-right font-mono text-neutral-400">
+                          {formatMoney(0)}
+                        </span>
+                      </div>
+                    );
+                  }
+
                   return (
                     <div key={idx} className="flex items-center gap-4 rounded-sm border border-[#cde0cd] p-3 bg-[#fcfdfc]">
                       <input
@@ -1136,17 +1178,20 @@ export default function InvoiceHistoryModule() {
                       />
                       <div className="flex-1">
                         <p className="font-semibold text-xs text-[#1b3a1d]">{item.name}</p>
-                        <p className="text-[10px] text-neutral-400 font-mono">{t("invoices.max_return_qty", "Max return qty: ")}{item.qty}</p>
+                        <p className="text-[10px] text-neutral-400 font-mono">
+                          {t("invoices.max_return_qty", "Max return qty: ") || "Max return qty: "}{maxReturnable}
+                          {item.already_returned > 0 && ` (Already returned: ${item.already_returned} of ${item.qty})`}
+                        </p>
                       </div>
                       <input
                         type="number"
                         min={1}
-                        max={item.qty}
+                        max={maxReturnable}
                         value={sel.qty}
                         disabled={!sel.checked}
                         onChange={e => setReturnSelections(prev => ({
                           ...prev,
-                          [key]: { ...sel, qty: Math.min(item.qty, Math.max(1, Number(e.target.value))) }
+                          [key]: { ...sel, qty: Math.min(maxReturnable, Math.max(1, Number(e.target.value))) }
                         }))}
                         className="w-16 rounded-sm border border-[#cde0cd] px-2 py-1 text-xs text-center font-mono disabled:opacity-40"
                       />
@@ -1190,7 +1235,7 @@ export default function InvoiceHistoryModule() {
                   if (!window.confirm(t("invoices.confirm_return_msg", "Confirm return of items? This will register a sales return and restore inventory stock."))) return;
 
                   try {
-                    await returnSale(returnInvoice.id, { items: returnItems });
+                    await returnSale(returnInvoice.id, { items: returnItems, returnDate });
                     loadInvoices();
                     setReturnInvoice(null);
                     setReturnSelections({});

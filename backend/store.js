@@ -716,13 +716,14 @@ class PosStore {
         SUM(bank_out) AS start_bank_out
       FROM (
         SELECT
-          CASE WHEN LOWER(s.payment_method) = 'cash' THEN (s.amount_paid - COALESCE((SELECT SUM(applied_amount) FROM customer_payments WHERE sale_id = s.id), 0)) ELSE 0 END AS cash_in,
+          CASE WHEN LOWER(s.payment_method) = 'cash' THEN s.amount_paid ELSE 0 END AS cash_in,
           0 AS cash_out,
-          CASE WHEN LOWER(s.payment_method) <> 'cash' THEN (s.amount_paid - COALESCE((SELECT SUM(applied_amount) FROM customer_payments WHERE sale_id = s.id), 0)) ELSE 0 END AS bank_in,
+          CASE WHEN LOWER(s.payment_method) <> 'cash' THEN s.amount_paid ELSE 0 END AS bank_in,
           0 AS bank_out,
           s.sale_date AS entry_date
         FROM sales s
         WHERE COALESCE(s.voided_at, '') = ''
+          AND s.amount_paid > 0
 
         UNION ALL
 
@@ -829,14 +830,14 @@ class PosStore {
           s.sale_date AS entry_date,
           'Sale: ' || s.invoice_no || ' (' || COALESCE(s.customer_name, 'Walk-in') || ')' AS description,
           s.invoice_no AS receipt_number,
-          CASE WHEN LOWER(s.payment_method) = 'cash' THEN (s.amount_paid - COALESCE((SELECT SUM(applied_amount) FROM customer_payments WHERE sale_id = s.id), 0)) ELSE 0 END AS cash_in,
+          CASE WHEN LOWER(s.payment_method) = 'cash' THEN s.amount_paid ELSE 0 END AS cash_in,
           0 AS cash_out,
-          CASE WHEN LOWER(s.payment_method) <> 'cash' THEN (s.amount_paid - COALESCE((SELECT SUM(applied_amount) FROM customer_payments WHERE sale_id = s.id), 0)) ELSE 0 END AS bank_in,
+          CASE WHEN LOWER(s.payment_method) <> 'cash' THEN s.amount_paid ELSE 0 END AS bank_in,
           0 AS bank_out,
           s.created_at
         FROM sales s
         WHERE COALESCE(s.voided_at, '') = ''
-          AND (s.amount_paid - COALESCE((SELECT SUM(applied_amount) FROM customer_payments WHERE sale_id = s.id), 0)) > 0
+          AND s.amount_paid > 0
 
         UNION ALL
 
@@ -1193,7 +1194,7 @@ class PosStore {
           sr.sale_id AS ref_id,
           'Return' AS type,
           'return' AS payment_type,
-          DATE(srs.returned_at) AS date,
+          srs.return_date AS date,
           s.invoice_no AS reference,
           'Return: ' || srs.items_summary AS notes,
           'Refund' AS method,
@@ -2515,7 +2516,16 @@ class PosStore {
       let total = 0;
       let amountPaid = Number(input.amountPaid || 0);
       const creditApplied = Number(input.creditApplied || 0);
-      const paymentMethod = String(input.paymentMethod || "Cash").trim() || "Cash";
+      const preTotal = items.reduce((acc, rawItem) => {
+        const qty = Number(rawItem.quantity || rawItem.qty || 0);
+        const disc = Number(rawItem.discount || 0);
+        const price = Number(rawItem.unitPrice || rawItem.price || rawItem.ppp || 0);
+        return acc + Math.max(0, qty * price - disc);
+      }, 0);
+      const preBalanceDue = Math.max(0, preTotal - amountPaid);
+      const paymentMethod = (preBalanceDue > 0 && amountPaid === 0)
+        ? "Credit"
+        : String(input.paymentMethod || "Cash").trim();
       const paymentStatus = input.paymentStatus || (paymentMethod === "Credit" ? "Credit" : "Paid");
 
       const saleResult = dbBetter.prepare(
@@ -2793,6 +2803,24 @@ class PosStore {
     if (!sale) return null;
     sale.items = await this.getSaleItems(id);
     try {
+      const returnedQtys = await all(
+        db,
+        `SELECT product_id, SUM(quantity) as total_returned 
+         FROM sales_returns WHERE sale_id = ? GROUP BY product_id`,
+        [id]
+      );
+      const returnedMap = {};
+      returnedQtys.forEach(r => {
+        returnedMap[r.product_id] = r.total_returned;
+      });
+      sale.items = sale.items.map(item => ({
+        ...item,
+        already_returned: returnedMap[item.productId] || 0
+      }));
+    } catch (err) {
+      console.error("Failed to map returned quantities:", err);
+    }
+    try {
       sale.returns = await all(
         db,
         `SELECT id, product_id AS productId, product_name AS productName, quantity, unit_price AS unitPrice, refund_amount AS refundAmount, returned_at AS returnedAt
@@ -2872,10 +2900,12 @@ class PosStore {
     return result;
   }
 
-  async returnSaleItems(saleId, items) {
+  async returnSaleItems(saleId, items, returnDate) {
     return this.transaction(async (db) => {
       const sale = await get(db, `SELECT * FROM sales WHERE id = ? LIMIT 1`, [saleId]);
       if (!sale) throw new Error("Sale not found");
+
+      const cleanReturnDate = returnDate || new Date().toISOString().split("T")[0];
 
       await run(db, `
         CREATE TABLE IF NOT EXISTS sales_returns (
@@ -2888,6 +2918,7 @@ class PosStore {
           refund_amount REAL NOT NULL,
           notes TEXT,
           returned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          return_date TEXT,
           FOREIGN KEY (sale_id) REFERENCES sales(id),
           FOREIGN KEY (product_id) REFERENCES products(id)
         )
@@ -2897,9 +2928,9 @@ class PosStore {
         const refundAmount = item.quantity * item.price;
         await run(
           db,
-          `INSERT INTO sales_returns (sale_id, product_id, product_name, quantity, unit_price, refund_amount, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [saleId, item.productId, item.productName, item.quantity, item.price, refundAmount, item.notes || null]
+          `INSERT INTO sales_returns (sale_id, product_id, product_name, quantity, unit_price, refund_amount, notes, return_date)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [saleId, item.productId, item.productName, item.quantity, item.price, refundAmount, item.notes || null, cleanReturnDate]
         );
 
 
@@ -2929,19 +2960,27 @@ class PosStore {
         );
       }
 
-      await run(db, `
-        UPDATE sales 
-        SET payment_status = 'Returned',
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `, [saleId]);
+      // After all inserts, calculate new status
+      const saleItems = await all(db, 
+        `SELECT si.product_id, si.quantity as sold_qty,
+          COALESCE((SELECT SUM(sr.quantity) FROM sales_returns sr WHERE sr.sale_id = ? AND sr.product_id = si.product_id), 0) as returned_qty
+         FROM sale_items si WHERE si.sale_id = ?`,
+        [saleId, saleId]
+      );
+
+      const allReturned = saleItems.every(i => i.returned_qty >= i.sold_qty);
+      const anyReturned = saleItems.some(i => i.returned_qty > 0);
+
+      const newStatus = allReturned ? 'Returned' : anyReturned ? 'Partially Returned' : sale.payment_status;
+
+      await run(db, `UPDATE sales SET payment_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [newStatus, saleId]);
 
       if (sale.credit_applied > 0 && sale.customer_id) {
         await run(
           db,
           `INSERT INTO customer_payments (customer_id, sale_id, payment_date, amount, applied_amount, unapplied_amount, payment_method, notes, type)
            VALUES (?, ?, ?, 0, 0, ?, 'Adjustment', 'Refund of applied credit from returned sale', 'advance')`,
-          [sale.customer_id, saleId, new Date().toISOString().slice(0, 10), sale.credit_applied]
+          [sale.customer_id, saleId, cleanReturnDate, sale.credit_applied]
         );
       }
 
@@ -5030,15 +5069,42 @@ class PosStore {
     const dbBetter = this.getBetterDb();
 
     const employee_id = Number(input.employeeId);
-    const transaction_type = String(input.transactionType);
+    
+    let transaction_type = input.transactionType;
+    if (!transaction_type && input.type) {
+      const tMap = {
+        accrual: "salary",
+        payout: "payment",
+        advance: "advance",
+        deduction: "deduction",
+        bonus: "bonus"
+      };
+      transaction_type = tMap[input.type];
+    }
+    transaction_type = transaction_type ? String(transaction_type) : undefined;
+
     const amount = Number(input.amount); // in Rupees
-    const payment_account_id = input.paymentAccountId ? Number(input.paymentAccountId) : null;
+
+    let payment_account_id = input.paymentAccountId ? Number(input.paymentAccountId) : null;
+    if (!payment_account_id && input.paymentMethod) {
+      const pm = String(input.paymentMethod).trim();
+      let acc;
+      if (pm.toLowerCase() === "cash") {
+        acc = await get(db, "SELECT id FROM accounts WHERE name = 'Cash in Hand' OR code = '1000'");
+      } else {
+        acc = await get(db, "SELECT id FROM accounts WHERE name = ? OR name = ? OR code = ?", [`Bank - ${pm}`, pm, pm]);
+      }
+      if (acc) {
+        payment_account_id = acc.id;
+      }
+    }
+
     const period_label = input.periodLabel ? String(input.periodLabel).trim() : null;
-    const notes = input.notes ? String(input.notes).trim() : null;
-    const transaction_date = String(input.transactionDate || new Date().toISOString().split("T")[0]);
+    const notes = input.notes ? String(input.notes).trim() : (input.description ? String(input.description).trim() : null);
+    const transaction_date = String(input.transactionDate || input.date || new Date().toISOString().split("T")[0]);
 
     if (!employee_id) throw new Error("Employee ID is required");
-    if (!transaction_type) throw new Error("Transaction type is required");
+    if (!transaction_type || transaction_type === "undefined") throw new Error("Transaction type is required");
     if (amount <= 0) throw new Error("Amount must be greater than zero");
 
     const employee = await get(db, "SELECT name FROM employees WHERE id = ?", [employee_id]);

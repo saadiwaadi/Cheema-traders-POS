@@ -116,7 +116,12 @@
     "on": "ON",
     "off": "OFF",
     "none": "None",
-    "rs_amount": "Rs {amount}"
+    "rs_amount": "Rs {amount}",
+    "confirm_credit_title": "Confirm Credit Sale",
+    "confirm_credit_msg": "No payment amount has been entered. The remaining due of Rs {Due} will be added to the customer's balance. Proceed?",
+    "enter_amount_placeholder": "Enter amount received",
+    "btn_confirm": "Confirm",
+    "btn_cancel": "Cancel"
   },
   "invoices": {
     "title": "Sales History & Invoices",

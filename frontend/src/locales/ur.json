@@ -116,7 +116,12 @@
     "on": "آن",
     "off": "آف",
     "none": "کوئی نہیں",
-    "rs_amount": "روپے {amount}"
+    "rs_amount": "روپے {amount}",
+    "confirm_credit_title": "قرض کی فروخت کی تصدیق کریں",
+    "confirm_credit_msg": "کوئی رقم وصول نہیں ہوئی۔ بقایا رقم روپے {Due} گاہک کے کھاتے میں ڈال دی جائے گی۔ کیا آپ آگے بڑھنا چاہتے ہیں؟",
+    "enter_amount_placeholder": "وصول شدہ رقم درج کریں",
+    "btn_confirm": "تصدیق کریں",
+    "btn_cancel": "منسوخ کریں"
   },
   "invoices": {
     "title": "فروخت کی ہسٹری اور انوائسز",

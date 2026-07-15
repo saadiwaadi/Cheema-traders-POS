@@ -246,10 +246,13 @@ db.serialize(() => {
       refund_amount REAL NOT NULL,
       notes TEXT,
       returned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      return_date TEXT,
       FOREIGN KEY (sale_id) REFERENCES sales(id),
       FOREIGN KEY (product_id) REFERENCES products(id)
     )
   `);
+
+  db.run("ALTER TABLE sales_returns ADD COLUMN return_date TEXT", ignoreColumnExists);
 
   db.run(`
     CREATE TABLE IF NOT EXISTS purchases (
@@ -559,16 +562,24 @@ db.serialize(() => {
       );
     });
   });
+  db.run(`DROP VIEW IF EXISTS sale_returns_summary`);
   db.run(`
     CREATE VIEW IF NOT EXISTS sale_returns_summary AS
     SELECT
-      sale_id,
-      MIN(returned_at) AS returned_at,
-      SUM(refund_amount) AS total_refund,
-      SUM(quantity) AS total_qty,
-      GROUP_CONCAT(product_name || ' x' || quantity, ', ') AS items_summary
-    FROM sales_returns
-    GROUP BY sale_id
+      sr.sale_id,
+      s.invoice_no,
+      s.customer_id,
+      s.customer_name,
+      MIN(COALESCE(sr.return_date, DATE(sr.returned_at))) AS return_date,
+      MIN(sr.returned_at) AS returned_at,
+      MIN(sr.returned_at) AS first_returned_at,
+      MAX(sr.returned_at) AS last_returned_at,
+      SUM(sr.refund_amount) AS total_refund,
+      SUM(sr.quantity) AS total_qty,
+      GROUP_CONCAT(sr.product_name || ' x' || sr.quantity, ', ') AS items_summary
+    FROM sales_returns sr
+    JOIN sales s ON sr.sale_id = s.id
+    GROUP BY sr.sale_id
   `);
 
   db.run(`

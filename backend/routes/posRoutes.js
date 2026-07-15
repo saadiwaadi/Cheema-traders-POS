@@ -397,7 +397,7 @@ router.post("/sales/:id/void", async (req, res) => {
 
 router.post("/sales/:id/return", async (req, res) => {
   try {
-    const sale = await store.returnSaleItems(Number(req.params.id), req.body.items);
+    const sale = await store.returnSaleItems(Number(req.params.id), req.body.items, req.body.returnDate);
     return res.json({ sale });
   } catch (error) {
     return res.status(400).json({ message: error.message });
