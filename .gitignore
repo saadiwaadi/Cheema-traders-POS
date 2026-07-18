@@ -7,6 +7,7 @@ node_modules/
 dist/
 build/
 .vite/
+database/*.db
 database/*.db-wal
 database/*.db-shm
 database/*.db-journal
