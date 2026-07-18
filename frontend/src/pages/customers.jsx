@@ -837,14 +837,20 @@ function CustomerHistoryView({ customer, onRefresh }) {
     r++; // Empty row
 
     // Table Headers
-    const tableHeaders = ["S.No", "Date", "Particulars/Reference", "Payment Method", "Debit (PKR)", "Credit (PKR)", "Running Balance (PKR)"];
+    const tableHeaders = ["#", "Date", "Particulars", "Items", "Method", "Products", "Total", "Debit", "Credit", "Balance"];
     tableHeaders.forEach((h, c) => {
       let st = sTableHeader;
-      if (c === 0 || c === 1) st = sTableHeaderCenter;
-      else if (c >= 4) st = sTableHeaderRight;
+      if (c === 0 || c === 1 || c === 3) st = sTableHeaderCenter;
+      else if (c >= 6) st = sTableHeaderRight;
       writeCell(r, c, h, 's', st);
     });
     r++;
+
+    const rs = (v) => Number(v || 0).toLocaleString("en-PK");
+    const formatProductsExcel = (items) => {
+      if (!items || items.length === 0) return "-";
+      return items.map(i => `${i.product_name || i.name} (${rs(i.price || i.unit_price || i.rate)}) ×${i.quantity || i.qty}`).join(", ");
+    };
 
     // Table Data
     let sNo = 1;
@@ -852,18 +858,22 @@ function CustomerHistoryView({ customer, onRefresh }) {
       writeCell(r, 0, "BF", 's', sDataCenter);
       writeCell(r, 1, fromDate, 's', sDataCenter);
       writeCell(r, 2, "Balance Brought Forward (B/F)", 's', sData);
-      writeCell(r, 3, "-", 's', sData);
-      writeCell(r, 4, openingBF > 0 ? openingBF : 0, 'n', sDataNum);
-      writeCell(r, 5, openingBF < 0 ? -openingBF : 0, 'n', sDataNum);
-      writeCell(r, 6, openingBF, 'n', openingBF > 0 ? sDataDr : openingBF < 0 ? sDataCr : sDataNum);
+      writeCell(r, 3, "-", 's', sDataCenter);
+      writeCell(r, 4, "-", 's', sData);
+      writeCell(r, 5, "-", 's', sData);
+      writeCell(r, 6, "-", 's', sDataCenter);
+      writeCell(r, 7, openingBF > 0 ? openingBF : 0, 'n', sDataNum);
+      writeCell(r, 8, openingBF < 0 ? -openingBF : 0, 'n', sDataNum);
+      writeCell(r, 9, openingBF, 'n', openingBF > 0 ? sDataDr : openingBF < 0 ? sDataCr : sDataNum);
       r++;
     }
 
     [...visible].reverse().forEach((h) => {
       const isOpening = h.type === "Opening";
+      const isSale = h.type === 'Sale';
       const desc = isOpening 
         ? 'Opening Balance' 
-        : h.type === 'Sale' 
+        : isSale 
           ? `Sale Bill${h.reference ? ` (${h.reference})` : ""}` 
           : h.type === 'Return'
             ? `Items Returned${h.reference ? ` (${h.reference})` : ""}`
@@ -873,13 +883,19 @@ function CustomerHistoryView({ customer, onRefresh }) {
                 ? 'Advance Deposit' 
                 : 'Payment Received';
 
+      const itemsCount = isSale && h.item_count > 0 ? h.item_count : "-";
+      const productsStr = isSale ? formatProductsExcel(h.items) : "-";
+      
       writeCell(r, 0, sNo++, 'n', sDataCenter);
       writeCell(r, 1, h.date, 's', sDataCenter);
       writeCell(r, 2, desc, 's', sData);
-      writeCell(r, 3, h.method || "-", 's', sData);
-      writeCell(r, 4, h.debit, 'n', sDataNum);
-      writeCell(r, 5, h.credit, 'n', sDataNum);
-      writeCell(r, 6, h.runningBalance, 'n', h.runningBalance > 0 ? sDataDr : h.runningBalance < 0 ? sDataCr : sDataNum);
+      writeCell(r, 3, itemsCount, 's', sDataCenter);
+      writeCell(r, 4, h.method || "-", 's', sData);
+      writeCell(r, 5, productsStr, 's', sData);
+      writeCell(r, 6, isSale ? h.total_amount : "-", isSale ? 'n' : 's', isSale ? sDataNum : sDataCenter);
+      writeCell(r, 7, h.debit, 'n', sDataNum);
+      writeCell(r, 8, h.credit, 'n', sDataNum);
+      writeCell(r, 9, h.runningBalance, 'n', h.runningBalance > 0 ? sDataDr : h.runningBalance < 0 ? sDataCr : sDataNum);
       r++;
     });
 
@@ -887,34 +903,40 @@ function CustomerHistoryView({ customer, onRefresh }) {
     writeCell(r, 0, "", 's', sTotalLabel);
     writeCell(r, 1, "", 's', sTotalLabel);
     writeCell(r, 2, "", 's', sTotalLabel);
-    writeCell(r, 3, "TOTAL PERIOD TRANSACTIONS", 's', sTotalLabel);
-    writeCell(r, 4, periodDebit, 'n', sTotalNum);
-    writeCell(r, 5, periodCredit, 'n', sTotalNum);
-    writeCell(r, 6, closing, 'n', sTotalNum);
+    writeCell(r, 3, "", 's', sTotalLabel);
+    writeCell(r, 4, "", 's', sTotalLabel);
+    writeCell(r, 5, "", 's', sTotalLabel);
+    writeCell(r, 6, "TOTAL PERIOD TRANSACTIONS", 's', sTotalLabel);
+    writeCell(r, 7, periodDebit, 'n', sTotalNum);
+    writeCell(r, 8, periodCredit, 'n', sTotalNum);
+    writeCell(r, 9, closing, 'n', sTotalNum);
     r++;
 
     ws["!merges"] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } },
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } },
-      { s: { r: 2, c: 0 }, e: { r: 2, c: 6 } },
-      { s: { r: 4, c: 1 }, e: { r: 4, c: 3 } },
-      { s: { r: 4, c: 5 }, e: { r: 4, c: 6 } },
-      { s: { r: 5, c: 1 }, e: { r: 5, c: 3 } },
-      { s: { r: 5, c: 5 }, e: { r: 5, c: 6 } },
-      { s: { r: r - 1, c: 0 }, e: { r: r - 1, c: 3 } }
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 9 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 9 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: 9 } },
+      { s: { r: 4, c: 1 }, e: { r: 4, c: 4 } },
+      { s: { r: 4, c: 8 }, e: { r: 4, c: 9 } },
+      { s: { r: 5, c: 1 }, e: { r: 5, c: 4 } },
+      { s: { r: 5, c: 8 }, e: { r: 5, c: 9 } },
+      { s: { r: r - 1, c: 0 }, e: { r: r - 1, c: 6 } }
     ];
 
     ws["!cols"] = [
       { wch: 8 },
       { wch: 12 },
-      { wch: 35 },
-      { wch: 18 },
-      { wch: 18 },
-      { wch: 18 },
-      { wch: 22 }
+      { wch: 30 },
+      { wch: 8 },
+      { wch: 15 },
+      { wch: 45 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 18 }
     ];
 
-    ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: r - 1, c: 6 } });
+    ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: r - 1, c: 9 } });
 
     XLSX.utils.book_append_sheet(wb, ws, "Account Statement");
     XLSX.writeFile(wb, `Statement_${customer.name.replace(/\s+/g, '_')}.xlsx`);
@@ -937,105 +959,122 @@ function CustomerHistoryView({ customer, onRefresh }) {
         };
       }
     } catch (e) {
-      console.error("Failed to load fresh settings for print statement, using state fallback", e);
+      console.error("Failed to load fresh settings", e);
     }
 
-    let rowsHtml = "";
-    let sNo = 1;
+    const rs = (v) => Number(v || 0).toLocaleString("en-PK");
 
+    const formatProducts = (items) => {
+      if (!items || items.length === 0) return "&mdash;";
+      return items.map(i => 
+        `${i.product_name || i.name} (${rs(i.price || i.unit_price || i.rate)}) &times;${i.quantity || i.qty}`
+      ).join(", ");
+    };
+
+    let rowNum = 0;
+    
+    let rowsHtml = "";
     if (fromDate) {
       rowsHtml += `
-        <tr class="bf-row">
-          <td>BF</td>
-          <td>${new Date(fromDate + "T00:00:00").toLocaleDateString("en-PK", { day: "2-digit", month: "short", year: "numeric" })}</td>
-          <td colspan="2"><strong>Balance Brought Forward (B/F)</strong></td>
-          <td class="num">${openingBF > 0 ? formatMoney(openingBF) : "-"}</td>
-          <td class="num">${openingBF < 0 ? formatMoney(Math.abs(openingBF)) : "-"}</td>
-          <td class="num bold">${formatMoney(Math.abs(openingBF))} ${openingBF > 0 ? "Dr" : openingBF < 0 ? "Cr" : ""}</td>
+        <tr>
+          <td class="c"></td>
+          <td>${new Date(fromDate + "T00:00:00").toLocaleDateString("en-PK", { day: "2-digit", month: "short" })}</td>
+          <td><strong>Balance Brought Forward (B/F)</strong></td>
+          <td class="c">&mdash;</td>
+          <td>&mdash;</td>
+          <td class="products">&mdash;</td>
+          <td class="r">&mdash;</td>
+          <td class="r mono">${openingBF > 0 ? rs(openingBF) : "&mdash;"}</td>
+          <td class="r mono">${openingBF < 0 ? rs(Math.abs(openingBF)) : "&mdash;"}</td>
+          <td class="r mono">${openingBF < 0 ? "(Cr)" : openingBF > 0 ? "(Dr)" : ""} ${rs(Math.abs(openingBF || 0))}</td>
         </tr>
       `;
     }
 
-    const tableRowsHtml = [...visible].reverse().map((h) => {
-      const isOpening = h.type === "Opening";
-      const desc = isOpening 
-        ? 'Opening Balance' 
-        : h.type === 'Sale' 
-          ? `Sale Bill ${h.reference ? `<span class="ref-no">(${h.reference})</span>` : ""}` 
-          : h.type === 'Return'
-            ? `Items Returned ${h.reference ? `<span class="ref-no">(${h.reference})</span>` : ""}`
-            : h.type === 'Withdrawal'
-              ? (h.payment_type === 'loan' ? 'Loan Disbursed' : 'Advance Withdrawal')
-              : h.payment_type === 'advance' 
-                ? 'Advance Deposit' 
-                : 'Payment Received';
+    rowsHtml += [...visible].reverse().map((h, idx) => {
+      const isOpening = h.type === 'Opening' || h.reference === 'opening';
+      if (!isOpening) rowNum++;
 
-      const runningBalFormatted = formatMoney(Math.abs(h.runningBalance));
-      const runningIndicator = h.runningBalance > 0 ? "Dr" : h.runningBalance < 0 ? "Cr" : "";
+      const isSale = h.type === 'Sale';
+      const evenClass = idx % 2 === 1 ? ' class="even"' : '';
+      const drVal = h.debit > 0 ? rs(h.debit) : "&mdash;";
+      const crVal = h.credit > 0 ? rs(h.credit) : "&mdash;";
+      const balSign = h.runningBalance < 0 ? "(Cr)" : h.runningBalance > 0 ? "(Dr)" : "";
+      const balVal = `${balSign} ${rs(Math.abs(h.runningBalance || 0))}`;
 
-      const row = `
-        <tr>
-          <td class="muted">${sNo++}</td>
-          <td>${new Date(h.date + "T00:00:00").toLocaleDateString("en-PK", { day: "2-digit", month: "short", year: "numeric" })}</td>
-          <td><strong>${desc}</strong></td>
-          <td>${h.method || "-"}</td>
-          <td class="num">${h.debit > 0 ? formatMoney(h.debit) : "-"}</td>
-          <td class="num text-success">${h.credit > 0 ? formatMoney(h.credit) : "-"}</td>
-          <td class="num bold ${h.runningBalance > 0 ? 'text-danger' : h.runningBalance < 0 ? 'text-success' : ''}">${runningBalFormatted} ${runningIndicator}</td>
+      const d = new Date(h.date + "T00:00:00");
+      const shortDate = isNaN(d.getTime()) ? h.date : 
+        `${String(d.getDate()).padStart(2,'0')} ${d.toLocaleString('en-US',{month:'short'})}`;
+
+      const subLine = h.reference && h.reference !== 'opening' 
+        ? h.reference 
+        : (h.notes || h.type || '');
+
+      return `
+        <tr${evenClass}>
+          <td class="c">${isOpening ? '' : rowNum}</td>
+          <td>${shortDate}</td>
+          <td><strong>${isOpening ? 'Opening Balance' : (isSale ? 'Sale Bill' : h.type === 'Withdrawal' ? (h.payment_type === 'loan' ? 'Loan Disbursed' : 'Advance Withdrawal') : h.type === 'Return' ? 'Items Returned' : h.payment_type === 'advance' ? 'Advance Deposit' : 'Payment Received')}</strong><br>
+              <span style="font-size:7.5px;color:#555;">${isOpening ? '' : subLine}</span></td>
+          <td class="c">${isSale && h.item_count > 0 ? h.item_count : '&mdash;'}</td>
+          <td>${isOpening ? '&mdash;' : (h.method || '&mdash;')}</td>
+          <td class="products">${isSale ? formatProducts(h.items) : '&mdash;'}</td>
+          <td class="r mono">${isSale ? rs(h.total_amount) : '&mdash;'}</td>
+          <td class="r mono">${drVal}</td>
+          <td class="r mono">${crVal}</td>
+          <td class="r mono">${balVal}</td>
         </tr>
       `;
-      return row;
     }).join("");
-
-    rowsHtml += tableRowsHtml;
 
     const html = `
 <html>
 <head>
 <title>Account Statement - ${customer.name}</title>
 <style>
-@page { size: A4; margin: 12mm 15mm; }
+@page { size: A4 landscape; margin: 10mm 12mm; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: Arial, sans-serif; font-size: 11px; color: #000; background: #fff; padding: 0; }
-.header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2.5px solid #000; padding-bottom: 12px; margin-bottom: 14px; }
-.brand { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; color: #000; }
-.tagline { font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: #444; margin-top: 2px; }
-.contact { font-size: 9px; color: #555; margin-top: 6px; line-height: 1.6; }
-.doc-title { font-size: 17px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1.5px solid #000; padding-bottom: 4px; margin-bottom: 6px; text-align: right; }
-.doc-meta { font-size: 9px; color: #444; line-height: 1.7; text-align: right; }
-.party-row { display: flex; border: 1px solid #000; margin-bottom: 10px; }
-.party-cell { padding: 8px 12px; flex: 1; }
-.party-cell + .party-cell { border-left: 1px solid #000; flex: 0 0 200px; text-align: right; }
-.cell-label { font-size: 8px; text-transform: uppercase; letter-spacing: 0.08em; color: #555; font-weight: 700; margin-bottom: 3px; }
-.cell-value { font-size: 13px; font-weight: 700; }
-.cell-sub { font-size: 9px; color: #444; margin-top: 2px; }
-.summary-strip { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid #000; margin-bottom: 12px; }
-.sc { padding: 7px 10px; }
-.sc + .sc { border-left: 1px solid #000; }
-.sc-label { font-size: 8px; text-transform: uppercase; letter-spacing: 0.06em; color: #555; font-weight: 700; margin-bottom: 3px; }
-.sc-val { font-size: 12px; font-weight: 700; font-family: 'Courier New', monospace; }
-.sc.closing { background: #000; color: #fff; }
-.sc.closing .sc-label { color: #bbb; }
+body { font-family: Arial, sans-serif; font-size: 10px; color: #000; background: #fff; padding: 0; }
+
+.header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 12px; }
+.brand { font-size: 18px; font-weight: 700; color: #000; }
+.tagline { font-size: 8px; text-transform: uppercase; letter-spacing: 0.08em; color: #444; margin-top: 1px; }
+.contact { font-size: 8px; color: #555; margin-top: 5px; line-height: 1.5; }
+.doc-title { font-size: 15px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; text-align: right; }
+.doc-meta { font-size: 8px; color: #444; line-height: 1.6; text-align: right; margin-top: 4px; }
+
+.info-row { display: flex; border: 1px solid #000; margin-bottom: 8px; }
+.info-cell { padding: 6px 10px; flex: 1; border-right: 1px solid #000; }
+.info-cell:last-child { border-right: none; }
+.info-label { font-size: 7px; text-transform: uppercase; letter-spacing: 0.06em; color: #555; font-weight: 700; margin-bottom: 2px; }
+.info-value { font-size: 11px; font-weight: 700; }
+.info-sub { font-size: 8px; color: #444; margin-top: 1px; }
+
+.summary-row { display: flex; gap: 0; border: 1px solid #000; margin-bottom: 10px; }
+.summary-cell { flex: 1; padding: 6px 10px; border-right: 1px solid #000; }
+.summary-cell:last-child { border-right: none; }
+.summary-label { font-size: 7px; text-transform: uppercase; letter-spacing: 0.06em; color: #555; font-weight: 700; }
+.summary-value { font-size: 12px; font-weight: 700; margin-top: 2px; }
+
 table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 thead tr { background: #000; color: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-th { padding: 7px 8px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; border: 1px solid #000; text-align: left; }
-th.num { text-align: right; }
-td { padding: 6px 8px; border: 1px solid #ccc; font-size: 10px; vertical-align: top; }
-td.num { text-align: right; font-family: 'Courier New', monospace; }
-tr:nth-child(even) td { background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-.group-hdr td { background: #e0e0e0 !important; font-weight: 700; font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; padding: 4px 8px; border-color: #999; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-.totals-row td { background: #000 !important; color: #fff; font-weight: 700; font-size: 10px; border-color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-.totals-row td.num { font-family: 'Courier New', monospace; }
-.badge { font-size: 8px; font-weight: 700; text-transform: uppercase; padding: 1px 4px; border: 1px solid #000; display: inline-block; letter-spacing: 0.04em; }
-.part-main { font-weight: 700; font-size: 10px; }
-.part-sub { font-size: 9px; color: #555; margin-top: 1px; }
-.footer { margin-top: 28px; border-top: 1.5px solid #000; padding-top: 12px; display: flex; justify-content: space-between; align-items: flex-end; }
-.footer-note { font-size: 8px; color: #555; line-height: 1.6; max-width: 340px; }
-.sig-block { text-align: center; border-top: 1px solid #000; padding-top: 6px; font-size: 9px; font-weight: 700; min-width: 180px; }
-.dr { font-family: 'Courier New', monospace; }
-.cr { font-family: 'Courier New', monospace; font-weight: 700; }
-.bal { font-family: 'Courier New', monospace; font-weight: 700; }
-.disc { font-size: 8px; color: #aaa; text-align: center; margin-top: 8px; }
+th { padding: 5px 6px; font-size: 7.5px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700; border: 1px solid #000; text-align: left; white-space: nowrap; }
+th.r { text-align: right; }
+th.c { text-align: center; }
+td { padding: 4px 6px; border: 1px solid #ccc; font-size: 9px; vertical-align: top; }
+td.r { text-align: right; }
+td.c { text-align: center; }
+td.mono { font-family: 'Courier New', monospace; font-size: 8.5px; }
+td.products { font-size: 8px; color: #333; line-height: 1.3; }
+
+tr.even td { background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+tr.month-header td { background: #e8e8e8; font-weight: 700; font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; border-top: 1.5px solid #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; padding: 4px 6px; }
+tr.totals td { background: #e0e0e0 !important; font-weight: 700; font-size: 9px; border-top: 1.5px solid #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+tr.closing td { background: #000 !important; color: #fff !important; font-weight: 700; font-size: 10px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+.footer { margin-top: 16px; border-top: 1.5px solid #000; padding-top: 10px; display: flex; justify-content: space-between; align-items: flex-end; }
+.footer-note { font-size: 7px; color: #555; line-height: 1.5; max-width: 340px; }
+.sig-block { text-align: center; border-top: 1px solid #000; padding-top: 5px; font-size: 8px; font-weight: 700; min-width: 160px; }
 </style>
 </head>
 <body>
@@ -1050,69 +1089,83 @@ tr:nth-child(even) td { background: #f5f5f5; -webkit-print-color-adjust: exact; 
     <div class="doc-title">Account Statement</div>
     <div class="doc-meta">
       Generated: ${new Date().toLocaleDateString("en-PK", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}<br>
-      Period: ${fromDate || "Inception"} &mdash; ${toDate || "Today"}
+      Period: ${fromDate ? new Date(fromDate).toLocaleDateString("en-PK", {day:"2-digit", month:"long", year:"numeric"}) : "Inception"} &mdash; ${toDate ? new Date(toDate).toLocaleDateString("en-PK", {day:"2-digit", month:"long", year:"numeric"}) : "Today"}
     </div>
   </div>
 </div>
 
-<div class="party-row">
-  <div class="party-cell">
-    <div class="cell-label">Statement For</div>
-    <div class="cell-value">${customer.name}</div>
-    <div class="cell-sub">Customer Account &nbsp;|&nbsp; A/R Subledger${customer.phone ? " &nbsp;|&nbsp; " + customer.phone : ""}</div>
+<div class="info-row">
+  <div class="info-cell">
+    <div class="info-label">Statement For</div>
+    <div class="info-value">${customer.name}</div>
+    <div class="info-sub">Customer Account &nbsp;|&nbsp; A/R Subledger${customer.phone ? " &nbsp;|&nbsp; " + customer.phone : ""}</div>
   </div>
-  <div class="party-cell">
-    <div class="cell-label">Current Balance</div>
-    <div class="cell-value">${closing === 0 ? "Rs. 0.00 — Settled" : closing > 0 ? "Dr Rs. " + Math.abs(closing).toLocaleString("en-PK", {minimumFractionDigits:2}) : "Cr Rs. " + Math.abs(closing).toLocaleString("en-PK", {minimumFractionDigits:2})}</div>
-    <div class="cell-sub">${closing > 0 ? "Receivable — amount owed to us" : closing < 0 ? "Advance credit in customer favour" : "Account fully settled"}</div>
+  <div class="info-cell">
+    <div class="info-label">Current Balance</div>
+    <div class="info-value">${closing === 0 ? "Rs. 0.00 — Settled" : closing > 0 ? "Dr Rs. " + rs(Math.abs(closing)) : "Cr Rs. " + rs(Math.abs(closing))}</div>
+    <div class="info-sub">${closing > 0 ? "Receivable — amount owed to us" : closing < 0 ? "Advance credit in customer favour" : "Account fully settled"}</div>
   </div>
 </div>
 
-<div class="summary-strip">
-  <div class="sc">
-    <div class="sc-label">Opening Balance</div>
-    <div class="sc-val">${formatMoney(Math.abs(openingBF))} ${openingBF > 0 ? "Dr" : openingBF < 0 ? "Cr" : ""}</div>
+<div class="summary-row">
+  <div class="summary-cell">
+    <div class="summary-label">Opening Balance</div>
+    <div class="summary-value">${rs(Math.abs(openingBF))} ${openingBF > 0 ? "Dr" : openingBF < 0 ? "Cr" : ""}</div>
   </div>
-  <div class="sc">
-    <div class="sc-label">Total Debits (Dr)</div>
-    <div class="sc-val">${formatMoney(periodDebit)}</div>
+  <div class="summary-cell">
+    <div class="summary-label">Total Debits (Dr)</div>
+    <div class="summary-value">${rs(periodDebit)}</div>
   </div>
-  <div class="sc">
-    <div class="sc-label">Total Credits (Cr)</div>
-    <div class="sc-val">${formatMoney(periodCredit)}</div>
+  <div class="summary-cell">
+    <div class="summary-label">Total Credits (Cr)</div>
+    <div class="summary-value">${rs(periodCredit)}</div>
   </div>
-  <div class="sc closing">
-    <div class="sc-label">Closing Balance</div>
-    <div class="sc-val">${formatMoney(Math.abs(closing))} ${closing > 0 ? "Dr" : closing < 0 ? "Cr" : ""}</div>
+  <div class="summary-cell" style="background:#000; color:#fff;">
+    <div class="summary-label" style="color:#bbb;">Closing Balance</div>
+    <div class="summary-value">${rs(Math.abs(closing))} ${closing > 0 ? "Dr" : closing < 0 ? "Cr" : ""}</div>
   </div>
 </div>
 
 <table>
-  <colgroup>
-    <col style="width:28px">
-    <col style="width:70px">
-    <col">
-    <col style="width:60px">
-    <col style="width:70px">
-    <col style="width:90px">
-    <col style="width:90px">
-    <col style="width:100px">
-  </colgroup>
-  <thead>
-    <tr>
-      <th>#</th>
-      <th>Date</th>
-      <th>Particulars</th>
-      <th>Method</th>
-      <th>Ref / Type</th>
-      <th class="num">Debit (Dr)</th>
-      <th class="num">Credit (Cr)</th>
-      <th class="num">Balance</th>
-    </tr>
-  </thead>
-  <tbody>
-    ${rowsHtml}
-  </tbody>
+<colgroup>
+  <col style="width: 28px;">
+  <col style="width: 62px;">
+  <col style="width: 120px;">
+  <col style="width: 38px;">
+  <col style="width: 70px;">
+  <col>
+  <col style="width: 72px;">
+  <col style="width: 72px;">
+  <col style="width: 72px;">
+  <col style="width: 82px;">
+</colgroup>
+<thead>
+  <tr>
+    <th class="c">#</th>
+    <th>Date</th>
+    <th>Particulars</th>
+    <th class="c">Items</th>
+    <th>Method</th>
+    <th>Products</th>
+    <th class="r">Total</th>
+    <th class="r">DR</th>
+    <th class="r">CR</th>
+    <th class="r">Balance</th>
+  </tr>
+</thead>
+<tbody>
+  ${rowsHtml}
+  <tr class="totals">
+    <td colspan="7" class="r">TOTALS FOR PERIOD</td>
+    <td class="r mono">${rs(periodDebit)}</td>
+    <td class="r mono">${rs(periodCredit)}</td>
+    <td></td>
+  </tr>
+  <tr class="closing">
+    <td colspan="7" class="r">CLOSING BALANCE</td>
+    <td colspan="3" class="c mono">${rs(Math.abs(closing))} ${closing > 0 ? "Dr" : closing < 0 ? "Cr" : ""}</td>
+  </tr>
+</tbody>
 </table>
 
 <div class="footer">
@@ -1126,7 +1179,6 @@ tr:nth-child(even) td { background: #f5f5f5; -webkit-print-color-adjust: exact; 
     <span style="font-weight:400;">${activeProfile.business_name}</span>
   </div>
 </div>
-<div class="disc">Dr = receivable from customer &nbsp;|&nbsp; Cr = advance / credit in customer's favour</div>
 
 </body>
 </html>

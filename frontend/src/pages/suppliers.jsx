@@ -836,117 +836,7 @@ function SupplierHistoryView({ supplier, onRefresh }) {
     r++;
     r++; // Empty row
 
-    // Meta Info Block
-    writeCell(r, 0, "Supplier Name:", 's', sMetaLabel);
-    writeCell(r, 1, supplier.name, 's', sMetaVal);
-    writeCell(r, 2, "", 's', sMetaVal);
-    writeCell(r, 3, "", 's', sMetaVal);
-    writeCell(r, 4, "Statement Period:", 's', sMetaLabel);
-    writeCell(r, 5, `${fromDate || "Inception"} to ${toDate || "Today"}`, 's', sMetaVal);
-    writeCell(r, 6, "", 's', sMetaVal);
-    writeCell(r, 7, "", 's', sMetaVal);
-    r++;
-
-    writeCell(r, 0, "Phone Number:", 's', sMetaLabel);
-    writeCell(r, 1, supplier.phone || "-", 's', sMetaVal);
-    writeCell(r, 2, "", 's', sMetaVal);
-    writeCell(r, 3, "", 's', sMetaVal);
-    writeCell(r, 4, "Current Balance:", 's', sMetaLabel);
-    const balanceStr = `PKR ${Math.abs(currentBalance).toLocaleString("en-PK", { minimumFractionDigits: 2 })} ${currentBalance > 0 ? "(Cr)" : currentBalance < 0 ? "(Dr)" : ""}`;
-    writeCell(r, 5, balanceStr, 's', currentBalance > 0 ? { ...sMetaVal, font: { ...sMetaVal.font, color: { rgb: colors.danger }, bold: true } } : currentBalance < 0 ? { ...sMetaVal, font: { ...sMetaVal.font, color: { rgb: colors.success }, bold: true } } : sMetaVal);
-    writeCell(r, 6, "", 's', sMetaVal);
-    writeCell(r, 7, "", 's', sMetaVal);
-    r++;
-    r++; // Empty row
-
-    // Table Headers
-    const tableHeaders = ["S.No", "Date", "Description/Reference", "Payment Method", "Status", "Debit (PKR)", "Credit (PKR)", "Running Balance (PKR)"];
-    tableHeaders.forEach((h, c) => {
-      let st = sTableHeader;
-      if (c === 0 || c === 1 || c === 4) st = sTableHeaderCenter;
-      else if (c >= 5) st = sTableHeaderRight;
-      writeCell(r, c, h, 's', st);
-    });
-    r++;
-
-    // Table Data
-    let sNo = 1;
-    const currentBilled = visibleRows.reduce((sum, h) => sum + Number(h.credit || 0), 0);
-    const currentPaid = visibleRows.reduce((sum, h) => sum + Number(h.debit || 0), 0);
-
-    [...visibleRows].reverse().forEach((h) => {
-      const isPurchase = h.type === 'Purchase';
-      const isOpening = h.type === 'Opening';
-      const desc = isOpening 
-        ? 'Opening Balance' 
-        : h.type === 'Purchase' 
-          ? `Purchase Invoice${h.reference ? ` (${h.reference})` : ""}` 
-          : h.type === 'Journal'
-            ? `Journal Entry${h.reference ? ` (${h.reference})` : ""}`
-            : h.isWithdrawal
-              ? `Refund/Withdrawal${h.reference ? ` (${h.reference})` : ""}`
-              : `Payment Made${h.reference ? ` (${h.reference})` : ""}`;
-
-      const status = isOpening ? "-" : h.type === 'Purchase' ? h.payment_status || "Unpaid" : h.type === 'Journal' ? "-" : h.payment_status || "Paid";
-      
-      const debit = h.debit;
-      const credit = h.credit;
-
-      writeCell(r, 0, sNo++, 'n', sDataCenter);
-      writeCell(r, 1, h.date, 's', sDataCenter);
-      writeCell(r, 2, desc, 's', sData);
-      writeCell(r, 3, h.method || "-", 's', sData);
-      writeCell(r, 4, status, 's', sDataCenter);
-      writeCell(r, 5, debit, 'n', sDataNum);
-      writeCell(r, 6, credit, 'n', sDataNum);
-      writeCell(r, 7, h.runningBalance, 'n', h.runningBalance > 0 ? sDataCr : h.runningBalance < 0 ? sDataDr : sDataNum);
-      r++;
-    });
-
-    // Totals Row
-    writeCell(r, 0, "", 's', sTotalLabel);
-    writeCell(r, 1, "", 's', sTotalLabel);
-    writeCell(r, 2, "", 's', sTotalLabel);
-    writeCell(r, 3, "", 's', sTotalLabel);
-    writeCell(r, 4, "TOTALS", 's', sTotalLabel);
-    writeCell(r, 5, currentPaid, 'n', sTotalNum);
-    writeCell(r, 6, currentBilled, 'n', sTotalNum);
-    writeCell(r, 7, currentBalance, 'n', sTotalNum);
-    r++;
-
-    ws["!merges"] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 7 } },
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 7 } },
-      { s: { r: 2, c: 0 }, e: { r: 2, c: 7 } },
-      { s: { r: 4, c: 1 }, e: { r: 4, c: 3 } },
-      { s: { r: 4, c: 5 }, e: { r: 4, c: 7 } },
-      { s: { r: 5, c: 1 }, e: { r: 5, c: 3 } },
-      { s: { r: 5, c: 5 }, e: { r: 5, c: 7 } },
-      { s: { r: r - 1, c: 0 }, e: { r: r - 1, c: 4 } }
-    ];
-
-    ws["!cols"] = [
-      { wch: 8 },
-      { wch: 12 },
-      { wch: 35 },
-      { wch: 18 },
-      { wch: 12 },
-      { wch: 18 },
-      { wch: 18 },
-      { wch: 22 }
-    ];
-
-    ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: r - 1, c: 7 } });
-
-    XLSX.utils.book_append_sheet(wb, ws, "Account Statement");
-    XLSX.writeFile(wb, `Statement_${supplier.name.replace(/\s+/g, '_')}.xlsx`);
-  };
-
-  const handlePrintStatement = async () => {
-    const currentBilled = visibleRowsWithBalance.reduce((s, h) => s + Number(h.credit || 0), 0);
-    const currentReceived = visibleRowsWithBalance.reduce((s, h) => s + Number(h.debit || 0), 0);
-
-    const earliest = visibleRows[visibleRows.length - 1]; // visibleRows is newest-first
+    const earliest = visibleRows[visibleRows.length - 1];
     const openingBF = earliest 
       ? earliest.runningBalance - earliest.balance_change 
       : (fromDate 
@@ -955,407 +845,391 @@ function SupplierHistoryView({ supplier, onRefresh }) {
         );
     const closing = visibleRows.length ? visibleRows[0].runningBalance : Number(supplier.openingBalance || supplier.opening_balance || 0);
 
-    let rowsHtml = "";
-    let sNo = 1;
+    // Meta Info Block
+    writeCell(r, 0, "Supplier Name:", 's', sMetaLabel);
+    writeCell(r, 1, supplier.name, 's', sMetaVal);
+    writeCell(r, 2, "", 's', sMetaVal);
+    writeCell(r, 3, "", 's', sMetaVal);
+    writeCell(r, 4, "Statement Period:", 's', sMetaLabel);
+    writeCell(r, 5, `${fromDate || "Inception"} to ${toDate || "Today"}`, 's', sMetaVal);
+    writeCell(r, 6, "", 's', sMetaVal);
+    r++;
 
+    writeCell(r, 0, "Phone Number:", 's', sMetaLabel);
+    writeCell(r, 1, supplier.phone || "-", 's', sMetaVal);
+    writeCell(r, 2, "", 's', sMetaVal);
+    writeCell(r, 3, "", 's', sMetaVal);
+    writeCell(r, 4, "Current Balance:", 's', sMetaLabel);
+    const balanceStr = `PKR ${Math.abs(closing).toLocaleString("en-PK", { minimumFractionDigits: 2 })} ${closing > 0 ? "(Cr)" : closing < 0 ? "(Dr)" : ""}`;
+    writeCell(r, 5, balanceStr, 's', closing > 0 ? { ...sMetaVal, font: { ...sMetaVal.font, color: { rgb: colors.danger }, bold: true } } : closing < 0 ? { ...sMetaVal, font: { ...sMetaVal.font, color: { rgb: colors.success }, bold: true } } : sMetaVal);
+    writeCell(r, 6, "", 's', sMetaVal);
+    r++;
+    r++; // Empty row
+
+    // Table Headers
+    const tableHeaders = ["#", "Date", "Particulars", "Items", "Method", "Products", "Total", "Debit", "Credit", "Balance"];
+    tableHeaders.forEach((h, c) => {
+      let st = sTableHeader;
+      if (c === 0 || c === 1 || c === 3) st = sTableHeaderCenter;
+      else if (c >= 6) st = sTableHeaderRight;
+      writeCell(r, c, h, 's', st);
+    });
+    r++;
+
+    const rs = (v) => Number(v || 0).toLocaleString("en-PK");
+    const formatProductsExcel = (items) => {
+      if (!items || items.length === 0) return "-";
+      return items.map(i => `${i.product_name || i.name} (${rs(i.price || i.unit_price || i.rate)}) ×${i.quantity || i.qty}`).join(", ");
+    };
+
+    // Table Data
+    let sNo = 1;
+    if (fromDate) {
+      writeCell(r, 0, "BF", 's', sDataCenter);
+      writeCell(r, 1, fromDate, 's', sDataCenter);
+      writeCell(r, 2, "Balance Brought Forward (B/F)", 's', sData);
+      writeCell(r, 3, "-", 's', sDataCenter);
+      writeCell(r, 4, "-", 's', sData);
+      writeCell(r, 5, "-", 's', sData);
+      writeCell(r, 6, "-", 's', sDataCenter);
+      writeCell(r, 7, openingBF < 0 ? Math.abs(openingBF) : 0, 'n', sDataNum);
+      writeCell(r, 8, openingBF > 0 ? openingBF : 0, 'n', sDataNum);
+      writeCell(r, 9, openingBF, 'n', openingBF > 0 ? sDataCr : openingBF < 0 ? sDataDr : sDataNum);
+      r++;
+    }
+
+    const currentBilled = visibleRows.reduce((sum, h) => sum + Number(h.credit || 0), 0);
+    const currentPaid = visibleRows.reduce((sum, h) => sum + Number(h.debit || 0), 0);
+
+    [...visibleRows].reverse().forEach((h) => {
+      const isPurchase = h.type === 'Purchase';
+      const isOpening = h.type === 'Opening';
+      const desc = isOpening 
+        ? 'Opening Balance' 
+        : isPurchase 
+          ? `Purchase Bill${h.reference ? ` (${h.reference})` : ""}` 
+          : h.type === 'Journal'
+            ? `Journal Entry${h.reference ? ` (${h.reference})` : ""}`
+            : h.isWithdrawal
+              ? `Refund/Withdrawal${h.reference ? ` (${h.reference})` : ""}`
+              : `Payment Made${h.reference ? ` (${h.reference})` : ""}`;
+
+      const itemsCount = isPurchase && h.item_count > 0 ? h.item_count : "-";
+      const productsStr = isPurchase ? formatProductsExcel(h.items) : "-";
+      
+      writeCell(r, 0, sNo++, 'n', sDataCenter);
+      writeCell(r, 1, h.date, 's', sDataCenter);
+      writeCell(r, 2, desc, 's', sData);
+      writeCell(r, 3, itemsCount, 's', sDataCenter);
+      writeCell(r, 4, h.method || "-", 's', sData);
+      writeCell(r, 5, productsStr, 's', sData);
+      writeCell(r, 6, isPurchase ? h.total_amount : "-", isPurchase ? 'n' : 's', isPurchase ? sDataNum : sDataCenter);
+      writeCell(r, 7, h.debit, 'n', sDataNum);
+      writeCell(r, 8, h.credit, 'n', sDataNum);
+      writeCell(r, 9, h.runningBalance, 'n', h.runningBalance > 0 ? sDataCr : h.runningBalance < 0 ? sDataDr : sDataNum);
+      r++;
+    });
+
+    // Totals Row
+    writeCell(r, 0, "", 's', sTotalLabel);
+    writeCell(r, 1, "", 's', sTotalLabel);
+    writeCell(r, 2, "", 's', sTotalLabel);
+    writeCell(r, 3, "", 's', sTotalLabel);
+    writeCell(r, 4, "", 's', sTotalLabel);
+    writeCell(r, 5, "", 's', sTotalLabel);
+    writeCell(r, 6, "TOTAL PERIOD TRANSACTIONS", 's', sTotalLabel);
+    writeCell(r, 7, currentPaid, 'n', sTotalNum);
+    writeCell(r, 8, currentBilled, 'n', sTotalNum);
+    writeCell(r, 9, closing, 'n', sTotalNum);
+    r++;
+
+    ws["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 9 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 9 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: 9 } },
+      { s: { r: 4, c: 1 }, e: { r: 4, c: 4 } },
+      { s: { r: 4, c: 8 }, e: { r: 4, c: 9 } },
+      { s: { r: 5, c: 1 }, e: { r: 5, c: 4 } },
+      { s: { r: 5, c: 8 }, e: { r: 5, c: 9 } },
+      { s: { r: r - 1, c: 0 }, e: { r: r - 1, c: 6 } }
+    ];
+
+    ws["!cols"] = [
+      { wch: 8 },
+      { wch: 12 },
+      { wch: 30 },
+      { wch: 8 },
+      { wch: 15 },
+      { wch: 45 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 18 }
+    ];
+
+    ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: r - 1, c: 9 } });
+
+    XLSX.utils.book_append_sheet(wb, ws, "Account Statement");
+    XLSX.writeFile(wb, `Supplier_Statement_${supplier.name.replace(/\s+/g, '_')}.xlsx`);
+  };
+
+  const handlePrintStatement = async () => {
+    let activeProfile = { ...businessProfile };
+    try {
+      const freshSettings = await getSettings();
+      if (freshSettings) {
+        activeProfile = {
+          business_name: freshSettings.business_name || "Cheema Traders",
+          business_tagline: freshSettings.business_tagline || "Agro Inputs & Fertilizer Distributors",
+          business_address: freshSettings.business_address || "Main Bazar, Sahiwal, Pakistan",
+          business_phone: freshSettings.business_phone || "+92 300 7890123",
+          business_email: freshSettings.business_email || "info@cheematraders.com",
+          business_whatsapp: freshSettings.business_whatsapp || "",
+          business_ntn: freshSettings.business_ntn || "",
+          business_strn: freshSettings.business_strn || ""
+        };
+      }
+    } catch (e) {
+      console.error("Failed to load fresh settings", e);
+    }
+
+    const rs = (v) => Number(v || 0).toLocaleString("en-PK");
+
+    const formatProducts = (items) => {
+      if (!items || items.length === 0) return "&mdash;";
+      return items.map(i => 
+        `${i.product_name || i.name} (${rs(i.price || i.unit_price || i.rate)}) &times;${i.quantity || i.qty}`
+      ).join(", ");
+    };
+
+    const currentBilled = visibleRows.reduce((s, h) => s + Number(h.credit || 0), 0);
+    const currentPaid = visibleRows.reduce((s, h) => s + Number(h.debit || 0), 0);
+
+    const earliest = visibleRows[visibleRows.length - 1];
+    const openingBF = earliest 
+      ? earliest.runningBalance - earliest.balance_change 
+      : (fromDate 
+          ? (statementRows.find(h => h.date < fromDate)?.runningBalance || Number(supplier.openingBalance || supplier.opening_balance || 0)) 
+          : Number(supplier.openingBalance || supplier.opening_balance || 0)
+        );
+    const closing = visibleRows.length ? visibleRows[0].runningBalance : Number(supplier.openingBalance || supplier.opening_balance || 0);
+
+    let rowNum = 0;
+    
+    let rowsHtml = "";
     if (fromDate) {
       rowsHtml += `
-        <tr class="bf-row">
-          <td>BF</td>
-          <td>${new Date(fromDate + "T00:00:00").toLocaleDateString("en-PK", { day: "2-digit", month: "short", year: "numeric" })}</td>
-          <td colspan="3"><strong>Balance Brought Forward (B/F)</strong></td>
-          <td class="num">${openingBF < 0 ? formatMoney(Math.abs(openingBF)) : "-"}</td>
-          <td class="num">${openingBF > 0 ? formatMoney(openingBF) : "-"}</td>
-          <td class="num bold">${formatMoney(Math.abs(openingBF))} ${openingBF > 0 ? "Cr" : openingBF < 0 ? "Dr" : ""}</td>
+        <tr>
+          <td class="c"></td>
+          <td>${new Date(fromDate + "T00:00:00").toLocaleDateString("en-PK", { day: "2-digit", month: "short" })}</td>
+          <td><strong>Balance Brought Forward (B/F)</strong></td>
+          <td class="c">&mdash;</td>
+          <td>&mdash;</td>
+          <td class="products">&mdash;</td>
+          <td class="r">&mdash;</td>
+          <td class="r mono">${openingBF < 0 ? rs(Math.abs(openingBF)) : "&mdash;"}</td>
+          <td class="r mono">${openingBF > 0 ? rs(openingBF) : "&mdash;"}</td>
+          <td class="r mono">${openingBF > 0 ? "(Cr)" : openingBF < 0 ? "(Dr)" : ""} ${rs(Math.abs(openingBF || 0))}</td>
         </tr>
       `;
     }
 
-    const tableRowsHtml = [...visibleRowsWithBalance].reverse().map((h) => {
-      const isPurchase = h.type === "Purchase";
-      const isOpening = h.type === "Opening";
-      const status = isOpening ? "-" : h.type === 'Purchase' ? h.payment_status || "Unpaid" : h.type === 'Journal' ? "-" : h.payment_status || "Paid";
-      const statusColor = status === "Paid" ? "#16a34a" : status === "Partial" ? "#d97706" : status === "-" ? "#64748b" : "#dc2626";
-      const statusBg = status === "Paid" ? "#f0fdf4" : status === "Partial" ? "#fef3c7" : status === "-" ? "#f1f5f9" : "#fef2f2";
+    rowsHtml += [...visibleRows].reverse().map((h, idx) => {
+      const isOpening = h.type === 'Opening' || h.reference === 'opening';
+      if (!isOpening) rowNum++;
 
-      const debit = h.debit;
-      const credit = h.credit;
+      const isPurchase = h.type === 'Purchase';
+      const evenClass = idx % 2 === 1 ? ' class="even"' : '';
+      const drVal = h.debit > 0 ? rs(h.debit) : "&mdash;";
+      const crVal = h.credit > 0 ? rs(h.credit) : "&mdash;";
+      const balSign = h.runningBalance > 0 ? "(Cr)" : h.runningBalance < 0 ? "(Dr)" : "";
+      const balVal = `${balSign} ${rs(Math.abs(h.runningBalance || 0))}`;
 
-      const desc = isOpening 
-        ? "Opening Balance" 
-        : h.type === 'Purchase' 
-          ? `Purchase Invoice ${h.reference ? `<span class="ref-no">(${h.reference})</span>` : ""}` 
-          : h.type === 'Journal'
-            ? `Journal Entry ${h.reference ? `<span class="ref-no">(${h.reference})</span>` : ""}`
-            : h.isWithdrawal
-              ? `Refund/Withdrawal ${h.reference ? `<span class="ref-no">(${h.reference})</span>` : ""}`
-              : `Payment Made ${h.reference ? `<span class="ref-no">(${h.reference})</span>` : ""}`;
+      const d = new Date(h.date + "T00:00:00");
+      const shortDate = isNaN(d.getTime()) ? h.date : 
+        `${String(d.getDate()).padStart(2,'0')} ${d.toLocaleString('en-US',{month:'short'})}`;
 
-      const runningBalFormatted = formatMoney(Math.abs(h.runningBalance));
-      const runningIndicator = h.runningBalance > 0 ? "Cr" : h.runningBalance < 0 ? "Dr" : "";
+      const subLine = h.reference && h.reference !== 'opening' 
+        ? h.reference 
+        : (h.notes || h.type || '');
+
+      const descTitle = isOpening 
+        ? 'Opening Balance' 
+        : (isPurchase ? 'Purchase Bill' : h.type === 'Journal' ? 'Journal Entry' : h.isWithdrawal ? 'Refund/Withdrawal' : 'Payment Made');
 
       return `
-        <tr>
-          <td class="muted">${sNo++}</td>
-          <td>${new Date(h.date + "T00:00:00").toLocaleDateString("en-PK", { day: "2-digit", month: "short", year: "numeric" })}</td>
-          <td><strong>${desc}</strong></td>
-          <td>${h.method || "-"}</td>
-          <td><span style="padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: 700; text-transform: uppercase; background: ${statusBg}; color: ${statusColor}; border: 1px solid ${statusColor}40;">${status}</span></td>
-          <td class="num">${debit > 0 ? formatMoney(debit) : "-"}</td>
-          <td class="num text-success">${credit > 0 ? formatMoney(credit) : "-"}</td>
-          <td class="num bold ${h.runningBalance > 0 ? 'text-danger' : h.runningBalance < 0 ? 'text-success' : ''}">${runningBalFormatted} ${runningIndicator}</td>
+        <tr${evenClass}>
+          <td class="c">${isOpening ? '' : rowNum}</td>
+          <td>${shortDate}</td>
+          <td><strong>${descTitle}</strong><br>
+              <span style="font-size:7.5px;color:#555;">${isOpening ? '' : subLine}</span></td>
+          <td class="c">${isPurchase && h.item_count > 0 ? h.item_count : '&mdash;'}</td>
+          <td>${isOpening ? '&mdash;' : (h.method || '&mdash;')}</td>
+          <td class="products">${isPurchase ? formatProducts(h.items) : '&mdash;'}</td>
+          <td class="r mono">${isPurchase ? rs(h.total_amount) : '&mdash;'}</td>
+          <td class="r mono">${drVal}</td>
+          <td class="r mono">${crVal}</td>
+          <td class="r mono">${balVal}</td>
         </tr>
       `;
     }).join("");
 
-    rowsHtml += tableRowsHtml;
-
     const html = `
-      <html>
-        <head>
-          <title>Supplier Statement - ${supplier.name}</title>
-          <style>
-            @page {
-              size: A4;
-              margin: 15mm;
-            }
-            @media print {
-              body { padding: 0; color: #1e293b; background: #fff; }
-              thead { display: table-header-group; }
-              tfoot { display: table-footer-group; }
-              .no-print { display: none; }
-              .page-break { page-break-before: always; }
-              .summary-box { background: #f8fafc !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-              .summary-box.highlight { background: #f0fdf4 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-              thead tr { background: #1b5e20 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-              tr.bf-row { background: #f8fafc !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-            }
-            body {
-              font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-              color: #1e293b;
-              background: #fff;
-              font-size: 11px;
-              line-height: 1.5;
-              margin: 0;
-              padding: 20px;
-            }
-            .header-container {
-              display: flex;
-              justify-content: space-between;
-              align-items: flex-start;
-              border-bottom: 2px solid #e2e8f0;
-              padding-bottom: 20px;
-              margin-bottom: 25px;
-            }
-            .brand-section {
-              display: flex;
-              align-items: center;
-              gap: 12px;
-            }
-            .logo-mark {
-              width: 42px;
-              height: 42px;
-              border-radius: 8px;
-              background: linear-gradient(135deg, #1b5e20, #2e7d32);
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              font-size: 18px;
-              font-weight: 800;
-              color: #fff;
-              letter-spacing: 0.5px;
-            }
-            .company-title-block {
-              display: flex;
-              flex-direction: column;
-            }
-            .company-name {
-              font-size: 24px;
-              font-weight: 800;
-              color: #1b5e20;
-              line-height: 1.1;
-              letter-spacing: -0.5px;
-            }
-            .company-sub {
-              font-size: 9.5px;
-              color: #64748b;
-              font-weight: 700;
-              text-transform: uppercase;
-              letter-spacing: 1px;
-              margin-top: 3px;
-            }
-            .company-details {
-              font-size: 9px;
-              color: #64748b;
-              margin-top: 5px;
-              line-height: 1.4;
-            }
-            .doc-title-section {
-              text-align: right;
-            }
-            .doc-title {
-              margin: 0;
-              font-size: 20px;
-              font-weight: 800;
-              color: #0f172a;
-              text-transform: uppercase;
-              letter-spacing: 0.5px;
-            }
-            .doc-sub {
-              margin: 4px 0 0 0;
-              color: #64748b;
-              font-size: 11px;
-              font-weight: 500;
-            }
-            .doc-period {
-              margin: 4px 0 0 0;
-              font-size: 10.5px;
-              font-weight: 600;
-              color: #1b5e20;
-              background: #f0fdf4;
-              padding: 2px 8px;
-              border-radius: 4px;
-              display: inline-block;
-            }
-            .meta-grid {
-              display: grid;
-              grid-template-columns: 1.5fr 1fr;
-              gap: 20px;
-              margin-bottom: 25px;
-            }
-            .party-card {
-              border: 1px solid #e2e8f0;
-              border-radius: 6px;
-              padding: 12px 16px;
-              background: #fff;
-            }
-            .card-title {
-              font-size: 9px;
-              font-weight: 700;
-              color: #64748b;
-              text-transform: uppercase;
-              letter-spacing: 0.5px;
-              margin-bottom: 6px;
-              border-bottom: 1px solid #f1f5f9;
-              padding-bottom: 4px;
-            }
-            .party-name {
-              font-size: 14px;
-              font-weight: 700;
-              color: #0f172a;
-              margin-bottom: 4px;
-            }
-            .party-info {
-              font-size: 10px;
-              color: #475569;
-              margin: 2px 0;
-            }
-            .summary-grid {
-              display: grid;
-              grid-template-columns: repeat(4, 1fr);
-              gap: 12px;
-              margin-bottom: 25px;
-            }
-            .summary-box {
-              border: 1px solid #e2e8f0;
-              border-radius: 6px;
-              padding: 12px 14px;
-              background: #f8fafc;
-              border-left: 3.5px solid #64748b;
-            }
-            .summary-box.debit-accent { border-left-color: #ef4444; }
-            .summary-box.credit-accent { border-left-color: #22c55e; }
-            .summary-box.highlight {
-              background: #f0fdf4;
-              border-color: #1b5e20;
-              border-left-width: 4px;
-              border-left-color: #1b5e20;
-            }
-            .summary-label {
-              font-size: 9px;
-              font-weight: 700;
-              color: #64748b;
-              text-transform: uppercase;
-              letter-spacing: 0.5px;
-              margin-bottom: 4px;
-            }
-            .summary-val {
-              font-size: 14px;
-              font-weight: 800;
-              color: #0f172a;
-              font-family: 'Consolas', 'Courier New', monospace;
-            }
-            .summary-box.highlight .summary-val {
-              font-size: 15px;
-              color: #1b5e20;
-            }
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              margin-top: 15px;
-            }
-            thead tr {
-              background: #1b5e20;
-              color: #fff;
-            }
-            th {
-              padding: 9px 10px;
-              text-align: left;
-              font-weight: 700;
-              font-size: 9.5px;
-              text-transform: uppercase;
-              letter-spacing: 0.5px;
-            }
-            th.num, td.num {
-              text-align: right;
-            }
-            td {
-              padding: 9px 10px;
-              color: #334155;
-              border-bottom: 1px solid #e2e8f0;
-              font-size: 10.5px;
-            }
-            tr:nth-child(even) {
-              background: #f8fafc;
-            }
-            tr.bf-row {
-              background: #f1f5f9;
-              font-weight: 600;
-            }
-            .bold { font-weight: 700; }
-            .muted { color: #64748b; }
-            .text-success { color: #16a34a; }
-            .text-danger { color: #dc2626; }
-            .ref-no {
-              color: #64748b;
-              font-size: 9px;
-              font-family: 'Consolas', monospace;
-              margin-left: 4px;
-            }
-            .footer-container {
-              margin-top: 50px;
-              display: flex;
-              justify-content: space-between;
-              align-items: flex-end;
-              border-top: 1px solid #e2e8f0;
-              padding-top: 20px;
-              font-size: 9px;
-              color: #64748b;
-              page-break-inside: avoid;
-            }
-            .sig-block {
-              text-align: center;
-              width: 180px;
-            }
-            .sig-line {
-              border-top: 1.5px solid #475569;
-              margin-bottom: 5px;
-              padding-top: 6px;
-              font-weight: 700;
-              color: #334155;
-              text-transform: uppercase;
-              letter-spacing: 0.5px;
-            }
-            .footer-stamp {
-              max-width: 320px;
-              line-height: 1.4;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="header-container">
-            <div>
-              <div class="brand-section">
-                <div class="logo-mark">${(businessProfile.business_name || "CT").split(' ').map(w => w[0]).join('').substring(0, 3).toUpperCase()}</div>
-                <div class="company-title-block">
-                  <div class="company-name">${businessProfile.business_name}</div>
-                  <div class="company-sub">${businessProfile.business_tagline}</div>
-                </div>
-              </div>
-              <div class="company-details">
-                ${businessProfile.business_address}<br>
-                Tel: ${businessProfile.business_phone} | Email: ${businessProfile.business_email}
-              </div>
-            </div>
-            <div class="doc-title-section">
-              <h1 class="doc-title">Account Statement</h1>
-              <div class="doc-sub">Generated: ${new Date().toLocaleDateString("en-PK", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
-              <div class="doc-period">Period: ${fromDate || "Inception"} &mdash; ${toDate || "Today"}</div>
-            </div>
-          </div>
+<html>
+<head>
+<title>Supplier Statement - ${supplier.name}</title>
+<style>
+@page { size: A4 landscape; margin: 10mm 12mm; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: Arial, sans-serif; font-size: 10px; color: #000; background: #fff; padding: 0; }
 
-          <div class="meta-grid">
-            <div class="party-card">
-              <div class="card-title">Statement For Supplier</div>
-              <div class="party-name">${supplier.name}</div>
-              ${supplier.phone ? `<div class="party-info"><strong>Phone:</strong> ${supplier.phone}</div>` : ""}
-              ${supplier.address ? `<div class="party-info"><strong>Address:</strong> ${supplier.address}</div>` : ""}
-            </div>
-            <div class="party-card">
-              <div class="card-title">Account Summary</div>
-              <div class="party-info">
-                <strong>Status:</strong> 
-                ${closing === 0 ? "Settled" : closing > 0 ? '<span class="text-danger bold">Outstanding Payable (Cr)</span>' : '<span class="text-success bold">Debit Balance (Dr)</span>'}
-              </div>
-              <div class="party-info">
-                <strong>Final Balance:</strong> 
-                <span class="bold ${closing > 0 ? 'text-danger' : closing < 0 ? 'text-success' : ''}">
-                  ${formatMoney(Math.abs(closing))} ${closing > 0 ? "Cr" : closing < 0 ? "Dr" : ""}
-                </span>
-              </div>
-            </div>
-          </div>
+.header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 12px; }
+.brand { font-size: 18px; font-weight: 700; color: #000; }
+.tagline { font-size: 8px; text-transform: uppercase; letter-spacing: 0.08em; color: #444; margin-top: 1px; }
+.contact { font-size: 8px; color: #555; margin-top: 5px; line-height: 1.5; }
+.doc-title { font-size: 15px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; text-align: right; }
+.doc-meta { font-size: 8px; color: #444; line-height: 1.6; text-align: right; margin-top: 4px; }
 
-          <div class="summary-grid">
-            <div class="summary-box">
-              <div class="summary-label">Opening Balance</div>
-              <div class="summary-val">${formatMoney(Math.abs(openingBF))} ${openingBF > 0 ? "Cr" : openingBF < 0 ? "Dr" : ""}</div>
-            </div>
-            <div class="summary-box debit-accent">
-              <div class="summary-label">Total Payments (Dr)</div>
-              <div class="summary-val">${formatMoney(currentReceived)}</div>
-            </div>
-            <div class="summary-box credit-accent">
-              <div class="summary-label">Total Purchased (Cr)</div>
-              <div class="summary-val text-success">${formatMoney(currentBilled)}</div>
-            </div>
-            <div class="summary-box highlight">
-              <div class="summary-label">Closing Balance</div>
-              <div class="summary-val">${formatMoney(Math.abs(closing))} ${closing > 0 ? "Cr" : closing < 0 ? "Dr" : ""}</div>
-            </div>
-          </div>
+.info-row { display: flex; border: 1px solid #000; margin-bottom: 8px; }
+.info-cell { padding: 6px 10px; flex: 1; border-right: 1px solid #000; }
+.info-cell:last-child { border-right: none; }
+.info-label { font-size: 7px; text-transform: uppercase; letter-spacing: 0.06em; color: #555; font-weight: 700; margin-bottom: 2px; }
+.info-value { font-size: 11px; font-weight: 700; }
+.info-sub { font-size: 8px; color: #444; margin-top: 1px; }
 
-          <table>
-            <thead>
-              <tr>
-                <th style="width: 25px;">#</th>
-                <th style="width: 80px;">Date</th>
-                <th>Description</th>
-                <th style="width: 80px;">Method</th>
-                <th style="width: 75px;">Status</th>
-                <th class="num" style="width: 100px;">Debit (Dr)</th>
-                <th class="num" style="width: 100px;">Credit (Cr)</th>
-                <th class="num" style="width: 120px;">Balance</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rowsHtml}
-            </tbody>
-          </table>
+.summary-row { display: flex; gap: 0; border: 1px solid #000; margin-bottom: 10px; }
+.summary-cell { flex: 1; padding: 6px 10px; border-right: 1px solid #000; }
+.summary-cell:last-child { border-right: none; }
+.summary-label { font-size: 7px; text-transform: uppercase; letter-spacing: 0.06em; color: #555; font-weight: 700; }
+.summary-value { font-size: 12px; font-weight: 700; margin-top: 2px; }
 
-          <div class="footer-container">
-            <div class="footer-stamp">
-              <strong>${businessProfile.business_name} POS System</strong><br>
-              This is a computer-generated statement and does not require a physical stamp. For any discrepancies, contact us within 7 days of statement receipt.
-            </div>
-            <div class="sig-block">
-              <div class="sig-line">Authorized Signature</div>
-              <span class="muted">${businessProfile.business_name}</span>
-            </div>
-          </div>
-        </body>
-      </html>
-    `;
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+thead tr { background: #000; color: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+th { padding: 5px 6px; font-size: 7.5px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700; border: 1px solid #000; text-align: left; white-space: nowrap; }
+th.r { text-align: right; }
+th.c { text-align: center; }
+td { padding: 4px 6px; border: 1px solid #ccc; font-size: 9px; vertical-align: top; }
+td.r { text-align: right; }
+td.c { text-align: center; }
+td.mono { font-family: 'Courier New', monospace; font-size: 8.5px; }
+td.products { font-size: 8px; color: #333; line-height: 1.3; }
+
+tr.even td { background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+tr.month-header td { background: #e8e8e8; font-weight: 700; font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; border-top: 1.5px solid #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; padding: 4px 6px; }
+tr.totals td { background: #e0e0e0 !important; font-weight: 700; font-size: 9px; border-top: 1.5px solid #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+tr.closing td { background: #000 !important; color: #fff !important; font-weight: 700; font-size: 10px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+.footer { margin-top: 16px; border-top: 1.5px solid #000; padding-top: 10px; display: flex; justify-content: space-between; align-items: flex-end; }
+.footer-note { font-size: 7px; color: #555; line-height: 1.5; max-width: 340px; }
+.sig-block { text-align: center; border-top: 1px solid #000; padding-top: 5px; font-size: 8px; font-weight: 700; min-width: 160px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="brand">${activeProfile.business_name}</div>
+    <div class="tagline">${activeProfile.business_tagline}</div>
+    <div class="contact">${activeProfile.business_address}<br>Tel: ${activeProfile.business_phone} &nbsp;|&nbsp; ${activeProfile.business_email}</div>
+  </div>
+  <div>
+    <div class="doc-title">Supplier Statement</div>
+    <div class="doc-meta">
+      Generated: ${new Date().toLocaleDateString("en-PK", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}<br>
+      Period: ${fromDate ? new Date(fromDate).toLocaleDateString("en-PK", {day:"2-digit", month:"long", year:"numeric"}) : "Inception"} &mdash; ${toDate ? new Date(toDate).toLocaleDateString("en-PK", {day:"2-digit", month:"long", year:"numeric"}) : "Today"}
+    </div>
+  </div>
+</div>
+
+<div class="info-row">
+  <div class="info-cell">
+    <div class="info-label">Statement For</div>
+    <div class="info-value">${supplier.name}</div>
+    <div class="info-sub">Supplier Account &nbsp;|&nbsp; A/P Subledger${supplier.phone ? " &nbsp;|&nbsp; " + supplier.phone : ""}</div>
+  </div>
+  <div class="info-cell">
+    <div class="info-label">Current Balance</div>
+    <div class="info-value">${closing === 0 ? "Rs. 0.00 — Settled" : closing > 0 ? "Cr Rs. " + rs(Math.abs(closing)) : "Dr Rs. " + rs(Math.abs(closing))}</div>
+    <div class="info-sub">${closing > 0 ? "Payable — amount we owe to supplier" : closing < 0 ? "Advance paid to supplier" : "Account fully settled"}</div>
+  </div>
+</div>
+
+<div class="summary-row">
+  <div class="summary-cell">
+    <div class="summary-label">Opening Balance</div>
+    <div class="summary-value">${rs(Math.abs(openingBF))} ${openingBF > 0 ? "Cr" : openingBF < 0 ? "Dr" : ""}</div>
+  </div>
+  <div class="summary-cell">
+    <div class="summary-label">Total Debits (Dr)</div>
+    <div class="summary-value">${rs(currentPaid)}</div>
+  </div>
+  <div class="summary-cell">
+    <div class="summary-label">Total Credits (Cr)</div>
+    <div class="summary-value">${rs(currentBilled)}</div>
+  </div>
+  <div class="summary-cell" style="background:#000; color:#fff;">
+    <div class="summary-label" style="color:#bbb;">Closing Balance</div>
+    <div class="summary-value">${rs(Math.abs(closing))} ${closing > 0 ? "Cr" : closing < 0 ? "Dr" : ""}</div>
+  </div>
+</div>
+
+<table>
+<colgroup>
+  <col style="width: 28px;">
+  <col style="width: 62px;">
+  <col style="width: 120px;">
+  <col style="width: 38px;">
+  <col style="width: 70px;">
+  <col>
+  <col style="width: 72px;">
+  <col style="width: 72px;">
+  <col style="width: 72px;">
+  <col style="width: 82px;">
+</colgroup>
+<thead>
+  <tr>
+    <th class="c">#</th>
+    <th>Date</th>
+    <th>Particulars</th>
+    <th class="c">Items</th>
+    <th>Method</th>
+    <th>Products</th>
+    <th class="r">Total</th>
+    <th class="r">DR</th>
+    <th class="r">CR</th>
+    <th class="r">Balance</th>
+  </tr>
+</thead>
+<tbody>
+  ${rowsHtml}
+  <tr class="totals">
+    <td colspan="7" class="r">TOTALS FOR PERIOD</td>
+    <td class="r mono">${rs(currentPaid)}</td>
+    <td class="r mono">${rs(currentBilled)}</td>
+    <td></td>
+  </tr>
+  <tr class="closing">
+    <td colspan="7" class="r">CLOSING BALANCE</td>
+    <td colspan="3" class="c mono">${rs(Math.abs(closing))} ${closing > 0 ? "Cr" : closing < 0 ? "Dr" : ""}</td>
+  </tr>
+</tbody>
+</table>
+
+<div class="footer">
+  <div class="footer-note">
+    <strong>${activeProfile.business_name} POS System</strong><br>
+    Computer-generated statement — no physical stamp required.<br>
+    For discrepancies contact us within 7 days of statement receipt.
+  </div>
+  <div class="sig-block">
+    Authorized Signature<br>
+    <span style="font-weight:400;">${activeProfile.business_name}</span>
+  </div>
+</div>
+
+</body>
+</html>
+`;
 
     if (window.ipc) {
       await window.ipc.invoke("db:print-html-report", html);

@@ -1158,7 +1158,7 @@ class PosStore {
 
   async getCustomerHistory(customerId) {
     const db = await this._db();
-    return all(
+    const rows = await all(
       db,
       `
         SELECT 
@@ -1308,11 +1308,43 @@ class PosStore {
       `,
       [customerId, customerId, customerId, customerId, customerId, customerId]
     );
+
+    const saleIds = rows
+      .filter(r => r.type === 'Sale')
+      .map(r => r.ref_id);
+
+    if (saleIds.length > 0) {
+      const placeholders = saleIds.map(() => '?').join(',');
+      const items = await all(db, `
+        SELECT sale_id, product_name, unit_price as price, quantity 
+        FROM sale_items 
+        WHERE sale_id IN (${placeholders})
+        ORDER BY sale_id, id
+      `, saleIds);
+
+      const itemsBySale = {};
+      for (const item of items) {
+        if (!itemsBySale[item.sale_id]) itemsBySale[item.sale_id] = [];
+        itemsBySale[item.sale_id].push(item);
+      }
+
+      for (const row of rows) {
+        if (row.type === 'Sale' && itemsBySale[row.ref_id]) {
+          row.items = itemsBySale[row.ref_id];
+          row.item_count = itemsBySale[row.ref_id].length;
+        } else {
+          row.items = [];
+          row.item_count = 0;
+        }
+      }
+    }
+
+    return rows;
   }
 
   async getSupplierHistory(supplierId) {
     const db = await this._db();
-    return all(
+    const rows = await all(
       db,
       `
         SELECT 
@@ -1406,6 +1438,38 @@ class PosStore {
       `,
       [supplierId, supplierId, supplierId, supplierId]
     );
+
+    const purchaseIds = rows
+      .filter(r => r.type === 'Purchase')
+      .map(r => r.ref_id);
+
+    if (purchaseIds.length > 0) {
+      const placeholders = purchaseIds.map(() => '?').join(',');
+      const items = await all(db, `
+        SELECT purchase_id, product_name, unit_price as price, quantity 
+        FROM purchase_items 
+        WHERE purchase_id IN (${placeholders})
+        ORDER BY purchase_id, id
+      `, purchaseIds);
+
+      const itemsByPurchase = {};
+      for (const item of items) {
+        if (!itemsByPurchase[item.purchase_id]) itemsByPurchase[item.purchase_id] = [];
+        itemsByPurchase[item.purchase_id].push(item);
+      }
+
+      for (const row of rows) {
+        if (row.type === 'Purchase' && itemsByPurchase[row.ref_id]) {
+          row.items = itemsByPurchase[row.ref_id];
+          row.item_count = itemsByPurchase[row.ref_id].length;
+        } else {
+          row.items = [];
+          row.item_count = 0;
+        }
+      }
+    }
+
+    return rows;
   }
 
   async saveWithdrawal(input) {
