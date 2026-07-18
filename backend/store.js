@@ -1174,13 +1174,7 @@ class PosStore {
           total AS total_amount,
           amount_paid AS paid_amount,
           balance_due AS remaining_amount,
-          MIN(
-            balance_due + COALESCE(
-              (SELECT SUM(amount) FROM customer_payments 
-               WHERE sale_id = sales.id AND amount > 0), 
-            0),
-            total
-          ) AS balance_change,
+          total AS balance_change,
           created_at || '_1' AS sort_key,
           created_at
         FROM sales
