@@ -1413,28 +1413,6 @@ tr.closing td { background: #000 !important; color: #fff !important; font-weight
 
       <div style={{ display: 'flex', gap: 8, background: '#f5f8f5', border: '1px solid #c8d8c8', padding: '8px 12px', borderRadius: 4, marginBottom: 16 }}>
         <button
-          style={{ padding: '8px 16px', background: '#2e7d32', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-          onClick={() => {
-            setPayModal({ general: true });
-            setPayAmount("");
-            setPayNotes("");
-            setPayDate(new Date().toISOString().split("T")[0]);
-          }}
-        >
-          Record Payment
-        </button>
-        <button
-          style={{ padding: '8px 16px', background: '#fff', color: '#c62828', border: '1px solid #ffcdd2', borderRadius: 4, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-          onClick={() => {
-            setPayModal({ withdrawal: true });
-            setPayAmount("");
-            setPayNotes("");
-            setPayDate(new Date().toISOString().split("T")[0]);
-          }}
-        >
-          Withdraw
-        </button>
-        <button
           style={{ padding: '8px 16px', background: '#fff', color: '#555', border: '1px solid #cde0cd', borderRadius: 4, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
           onClick={handlePrintStatement}
         >
