@@ -327,17 +327,18 @@ function postPurchase(db, purchase) {
       memo: `AP — ${ref}`,
     });
 
-  try {
-    writeEntry(db, {
-      date,
-      narration: `Purchase — ${ref}`,
-      source_type: "purchase",
-      source_id:   purchase.id,
-      lines,
-    });
-  } catch (err) {
-    console.error("[glBridge] postPurchase failed:", err.message, { purchaseId: purchase.id });
-  }
+  // Deliberately NOT wrapped in a swallowing try/catch (it used to be, which is
+  // how a failed purchase posting disappeared without a trace). A failure must
+  // reach the caller so it can be recorded durably and reconciled later
+  // (store.createPurchase -> gl_posting_failures; see scripts/reconcile-cih.js),
+  // exactly like bank transfers.
+  writeEntry(db, {
+    date,
+    narration: `Purchase — ${ref}`,
+    source_type: "purchase",
+    source_id:   purchase.id,
+    lines,
+  });
 }
 
 

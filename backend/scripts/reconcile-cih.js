@@ -450,7 +450,15 @@ function report(result) {
   L.push('amount mismatches           : ' + result.amountMismatch.length);
   L.push('orphan bank_transfer JEs    : ' + result.orphans.length);
   L.push('malformed bank_transfer JEs : ' + result.entryAnomalies.length);
-  L.push('unresolved GL failures      : ' + result.postingFailures.length);
+  const failureCounts = result.postingFailures.reduce(function (acc, f) {
+    acc[f.source_type] = (acc[f.source_type] || 0) + 1;
+    return acc;
+  }, {});
+  const failureBreakdown = Object.keys(failureCounts).map(function (k) {
+    return k + '=' + failureCounts[k];
+  }).join(', ');
+  L.push('unresolved GL failures      : ' + result.postingFailures.length +
+         (failureBreakdown ? '  (' + failureBreakdown + ')' : ''));
   L.push('');
 
   if (result.gaps.length) {
@@ -513,10 +521,20 @@ function report(result) {
 
   if (result.postingFailures.length) {
     L.push('=== gl_posting_failures (unresolved, recorded by the app) ===');
+    L.push('Any source_type can land here (bank_transfer, purchase, ...). Each row is a');
+    L.push('source record that committed while its journal entry did not.');
     result.postingFailures.forEach(function (f) {
-      L.push('  #' + f.id + ' ' + f.source_type + '/' + f.source_id + ' Rs ' + money(f.amount) +
-             ' ' + f.from_account + ' -> ' + f.to_account + ' on ' + f.entry_date);
-      L.push('      bank_transaction_ids=' + f.bank_transaction_ids + ' | ' + f.error_message);
+      if (f.source_type === 'bank_transfer') {
+        L.push('  #' + f.id + ' [bank_transfer] source_id=' + f.source_id + '  Rs ' + money(f.amount) +
+               '  ' + f.from_account + ' -> ' + f.to_account +
+               '  on ' + f.entry_date + '  ref=' + (f.reference || '-'));
+        L.push('      bank_transaction_ids=' + f.bank_transaction_ids + ' | ' + f.error_message);
+      } else {
+        L.push('  #' + f.id + ' [' + f.source_type + '] source_id=' + f.source_id +
+               '  Rs ' + money(f.amount) + '  on ' + f.entry_date +
+               '  ref=' + (f.reference || '-'));
+        L.push('      ' + f.error_message);
+      }
     });
     L.push('');
   }
@@ -540,9 +558,18 @@ function report(result) {
     L.push('         bank transfers - getCashBook and getAnalysisOverview draw on different sources');
     L.push('         (see CB-02 / ANL-03 in AUDIT_REPORT.md). Investigate it separately.');
   } else {
-    L.push('VERDICT: gaps/anomalies found (' + result.gaps.length + ' missing journal entry/entries).');
-    L.push('Nothing was modified. To fix the gaps safely, run:');
-    L.push('  node backfill-cih-gaps.js ' + JSON.stringify(result.dbPath) + ' --dry-run');
+    const anomalies = [];
+    if (result.gaps.length) anomalies.push(result.gaps.length + ' bank transfer(s) missing a journal entry');
+    if (result.unresolved.length) anomalies.push(result.unresolved.length + ' unresolved bank->account mapping(s)');
+    if (result.orphans.length) anomalies.push(result.orphans.length + ' orphan bank_transfer JE(s)');
+    if (result.entryAnomalies.length) anomalies.push(result.entryAnomalies.length + ' malformed bank_transfer JE(s)');
+    if (result.postingFailures.length) anomalies.push(result.postingFailures.length + ' recorded GL posting failure(s)');
+    L.push('VERDICT: anomalies found - ' + (anomalies.join('; ') || 'see details above') + '.');
+    L.push('Nothing was modified.');
+    if (result.gaps.length) {
+      L.push('To fix the bank-transfer gaps safely, run:');
+      L.push('  node backfill-cih-gaps.js ' + JSON.stringify(result.dbPath) + ' --dry-run');
+    }
   }
   L.push('');
   return L.join('\n');

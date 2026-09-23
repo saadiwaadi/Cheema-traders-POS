@@ -698,7 +698,10 @@ class PosStore {
   }
 
   // Durable record of a GL posting that failed after its source row(s) committed.
-  // Kept out of the main flow so a recording failure can never break the transfer.
+  // Kept out of the main flow so a recording failure can never break the caller.
+  // Used for BOTH bank transfers (saveBankTransfer, sourceType 'bank_transfer',
+  // which supplies fromAccount/toAccount/bankTransactionIds) and purchases
+  // (createPurchase, sourceType 'purchase', which supplies neither).
   _recordGlPostingFailure({ sourceType, sourceId, fromAccount, toAccount, amount, reference, entryDate, bankTransactionIds, error }) {
     const detail = {
       sourceType,
@@ -719,8 +722,8 @@ class PosStore {
 
       if (!hasTable) {
         // Pre-migration database: still log every detail needed to reconstruct the
-        // gap by hand, but never let the recording step break the transfer.
-        console.error("[GL] postBankTransfer failed (no gl_posting_failures table on this database):", detail);
+        // gap by hand, but never let the recording step break the caller.
+        console.error(`[GL] ${sourceType} posting failed (no gl_posting_failures table on this database):`, detail);
         return;
       }
 
@@ -731,18 +734,20 @@ class PosStore {
       ).run(
         sourceType,
         sourceId,
-        String(fromAccount),
-        String(toAccount),
+        fromAccount == null ? null : String(fromAccount),
+        toAccount == null ? null : String(toAccount),
         amount,
         reference ?? null,
         entryDate ?? null,
-        JSON.stringify(bankTransactionIds || []),
+        // bank_transaction_ids only means something for a bank transfer; leave it
+        // NULL for other source types instead of writing a meaningless '[]'.
+        bankTransactionIds ? JSON.stringify(bankTransactionIds) : null,
         detail.error
       );
 
-      console.error("[GL] postBankTransfer failed - recorded in gl_posting_failures for reconciliation:", detail);
+      console.error(`[GL] ${sourceType} posting failed - recorded in gl_posting_failures for reconciliation:`, detail);
     } catch (recordErr) {
-      console.error("[GL] postBankTransfer failed AND could not be recorded - reconcile manually:", detail, recordErr.message);
+      console.error(`[GL] ${sourceType} posting failed AND could not be recorded - reconcile manually:`, detail, recordErr.message);
     }
   }
 
@@ -1225,7 +1230,13 @@ class PosStore {
           total AS total_amount,
           amount_paid AS paid_amount,
           balance_due AS remaining_amount,
-          total AS balance_change,
+          -- balance_change must be the OUTSTANDING amount, not the invoice total:
+          -- a linked sale paid at the till creates no customer_payments row, so
+          -- using the invoice total here inflated the statement's running balance
+          -- by every amount already collected. Matches getSupplierHistory's
+          -- pattern, which already uses balance_due. total_amount above still
+          -- shows the invoice total for display.
+          balance_due AS balance_change,
           created_at || '_1' AS sort_key,
           created_at
         FROM sales
@@ -2490,6 +2501,12 @@ class PosStore {
 
     try {
       const dbBetter = this.getBetterDb();
+      // postPurchase keys its entry on this purchases row's own id
+      // (glBridge.js: source_id: purchase.id), which is already stable and
+      // deterministic - so UNIQUE(source_type, source_id) idempotency is correct
+      // here and needs no change (unlike saveBankTransfer, which shipped with a
+      // Date.now() key and had to be fixed). Verified by reading glBridge, not
+      // assumed.
       postPurchase(dbBetter, {
         id:             result.id,
         invoice_no:     result.invoiceNo,
@@ -2499,7 +2516,20 @@ class PosStore {
         payment_method: result.paymentMethod,
       });
     } catch (err) {
-      console.error("[GL] postPurchase failed:", err.message);
+      // A failed posting must never be swallowed with a bare console.error: the
+      // purchases row is already committed, so the failure would silently vanish
+      // (that is exactly how purchase id 159 / PUR-1788751608717 ended up with no
+      // journal entry at all). Record it durably in the same gl_posting_failures
+      // table the bank-transfer fix added (migration v2), tagged source_type
+      // 'purchase' so scripts/reconcile-cih.js lists it alongside bank transfers.
+      this._recordGlPostingFailure({
+        sourceType: 'purchase',
+        sourceId: result.id,
+        amount: result.subtotal,
+        reference: result.invoiceNo,
+        entryDate: result.purchaseDate,
+        error: err,
+      });
     }
 
     if (result && result.supplierId) {
@@ -4113,6 +4143,13 @@ class PosStore {
           + COALESCE((SELECT SUM(balance_due) FROM purchases WHERE supplier_id = s.id), 0)
           - COALESCE((SELECT SUM(amount) FROM supplier_payments WHERE supplier_id = s.id), 0)
           + COALESCE((
+              -- Only MANUAL journals belong here. The POS-posted AP movements turn
+              -- up twice otherwise: purchases.balance_due already carries the
+              -- unpaid invoice amount, and supplier payments are already
+              -- subtracted by the SUM(supplier_payments.amount) term above. Those
+              -- lines (unlike manual ones) carry jl.supplier_id, so without this
+              -- filter every supplier payment is subtracted a second time.
+              -- Same guard as _syncSupplierBalance().
               SELECT SUM(jl.credit - jl.debit) / 100.0
               FROM journal_lines jl
               JOIN journal_entries je ON jl.entry_id = je.id
@@ -4120,6 +4157,7 @@ class PosStore {
               WHERE jl.supplier_id = s.id
                 AND a.code = '2000'
                 AND je.status = 'posted'
+                AND je.source_type = 'manual'
             ), 0)
         ) AS current_balance,
         COALESCE((SELECT SUM(balance_due) FROM purchases WHERE supplier_id = s.id), 0) AS purchases_due
