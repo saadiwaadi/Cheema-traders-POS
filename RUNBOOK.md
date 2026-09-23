@@ -183,3 +183,108 @@ undoes the backfill.
 The backfill is idempotent: a second run finds zero gaps and writes nothing
 (verified in testing). It keys each posted entry on the `bank_transactions` row
 id, so it can never double-post the same transfer.
+
+---
+
+## 9. Separate tool: a PURCHASE whose journal entry was never posted
+
+This is a **different defect** from the bank-transfer one above, with its own
+tool. Use it only when you have identified a specific purchase that has no
+journal entry.
+
+The cause: `createPurchase()` used to swallow any `glBridge.postPurchase()`
+failure with a bare `console.error` (fixed in commit `61de851`), and the most
+common failure was an entry that simply cannot balance. `postPurchase` builds:
+
+```
+Dr 1200 Inventory  = round(subtotal    * 100)    paisa
+Cr cash/bank       = round(amount_paid * 100)    paisa   (if > 0)
+Cr 2000 AP         = total - paid                paisa   (if > 0)
+```
+
+When the invoice subtotal and the amount actually paid differ by a rounding
+amount, `total - paid` can be `<= 0`. The AP line is then skipped and the entry
+is left unbalanced - `assertBalanced()` correctly refuses to write it, and the
+old catch hid the refusal. Nothing else was posted for that purchase, so GL
+account 1000 Cash in Hand is short by the amount, and 1200 Inventory with it.
+
+### 9.1 Find the affected purchases
+
+Close the POS first, then run this read-only query against a **copy**:
+
+```sql
+SELECT p.id, p.invoice_no, p.purchase_date, p.supplier_id,
+       p.subtotal, p.amount_paid, p.balance_due, p.payment_method
+FROM purchases p
+WHERE NOT EXISTS (
+  SELECT 1 FROM journal_entries je
+  WHERE je.source_type = 'purchase' AND je.source_id = p.id
+)
+ORDER BY p.id;
+```
+
+Ignore any row with `subtotal = 0`: those are `postPurchase`'s deliberate
+early return, not failures. Everything else is a real gap.
+
+### 9.2 Dry run (writes nothing)
+
+```bat
+node backend\scripts\backfill-purchase-gl-gap.js "%APPDATA%\Cheema Traders Pos\pos.db" --purchase <id> --dry-run
+```
+
+The script derives the entry by calling the **real** `glBridge.postPurchase()`
+inside a transaction and then rolling back, so what you see is what would be
+written. Check that debits equal credits and that the accounts are right.
+
+### 9.3 Apply
+
+```bat
+node backend\scripts\backfill-purchase-gl-gap.js "%APPDATA%\Cheema Traders Pos\pos.db" --purchase <id>
+```
+
+Before writing it takes a WAL-safe `VACUUM INTO` snapshot (default folder
+`%USERPROFILE%\CheemaTradersPOS\Backups\`) and **aborts if that backup fails**.
+Copy the printed backup path down - that file is your rollback point.
+
+### 9.4 Rounding note - expect it
+
+If the amount paid exceeds the invoice subtotal, no balanced entry exists using
+the subtotal. The tool uses the **amount actually paid on both sides**
+(`Dr 1200 = Cr cash`), which can be a few paisa more than the invoice subtotal.
+It prints this as a `ROUNDING NOTE`. That is intentional and is not a failure -
+it is a sub-rupee till-rounding artifact. Do not "fix" it by editing the
+purchase: the alternative is leaving the whole purchase out of the ledger.
+
+### 9.5 Verify
+
+* the purchase now has exactly **one** `journal_entries` row
+  (`source_type='purchase'`, `source_id=<id>`, `status='posted'`);
+* the script reports `journal_entries +1, journal_lines +2` and nothing else;
+* trial balance still balances: `SELECT SUM(debit)-SUM(credit) FROM journal_lines` = 0;
+* **`getAnalysisOverview` moves by exactly that amount** (it is GL-derived);
+* **`getCashBook` does NOT move** (Cash Book / Banks are POS-derived);
+* **Payables does not move** unless the purchase had an unpaid balance - a fully
+  paid purchase carries no AP leg, so `getPayablesReport` should be unchanged.
+
+### 9.6 Re-running is safe
+
+The tool refuses to run if the purchase already has an entry (idempotent by
+`source_id`), exiting with code `1` and writing nothing. It only touches
+`journal_entries` / `journal_lines` for that one purchase - no POS table is
+edited - so it can never change the Cash Book / Banks figure.
+
+### 9.7 Applied so far
+
+One purchase, on 2026-09-23, against the production snapshot taken
+2026-09-22 14:37:48:
+
+| | |
+|---|---|
+| purchase | id 159, `PUR-1788751608717`, 2026-09-06, supplier 7 Byter Crop company |
+| amount | subtotal 75,339.99, paid 75,340.00 (1 paisa rounding) |
+| entry posted | `JV-2026-02722` - Dr 1200 Inventory 75,340.00 / Cr 1000 Cash in Hand 75,340.00 |
+| effect | `getAnalysisOverview` Cash in Hand Rs 22,799,518 -> Rs 22,724,178 (-75,340); `getCashBook` unchanged at Rs 760,100 |
+| rollback file | `%USERPROFILE%\CheemaTradersPOS\Backups\cheema_traders_pos_auto_backup_before_purchase_gl_backfill_20260923_012325.db` |
+
+Every other purchase with no entry in that snapshot has `subtotal = 0` and needs
+no action.
