@@ -641,58 +641,30 @@ class PosStore {
   }
 
   async saveBankTransfer(input) {
-    const db = await this._db();
-    
-    // Transfer logic: 
-    // fromAccount: 'cih' or bank_id
-    // toAccount: 'cih' or bank_id
-    
     const { fromAccount, toAccount, amount, reference, date } = input;
     const transferAmount = Number(amount || 0);
     if (transferAmount <= 0) throw new Error("Transfer amount must be greater than 0");
     if (fromAccount === toAccount) throw new Error("Cannot transfer to the same account");
-    
     const txDate = date || new Date().toISOString().split('T')[0];
-    
-    await run(db, "BEGIN TRANSACTION");
+
+    const result = await this.transaction(async (txDb) => {
+      if (fromAccount !== 'cih') {
+        await run(txDb, `INSERT INTO bank_transactions (bank_account_id, type, amount, reference, date) VALUES (?, 'Withdrawal', ?, ?, ?)`, [fromAccount, transferAmount, reference, txDate]);
+      }
+      if (toAccount !== 'cih') {
+        await run(txDb, `INSERT INTO bank_transactions (bank_account_id, type, amount, reference, date) VALUES (?, 'Deposit', ?, ?, ?)`, [toAccount, transferAmount, reference, txDate]);
+      }
+      return { success: true, fromAccount, toAccount, amount: transferAmount };
+    });
+
     try {
-        if (fromAccount !== 'cih') {
-            // Withdrawal from Source Bank
-            await run(
-                db,
-                `INSERT INTO bank_transactions (bank_account_id, type, amount, reference, date) VALUES (?, 'Withdrawal', ?, ?, ?)`,
-                [fromAccount, transferAmount, reference, txDate]
-            );
-        }
-        
-        if (toAccount !== 'cih') {
-            // Deposit to Target Bank
-            await run(
-                db,
-                `INSERT INTO bank_transactions (bank_account_id, type, amount, reference, date) VALUES (?, 'Deposit', ?, ?, ?)`,
-                [toAccount, transferAmount, reference, txDate]
-            );
-        }
-        
-        await run(db, "COMMIT");
-        try {
-            const dbBetter = this.getBetterDb();
-            postBankTransfer(dbBetter, {
-                id: Date.now(), // synthetic ID for idempotency since there's no single transfer row
-                date: txDate,
-                amount: transferAmount,
-                reference,
-                fromAccount,
-                toAccount
-            });
-        } catch (err) {
-            console.error("[GL] postBankTransfer failed:", err.message);
-        }
-        return { success: true, fromAccount, toAccount, amount: transferAmount };
+      const dbBetter = this.getBetterDb();
+      postBankTransfer(dbBetter, { id: Date.now(), date: txDate, amount: transferAmount, reference, fromAccount, toAccount });
     } catch (err) {
-        await run(db, "ROLLBACK");
-        throw err;
+      console.error("[GL] postBankTransfer failed:", err.message);
     }
+
+    return result;
   }
 
   async getCashBook(input) {
