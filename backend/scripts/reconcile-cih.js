@@ -528,11 +528,17 @@ function report(result) {
   L.push('  difference                                     : Rs ' + money(c.diff));
   L.push('');
 
-  const clean = result.gaps.length === 0 && result.unresolved.length === 0 &&
+  const structuralClean = result.gaps.length === 0 && result.unresolved.length === 0 &&
                 result.orphans.length === 0 && result.entryAnomalies.length === 0 &&
-                result.postingFailures.length === 0 && Math.abs(c.diff) < 0.005;
-  if (clean) {
+                result.postingFailures.length === 0;
+  const numbersAgree = Math.abs(c.diff) < 0.005;
+  if (structuralClean && numbersAgree) {
     L.push('VERDICT: clean - every bank transfer has a posted journal entry and the two CIH numbers agree.');
+  } else if (structuralClean) {
+    L.push('VERDICT: no missing bank-transfer entries (0 gaps), BUT the two Cash in Hand figures');
+    L.push('         still differ by Rs ' + money(c.diff) + '. That divergence is NOT caused by missing');
+    L.push('         bank transfers - getCashBook and getAnalysisOverview draw on different sources');
+    L.push('         (see CB-02 / ANL-03 in AUDIT_REPORT.md). Investigate it separately.');
   } else {
     L.push('VERDICT: gaps/anomalies found (' + result.gaps.length + ' missing journal entry/entries).');
     L.push('Nothing was modified. To fix the gaps safely, run:');

@@ -249,7 +249,8 @@ function main(argv) {
               ' | getAnalysisOverview Rs ' + fmt(before.cih.gl) +
               ' | diff Rs ' + fmt(before.cih.diff));
 
-  const projectedGl = before.cih.gl + before.gaps.reduce(function (s, g) { return s + g.cihImpact; }, 0);
+  const totalImpact = before.gaps.reduce(function (s, g) { return s + g.cihImpact; }, 0);
+  const projectedGl = before.cih.gl + totalImpact;
 
   if (opts.dryRun) {
     console.log('CIH after (projected) : getCashBook Rs ' + fmt(before.cih.cashBook) +
@@ -327,26 +328,54 @@ function main(argv) {
   if (unexpected.length === 0) console.log('  (my changes are journal_entries +' + posted + ', journal_lines +' + (posted * 2) + ' only)');
   console.log('');
 
+  const expectedGl = before.cih.gl + totalImpact;
+  const glMovedAsExpected = Math.abs(after.cih.gl - expectedGl) < 0.005;
   const cashBookUnchanged = Math.abs(after.cih.cashBook - before.cih.cashBook) < 0.005;
   const numbersAgree = Math.abs(after.cih.diff) < 0.005;
-  const ok = after.gaps.length === 0 && numbersAgree && cashBookUnchanged && unexpected.length === 0;
+  const residual = after.cih.diff;
 
-  if (ok) {
+  // The backfill is correct when the gaps are gone, the POS-derived number did
+  // not move, the GL moved by exactly the sum of the missing entries, and
+  // nothing else changed. Whether the two CIH figures now AGREE is a SEPARATE
+  // question: they can still differ because of a pre-existing, non-bank-transfer
+  // divergence between the two implementations (CB-02 / ANL-03). That must be
+  // reported, not mistaken for a failed backfill - real production data does
+  // exactly this, and telling an operator to restore would be wrong.
+  const backfillCorrect = after.gaps.length === 0 && glMovedAsExpected && cashBookUnchanged && unexpected.length === 0;
+
+  if (backfillCorrect && numbersAgree) {
     console.log('VERIFICATION PASSED');
     console.log('  * 0 remaining gaps');
     console.log('  * getCashBook unchanged at Rs ' + fmt(after.cih.cashBook) + ' (POS-derived, correctly untouched)');
-    console.log('  * getAnalysisOverview now matches: Rs ' + fmt(after.cih.gl));
+    console.log('  * getAnalysisOverview moved by Rs ' + fmt(totalImpact) + ' and now matches: Rs ' + fmt(after.cih.gl));
     console.log('  * no unexpected table changes');
     console.log('');
     console.log('Keep the safety backup until you have confirmed the figures: ' + backupPath);
     return 0;
   }
 
-  console.error('VERIFICATION FAILED');
-  console.error('  gaps after           : ' + after.gaps.length);
-  console.error('  getCashBook moved    : ' + (cashBookUnchanged ? 'no' : 'YES (' + fmt(before.cih.cashBook) + ' -> ' + fmt(after.cih.cashBook) + ')'));
-  console.error('  CIH numbers agree    : ' + (numbersAgree ? 'yes' : 'NO (diff ' + fmt(after.cih.diff) + ')'));
-  console.error('  unexpected table(s)  : ' + (unexpected.length ? unexpected.join(', ') : 'none'));
+  if (backfillCorrect) {
+    console.log('VERIFICATION PASSED (for the backfill itself)');
+    console.log('  * 0 remaining gaps');
+    console.log('  * getCashBook unchanged at Rs ' + fmt(after.cih.cashBook) + ' (POS-derived, correctly untouched)');
+    console.log('  * getAnalysisOverview moved by exactly Rs ' + fmt(totalImpact) + ' as expected: Rs ' + fmt(after.cih.gl));
+    console.log('  * no unexpected table changes');
+    console.log('');
+    console.error('NOTE: the two Cash in Hand figures still differ by Rs ' + fmt(residual) + '.');
+    console.error('      That residual is NOT caused by missing bank transfers. It predates this');
+    console.error('      backfill and comes from a different divergence between getCashBook and');
+    console.error('      getAnalysisOverview (see CB-02 / ANL-03 in AUDIT_REPORT.md).');
+    console.error('      This backfill is complete - do NOT restore the backup because of that residual.');
+    console.log('');
+    console.log('Keep the safety backup until you have reviewed the residual: ' + backupPath);
+    return 0;
+  }
+
+  console.error('VERIFICATION FAILED - the backfill did not behave as expected');
+  console.error('  gaps after             : ' + after.gaps.length);
+  console.error('  getCashBook moved      : ' + (cashBookUnchanged ? 'no' : 'YES (' + fmt(before.cih.cashBook) + ' -> ' + fmt(after.cih.cashBook) + ')'));
+  console.error('  GL moved as expected   : ' + (glMovedAsExpected ? 'yes' : 'NO (expected Rs ' + fmt(expectedGl) + ', got Rs ' + fmt(after.cih.gl) + ')'));
+  console.error('  unexpected table(s)    : ' + (unexpected.length ? unexpected.join(', ') : 'none'));
   console.error('Restore from the safety backup if needed: ' + backupPath);
   return 1;
 }
