@@ -73,8 +73,11 @@ This writes nothing. It reports:
 
 Exit codes: `0` clean · `1` gaps/anomalies found · `2` could not run.
 
-> Expect the difference to equal the total of the CIH-affecting gaps. A clean
-> database shows the same number twice.
+> Expect the difference to equal the total of the CIH-affecting gaps **only when
+> bank transfers are the sole cause of the drift**. A difference equal to the gap
+> total is a good sign. A difference that is *larger* than the gap total means
+> something else is also unposted, which this scanner and its backfill cannot fix
+> -- see section 6.
 
 ---
 
@@ -113,17 +116,56 @@ Use `--backup-dir <dir>` to put it somewhere else.
 
 ## 6. Step 4 — Verify
 
-Re-run the scanner from section 3. Success looks like:
+Re-run the scanner from section 3.
 
-* `transfers MISSING a JE : 0`
-* `getCashBook` and `getAnalysisOverview` show **the same** number, difference `0`
-* no orphan entries and no unresolved `gl_posting_failures`
+**Success criteria for this specific fix are:**
 
-You can also confirm in the app: the Cash Book page, the Banks page and the
-Analysis Overview should now all show the same "Cash in Hand".
+1. `transfers MISSING a JE : 0` -- no gaps remain (this is the important one).
+2. `getCashBook` is **unchanged** before and after the backfill. It was already
+   correct, and this backfill must not move it.
+3. `getAnalysisOverview` moves by **exactly the total of the gaps that were
+   backfilled** -- no more, no less. The section 5 run prints the gap total and
+   the before/after values.
 
-**Keep the backup file until you have confirmed these numbers.** Only delete it
-once you are satisfied.
+Plus: no orphan `bank_transfer` journal entries, and no unresolved rows in
+`gl_posting_failures`.
+
+### `getCashBook` and `getAnalysisOverview` will probably still NOT be equal
+
+This is **expected**, and it is **not** a failure of this backfill.
+
+Cash in Hand has more than one cause of drift in this database. The bank-transfer
+posting bug this runbook repairs is only one of them. A separate, pre-existing
+problem in the **supplier-payment GL posting** path leaves large amounts
+unposted -- in the production snapshot this runbook was tested against, a single
+**Rs 27,847,812** supplier payment ("stock value", 2026-06-21) had no journal
+entry at all. Nothing in this runbook posts supplier-payment entries, so these two
+figures will **not** converge to the same number from this fix alone.
+
+Closing that gap is a separate job with its own diagnosis and its own review. It
+is tracked, it is known, and it is out of scope here.
+
+### Do not roll back just because the two numbers differ
+
+Do **not** treat a residual difference between `getCashBook` and
+`getAnalysisOverview` as a reason to panic, roll back, or restore the snapshot.
+That difference is the known, expected residual described above.
+
+**Roll back only if one of these is true:**
+
+* `reconcile-cih.js` still reports gaps **after** the backfill -- i.e.
+  `transfers MISSING a JE` is still greater than `0`; or
+* the backfill script itself reports an error or a failure; or
+* `getCashBook` **changed** across the backfill (criterion 2 above).
+
+If none of those happened, the fix worked. Keep the result.
+
+In the app: the Cash Book page and the Banks page are driven by `getCashBook` and
+should read exactly as they did before. The Analysis Overview will still show the
+expected residual -- that is normal.
+
+**Keep the backup file until you have confirmed the three criteria above.** Only
+delete it once you are satisfied.
 
 ---
 
