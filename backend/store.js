@@ -648,23 +648,102 @@ class PosStore {
     const txDate = date || new Date().toISOString().split('T')[0];
 
     const result = await this.transaction(async (txDb) => {
+      const bankTransactionIds = [];
       if (fromAccount !== 'cih') {
-        await run(txDb, `INSERT INTO bank_transactions (bank_account_id, type, amount, reference, date) VALUES (?, 'Withdrawal', ?, ?, ?)`, [fromAccount, transferAmount, reference, txDate]);
+        const inserted = await run(txDb, `INSERT INTO bank_transactions (bank_account_id, type, amount, reference, date) VALUES (?, 'Withdrawal', ?, ?, ?)`, [fromAccount, transferAmount, reference, txDate]);
+        bankTransactionIds.push(Number(inserted.lastID));
       }
       if (toAccount !== 'cih') {
-        await run(txDb, `INSERT INTO bank_transactions (bank_account_id, type, amount, reference, date) VALUES (?, 'Deposit', ?, ?, ?)`, [toAccount, transferAmount, reference, txDate]);
+        const inserted = await run(txDb, `INSERT INTO bank_transactions (bank_account_id, type, amount, reference, date) VALUES (?, 'Deposit', ?, ?, ?)`, [toAccount, transferAmount, reference, txDate]);
+        bankTransactionIds.push(Number(inserted.lastID));
       }
-      return { success: true, fromAccount, toAccount, amount: transferAmount };
+      return { success: true, fromAccount, toAccount, amount: transferAmount, bankTransactionIds };
     });
+
+    // Stable, deterministic GL idempotency key: the id of the bank_transactions
+    // row this transfer just inserted. Unlike the previous Date.now() key it can
+    // never collide with another transfer, and re-posting the same row is still
+    // detected as already-posted via UNIQUE(source_type, source_id).
+    const glSourceId = Math.min(...result.bankTransactionIds);
 
     try {
       const dbBetter = this.getBetterDb();
-      postBankTransfer(dbBetter, { id: Date.now(), date: txDate, amount: transferAmount, reference, fromAccount, toAccount });
+      postBankTransfer(dbBetter, {
+        id: glSourceId,
+        date: txDate,
+        amount: transferAmount,
+        reference,
+        fromAccount,
+        toAccount,
+      });
     } catch (err) {
-      console.error("[GL] postBankTransfer failed:", err.message);
+      // A failed GL posting must never be silently swallowed: the bank row(s) are
+      // already committed, so an un-recorded failure here is exactly how account
+      // 1000 (Cash in Hand) drifts away from bank_transactions. Record it durably
+      // so scripts/reconcile-cih.js can find and backfill it (see RUNBOOK.md).
+      this._recordGlPostingFailure({
+        sourceType: 'bank_transfer',
+        sourceId: glSourceId,
+        fromAccount,
+        toAccount,
+        amount: transferAmount,
+        reference,
+        entryDate: txDate,
+        bankTransactionIds: result.bankTransactionIds,
+        error: err,
+      });
     }
 
     return result;
+  }
+
+  // Durable record of a GL posting that failed after its source row(s) committed.
+  // Kept out of the main flow so a recording failure can never break the transfer.
+  _recordGlPostingFailure({ sourceType, sourceId, fromAccount, toAccount, amount, reference, entryDate, bankTransactionIds, error }) {
+    const detail = {
+      sourceType,
+      sourceId,
+      fromAccount,
+      toAccount,
+      amount,
+      reference,
+      entryDate,
+      bankTransactionIds,
+      error: error && error.message ? error.message : String(error),
+    };
+    try {
+      const dbBetter = this.getBetterDb();
+      const hasTable = dbBetter.prepare(
+        `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'gl_posting_failures' LIMIT 1`
+      ).get();
+
+      if (!hasTable) {
+        // Pre-migration database: still log every detail needed to reconstruct the
+        // gap by hand, but never let the recording step break the transfer.
+        console.error("[GL] postBankTransfer failed (no gl_posting_failures table on this database):", detail);
+        return;
+      }
+
+      dbBetter.prepare(
+        `INSERT INTO gl_posting_failures
+           (source_type, source_id, from_account, to_account, amount, reference, entry_date, bank_transaction_ids, error_message)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        sourceType,
+        sourceId,
+        String(fromAccount),
+        String(toAccount),
+        amount,
+        reference ?? null,
+        entryDate ?? null,
+        JSON.stringify(bankTransactionIds || []),
+        detail.error
+      );
+
+      console.error("[GL] postBankTransfer failed - recorded in gl_posting_failures for reconciliation:", detail);
+    } catch (recordErr) {
+      console.error("[GL] postBankTransfer failed AND could not be recorded - reconcile manually:", detail, recordErr.message);
+    }
   }
 
   async getCashBook(input) {

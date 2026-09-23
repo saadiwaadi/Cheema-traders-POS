@@ -109,6 +109,35 @@ const MIGRATIONS = [
     // so that future DATA migrations can be applied exactly once.
     up: () => {},
   },
+  {
+    version: 2,
+    name: "add_gl_posting_failures",
+    backup: true,
+    // Purely additive: a durable place to record GL postings that failed AFTER
+    // their source row was committed (e.g. a bank transfer whose journal entry
+    // never landed). Such a gap used to be swallowed by a console.error and was
+    // invisible after the fact. Idempotent, so a re-run after a partial upgrade
+    // is safe. Read back by backend/scripts/reconcile-cih.js.
+    up: (conn) => {
+      conn.exec(`
+        CREATE TABLE IF NOT EXISTS gl_posting_failures (
+          id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+          source_type          TEXT NOT NULL,
+          source_id            INTEGER,
+          from_account         TEXT,
+          to_account           TEXT,
+          amount               REAL,
+          reference            TEXT,
+          entry_date           TEXT,
+          bank_transaction_ids TEXT,
+          error_message        TEXT,
+          created_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          resolved_at          TEXT
+        )
+      `);
+      conn.exec(`CREATE INDEX IF NOT EXISTS idx_gl_failures_open ON gl_posting_failures(resolved_at, source_type)`);
+    },
+  },
 ];
 
 const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce(
@@ -608,6 +637,28 @@ db.serialize(() => {
   db.run(`CREATE INDEX IF NOT EXISTS idx_lines_entry   ON journal_lines(entry_id)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_entries_date  ON journal_entries(date)`);
 
+  // Durable record of GL postings that failed after their source row committed.
+  // Written by store._recordGlPostingFailure(); read by scripts/reconcile-cih.js.
+  // Created here for fresh databases and by MIGRATIONS v2 for existing ones.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS gl_posting_failures (
+      id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_type          TEXT NOT NULL,
+      source_id            INTEGER,
+      from_account         TEXT,
+      to_account           TEXT,
+      amount               REAL,
+      reference            TEXT,
+      entry_date           TEXT,
+      bank_transaction_ids TEXT,
+      error_message        TEXT,
+      created_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      resolved_at          TEXT
+    )
+  `);
+
+  db.run(`CREATE INDEX IF NOT EXISTS idx_gl_failures_open ON gl_posting_failures(resolved_at, source_type)`);
+
   db.run(`
     CREATE TABLE IF NOT EXISTS accounting_periods (
       id INTEGER PRIMARY KEY, name TEXT,
@@ -978,4 +1029,8 @@ if (process.env.SKIP_MIGRATIONS !== "1") {
   db.migrationsReady = Promise.resolve();
 }
 
+// `db` is exported directly for backwards compatibility (callers such as
+// store.js read db.filename and use the sqlite3 connection). Helpers that other
+// modules or standalone scripts need are attached to it.
 module.exports = db;
+module.exports.createSafeBackup = createSafeBackup;

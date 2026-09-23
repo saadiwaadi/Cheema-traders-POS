@@ -462,6 +462,18 @@ function voidSale(db, sale) {
 function postBankTransfer(db, transfer) {
   // transfer: { id, date, amount, reference, fromAccount, toAccount }
   // fromAccount/toAccount can be 'cih' or bank_id
+  //
+  // `id` MUST be a stable, deterministic key for this physical transfer. The
+  // caller (store.saveBankTransfer) passes the bank_transactions row id it just
+  // inserted. It becomes journal_entries.source_id, covered by
+  // UNIQUE(source_type, source_id), so re-posting the same transfer is detected
+  // as already-posted while two DIFFERENT transfers can never collide - not even
+  // if they happen in the same millisecond (which the old Date.now() key allowed).
+  if (transfer.id === undefined || transfer.id === null) {
+    throw new Error(
+      "GL Bridge: postBankTransfer requires a stable transfer id (bank_transactions row id)."
+    );
+  }
   if (alreadyPosted(db, "bank_transfer", transfer.id)) return;
 
   const amountPaisa = toPaisa(transfer.amount);
@@ -471,30 +483,29 @@ function postBankTransfer(db, transfer) {
   const fromName = transfer.fromAccount === 'cih' ? 'Cash' : `Bank ID ${transfer.fromAccount}`;
   const toName = transfer.toAccount === 'cih' ? 'Cash' : `Bank ID ${transfer.toAccount}`;
 
-  try {
-    writeEntry(db, {
-      date,
-      narration: `Fund Transfer: ${fromName} -> ${toName} ${transfer.reference ? '(' + transfer.reference + ')' : ''}`,
-      source_type: "bank_transfer",
-      source_id:   transfer.id || Date.now(), // Generate a unique ID if not saved in a table
-      lines: [
-        {
-          // Dr To Account
-          accountId: methodAccountId(db, transfer.toAccount),
-          debit: amountPaisa, credit: 0,
-          memo: "Transfer deposit",
-        },
-        {
-          // Cr From Account
-          accountId: methodAccountId(db, transfer.fromAccount),
-          debit: 0, credit: amountPaisa,
-          memo: "Transfer withdrawal",
-        },
-      ],
-    });
-  } catch (err) {
-    console.error("[glBridge] postBankTransfer failed:", err.message, { transfer });
-  }
+  // Deliberately NOT wrapped in a swallowing try/catch. A failed posting must be
+  // visible to the caller so it can be recorded durably and reconciled later
+  // (store.saveBankTransfer -> gl_posting_failures; see scripts/reconcile-cih.js).
+  writeEntry(db, {
+    date,
+    narration: `Fund Transfer: ${fromName} -> ${toName} ${transfer.reference ? '(' + transfer.reference + ')' : ''}`,
+    source_type: "bank_transfer",
+    source_id:   transfer.id,
+    lines: [
+      {
+        // Dr To Account
+        accountId: methodAccountId(db, transfer.toAccount),
+        debit: amountPaisa, credit: 0,
+        memo: "Transfer deposit",
+      },
+      {
+        // Cr From Account
+        accountId: methodAccountId(db, transfer.fromAccount),
+        debit: 0, credit: amountPaisa,
+        memo: "Transfer withdrawal",
+      },
+    ],
+  });
 }
 
 
