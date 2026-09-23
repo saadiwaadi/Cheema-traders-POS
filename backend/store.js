@@ -2351,7 +2351,13 @@ class PosStore {
         const dbBetter = this.getBetterDb();
         reversePurchaseItem(dbBetter, result.glData.lineTotal, result.glData.supplierId, result.glData.invoiceNo, result.id);
       } catch (err) {
-        console.error("Failed to reverse GL for deleted batch", err);
+        this._recordGlPostingFailure({
+          sourceType: 'purchase_reversal',
+          sourceId: result.id,
+          amount: result.glData.lineTotal,
+          reference: result.glData.invoiceNo,
+          error: err,
+        });
       }
     }
     return { id: result.id };
@@ -3031,7 +3037,13 @@ class PosStore {
       const dbBetter = this.getBetterDb();
       voidSale(dbBetter, { id });   // calls glBridge.voidSale, not this method
     } catch (err) {
-      console.error("[GL] voidSale failed:", err.message);
+      this._recordGlPostingFailure({
+        sourceType: 'void_sale',
+        sourceId: id,
+        reference: result.invoiceNo,
+        entryDate: result.voidedAt,
+        error: err,
+      });
     }
 
     this._notifyUpdate("sale:created", id);

@@ -453,6 +453,7 @@ function voidSale(db, sale) {
     db.prepare(`UPDATE journal_entries SET status='void' WHERE id=?`).run(orig.id);
   } catch (err) {
     console.error("[glBridge] voidSale failed:", err.message, { saleId: sale.id });
+    throw err;
   }
 }
 
@@ -591,6 +592,7 @@ function reversePurchaseItem(db, itemAmount, supplierId, invoiceNo, batchId) {
     });
   } catch (err) {
     console.error("[glBridge] reversePurchaseItem failed:", err.message);
+    throw err;
   }
 }
 
