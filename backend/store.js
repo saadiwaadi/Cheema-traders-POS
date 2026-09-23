@@ -4108,7 +4108,11 @@ class PosStore {
   async getPayablesReport(args = {}) {
     const db = await this._db();
     const { from, to, search, aging } = args;
-    
+
+    // ROW QUERY: UNCHANGED. Every purchase with an outstanding balance
+    // still shows its own full invoice amount, exactly as before. This
+    // is deliberate per the decision above - no per-invoice payment
+    // matching.
     let query = `
       SELECT
         p.id,
@@ -4126,50 +4130,30 @@ class PosStore {
       WHERE p.balance_due > 0
     `;
     const params = [];
-    if (from) {
-      query += " AND p.purchase_date >= ?";
-      params.push(from);
-    }
-    if (to) {
-      query += " AND p.purchase_date <= ?";
-      params.push(to);
-    }
-    if (search) {
-      query += " AND LOWER(COALESCE(sup.name, '')) LIKE '%' || LOWER(?) || '%'";
-      params.push(search);
-    }
+    if (from) { query += " AND p.purchase_date >= ?"; params.push(from); }
+    if (to) { query += " AND p.purchase_date <= ?"; params.push(to); }
+    if (search) { query += " AND LOWER(COALESCE(sup.name, '')) LIKE '%' || LOWER(?) || '%'"; params.push(search); }
     query += " ORDER BY p.purchase_date ASC";
 
     let rows = await all(db, query, params);
 
-    // Fetch suppliers with positive opening balance (money we owe them)
+    // Opening-balance virtual rows: UNCHANGED (this part already used the
+    // correct payment-aware formula, confirmed in the original audit).
     const suppliersWithOpening = await all(db, `
-      SELECT 
-        s.id,
-        s.name,
-        s.created_at,
-        s.opening_balance,
+      SELECT
+        s.id, s.name, s.created_at, s.opening_balance,
         CAST(julianday('now') - julianday(s.created_at) AS INTEGER) AS days_outstanding,
         (
-          s.opening_balance 
+          s.opening_balance
           + COALESCE((SELECT SUM(balance_due) FROM purchases WHERE supplier_id = s.id), 0)
           - COALESCE((SELECT SUM(amount) FROM supplier_payments WHERE supplier_id = s.id), 0)
           + COALESCE((
-              -- Only MANUAL journals belong here. The POS-posted AP movements turn
-              -- up twice otherwise: purchases.balance_due already carries the
-              -- unpaid invoice amount, and supplier payments are already
-              -- subtracted by the SUM(supplier_payments.amount) term above. Those
-              -- lines (unlike manual ones) carry jl.supplier_id, so without this
-              -- filter every supplier payment is subtracted a second time.
-              -- Same guard as _syncSupplierBalance().
               SELECT SUM(jl.credit - jl.debit) / 100.0
               FROM journal_lines jl
               JOIN journal_entries je ON jl.entry_id = je.id
               JOIN accounts a ON jl.account_id = a.id
-              WHERE jl.supplier_id = s.id
-                AND a.code = '2000'
-                AND je.status = 'posted'
-                AND je.source_type = 'manual'
+              WHERE jl.supplier_id = s.id AND a.code = '2000'
+                AND je.status = 'posted' AND je.source_type = 'manual'
             ), 0)
         ) AS current_balance,
         COALESCE((SELECT SUM(balance_due) FROM purchases WHERE supplier_id = s.id), 0) AS purchases_due
@@ -4180,7 +4164,6 @@ class PosStore {
     for (const s of suppliersWithOpening) {
       const outstanding = Math.min(s.opening_balance, Math.max(0, s.current_balance - s.purchases_due));
       if (outstanding <= 0) continue;
-
       const sDate = s.created_at ? s.created_at.split(' ')[0] : '0000-00-00';
       if (from && sDate < from) continue;
       if (to && sDate > to) continue;
@@ -4200,12 +4183,13 @@ class PosStore {
       });
     }
 
-    // Sort rows chronologically by purchase_date
     rows.sort((a, b) => a.purchase_date.localeCompare(b.purchase_date));
-    
+
     let finalRows = [];
+    // total_owed / total_paid / overdue_count still come from the visible
+    // rows, same as before - those describe what's shown on screen.
     let summary = { total_owed: 0, total_paid: 0, total_payable: 0, overdue_count: 0 };
-    
+
     for (const r of rows) {
       let bucket = 'Current';
       const days = r.days_outstanding || 0;
@@ -4213,20 +4197,42 @@ class PosStore {
       else if (days >= 31 && days <= 60) bucket = '31-60d';
       else if (days >= 61 && days <= 90) bucket = '61-90d';
       else if (days > 90) bucket = '90+';
-      
       r.aging_bucket = bucket;
-      
-      if (aging && aging !== 'All' && aging !== bucket) {
-        continue;
-      }
-      
+
+      if (aging && aging !== 'All' && aging !== bucket) continue;
+
       finalRows.push(r);
       summary.total_owed += r.total;
       summary.total_paid += r.amount_paid;
-      summary.total_payable += r.balance_due;
       if (days > 0) summary.overdue_count++;
     }
-    
+
+    // THE ACTUAL FIX: total_payable no longer comes from summing the
+    // visible rows' balance_due (that's what double/triple-counted
+    // "random" payments not tied to any specific invoice). It is instead
+    // computed once, across all suppliers, using the exact same net
+    // debit/credit formula _syncSupplierBalance already uses - this is
+    // the number that should match what a supplier actually owes right
+    // now, independent of which individual purchases are shown above.
+    const netPayableRow = await get(db, `
+      SELECT COALESCE(SUM(
+        COALESCE(s.opening_balance, 0)
+        + COALESCE((SELECT SUM(balance_due) FROM purchases WHERE supplier_id = s.id), 0)
+        - COALESCE((SELECT SUM(amount) FROM supplier_payments WHERE supplier_id = s.id), 0)
+        + COALESCE((
+            SELECT SUM(jl.credit - jl.debit) / 100.0
+            FROM journal_lines jl
+            JOIN journal_entries je ON jl.entry_id = je.id
+            JOIN accounts a ON jl.account_id = a.id
+            WHERE jl.supplier_id = s.id AND a.code = '2000'
+              AND je.status = 'posted' AND je.source_type = 'manual'
+          ), 0)
+      ), 0) AS total
+      FROM suppliers s
+      WHERE s.deleted_at IS NULL
+    `);
+    summary.total_payable = Number(netPayableRow?.total || 0);
+
     return { rows: finalRows, summary };
   }
 

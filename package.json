@@ -5,9 +5,9 @@
   "scripts": {
     "backend": "cd backend && npm run dev",
     "frontend": "cd frontend && npm run dev",
-    "electron": "wait-on http://localhost:5173 && electron .",
-    "dev": "concurrently \"npm run backend\" \"npm run frontend\" \"npm run electron\"",
-    "desktop": "concurrently \"npm run frontend\" \"npm run electron\"",
+    "electron": "npx wait-on http://localhost:5173 && npx electron .",
+    "dev": "npx concurrently \"npm run backend\" \"npm run frontend\" \"npm run electron\"",
+    "desktop": "npx concurrently \"npm run frontend\" \"npm run electron\"",
     "build:frontend": "cd frontend && npm run build",
     "rebuild:native": "electron-rebuild -f -w better-sqlite3,sqlite3",
     "package": "npm run build:frontend && npm run rebuild:native && electron-builder build --win"
