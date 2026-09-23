@@ -28,6 +28,195 @@ function ignoreColumnExists(err) {
   }
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+   BACKUP, SCHEMA VERSIONING & MIGRATIONS
+   ────────────────────────────────────────────────────────────────────────────
+   This app is deployed to live shops, so every change to an existing database
+   must be:
+     1. backed up first (WAL-safe), and
+     2. applied exactly once, tracked by a version marker.
+
+   Never rely on `CREATE TABLE IF NOT EXISTS` or "ignore the error" for a change
+   that touches DATA (e.g. dividing a balance by 100). Those are not repeatable.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+const SCHEMA_VERSION_KEY = "schema_version";
+
+function backupDirectory() {
+  const homeDir = process.env.USERPROFILE || process.env.HOME || "C:\\";
+  return path.join(homeDir, "CheemaTradersPOS", "Backups");
+}
+
+function backupTimestamp() {
+  const now = new Date();
+  return now.getFullYear() +
+    String(now.getMonth() + 1).padStart(2, "0") +
+    String(now.getDate()).padStart(2, "0") + "_" +
+    String(now.getHours()).padStart(2, "0") +
+    String(now.getMinutes()).padStart(2, "0") +
+    String(now.getSeconds()).padStart(2, "0");
+}
+
+// WAL-safe snapshot of the database.
+// fs.copyFileSync() only copies pos.db and MISSES transactions that are still
+// sitting in pos.db-wal, so the "backup" can be missing the latest sales.
+// VACUUM INTO writes a consistent, standalone copy of everything that is
+// actually committed. Throws on failure — callers MUST abort if it throws.
+function createSafeBackup(reason) {
+  const backupDir = backupDirectory();
+  fs.mkdirSync(backupDir, { recursive: true });
+
+  const target = path.join(
+    backupDir,
+    `cheema_traders_pos_auto_backup_before_${reason}_${backupTimestamp()}.db`
+  );
+
+  const Database = require("better-sqlite3");
+  const snapshot = new Database(dbPath, { readonly: true });
+  try {
+    snapshot.prepare("VACUUM INTO ?").run(target);
+  } finally {
+    snapshot.close();
+  }
+
+  if (!fs.existsSync(target) || fs.statSync(target).size === 0) {
+    throw new Error("backup file was not created or is empty");
+  }
+  return target;
+}
+
+/* ─── Migration registry ────────────────────────────────────────────────────
+   Add new migrations to the END of this list.
+
+     { version: 2,
+       name:    "normalise_balance_units",
+       backup:  true,                  // take a snapshot before running
+       up:      (conn) => { conn.exec("..."); } }
+
+   Rules:
+     • Never renumber or edit a migration that has already shipped — shops may
+       already be past that version.
+     • `up` receives a better-sqlite3 connection and runs inside a TRANSACTION.
+       If it throws, it is rolled back and the version is NOT advanced.
+     • Make `up` idempotent anyway, as a second line of defence.
+   ─────────────────────────────────────────────────────────────────────────── */
+const MIGRATIONS = [
+  {
+    version: 1,
+    name: "baseline_version_tracking",
+    backup: false,
+    // No data change. It exists purely to establish the `schema_version` marker
+    // so that future DATA migrations can be applied exactly once.
+    up: () => {},
+  },
+];
+
+const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce(
+  (max, migration) => Math.max(max, migration.version),
+  0
+);
+
+function applyMigrations() {
+  const Database = require("better-sqlite3");
+  let conn;
+
+  try {
+    conn = new Database(dbPath);
+    conn.pragma("foreign_keys = ON");
+    conn.pragma("journal_mode = WAL");
+  } catch (err) {
+    console.error("[migrations] could not open the database:", err.message);
+    return Promise.resolve();
+  }
+
+  try {
+    // The version store may not exist yet on a brand-new database.
+    conn.exec(`
+      CREATE TABLE IF NOT EXISTS settings (
+        key        TEXT PRIMARY KEY,
+        value      TEXT,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    const tableExists = (name) =>
+      !!conn.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
+
+    const readVersion = () => {
+      const row = conn.prepare("SELECT value FROM settings WHERE key = ?").get(SCHEMA_VERSION_KEY);
+      const parsed = row ? parseInt(row.value, 10) : 0;
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const writeVersion = (version) =>
+      conn.prepare(`
+        INSERT INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+      `).run(SCHEMA_VERSION_KEY, String(version));
+
+    // A database this build created already has the latest shape, so it only
+    // needs the version stamped onto it.
+    const isFreshDatabase = !tableExists("users") && !tableExists("sales");
+    if (isFreshDatabase) {
+      writeVersion(LATEST_SCHEMA_VERSION);
+      console.log(`[migrations] fresh database — schema stamped at v${LATEST_SCHEMA_VERSION}`);
+      return Promise.resolve();
+    }
+
+    const currentVersion = readVersion();
+    const pending = MIGRATIONS
+      .filter((migration) => migration.version > currentVersion)
+      .sort((a, b) => a.version - b.version);
+
+    if (pending.length === 0) {
+      console.log(`[migrations] database is up to date (v${currentVersion})`);
+      return Promise.resolve();
+    }
+
+    console.log(
+      `[migrations] applying ${pending.length} migration(s): v${currentVersion} -> v${LATEST_SCHEMA_VERSION}`
+    );
+
+    // Back up BEFORE anything is touched. If no usable backup can be produced we
+    // do not migrate at all — a live shop must never be left without a fallback.
+    if (pending.some((migration) => migration.backup)) {
+      try {
+        console.log("[migrations] pre-migration backup:", createSafeBackup("migration"));
+      } catch (err) {
+        console.error("[migrations] ABORTED — could not create a safety backup:", err.message);
+        console.error("[migrations] no changes were made. Free up disk space and restart.");
+        return Promise.resolve();
+      }
+    }
+
+    for (const migration of pending) {
+      try {
+        conn.transaction(() => migration.up(conn))();
+        writeVersion(migration.version);
+        console.log(`[migrations] OK  v${migration.version} ${migration.name}`);
+      } catch (err) {
+        // The transaction rolled back, so the database is still at the previous
+        // version and consistent. Stop rather than continuing to later steps.
+        console.error(`[migrations] FAILED v${migration.version} ${migration.name}:`, err.message);
+        console.error(`[migrations] stopped at v${readVersion()} — restore the backup above if needed.`);
+        return Promise.resolve();
+      }
+    }
+
+    console.log(`[migrations] complete — now at v${readVersion()}`);
+    return Promise.resolve();
+  } catch (err) {
+    console.error("[migrations] unexpected error:", err.message);
+    return Promise.resolve();
+  } finally {
+    try {
+      conn.close();
+    } catch (err) {
+      /* connection already gone */
+    }
+  }
+}
+
 db.serialize(() => {
   db.run("PRAGMA foreign_keys = ON");
   db.run("PRAGMA journal_mode = WAL");
@@ -500,9 +689,16 @@ db.serialize(() => {
         ['6001', 'Bonuses & Allowances Expense', 'expense', 0],
         ['1300', 'Employee Advances', 'asset', 0],
       ];
-      const stmt = db.prepare("INSERT INTO accounts (code, name, type, is_control) VALUES (?, ?, ?, ?)");
+      // INSERT OR IGNORE + a per-row callback is required here:
+      // the "self-heal" block further down inserts the same four codes
+      // (2100 / 6000 / 6001 / 1300) and, on a brand-new database, it can run
+      // BEFORE this seed. A plain INSERT would then throw UNIQUE constraint
+      // failed: accounts.code and crash a fresh install on first launch.
+      const stmt = db.prepare("INSERT OR IGNORE INTO accounts (code, name, type, is_control) VALUES (?, ?, ?, ?)");
       defaultAccounts.forEach((acc) => {
-        stmt.run(acc);
+        stmt.run(acc, (err) => {
+          if (err) console.warn("Chart of Accounts seed skipped", acc[0], err.message);
+        });
       });
       stmt.finalize();
     }
@@ -622,27 +818,16 @@ db.serialize(() => {
     if (needsMigration) {
       console.log("Migrating products table to remove NOT NULL constraint from legacy price/quantity...");
 
-      // SAFETY: Perform synchronous automatic database backup before running migration
+      // SAFETY: WAL-safe snapshot before a destructive schema change.
+      // fs.copyFileSync() would miss transactions still sitting in pos.db-wal,
+      // so it is replaced by createSafeBackup() (VACUUM INTO).
+      // If no backup can be produced we DO NOT migrate.
       try {
-        const fs = require("fs");
-        const path = require("path");
-        const homeDir = process.env.USERPROFILE || process.env.HOME || "C:";
-        const backupDir = path.join(homeDir, "CheemaTradersPOS", "Backups");
-        if (!fs.existsSync(backupDir)) {
-          fs.mkdirSync(backupDir, { recursive: true });
-        }
-        const now = new Date();
-        const timestamp = now.getFullYear() +
-          String(now.getMonth() + 1).padStart(2, '0') +
-          String(now.getDate()).padStart(2, '0') + "_" +
-          String(now.getHours()).padStart(2, '0') +
-          String(now.getMinutes()).padStart(2, '0') +
-          String(now.getSeconds()).padStart(2, '0');
-        const backupPath = path.join(backupDir, `cheema_traders_pos_auto_backup_before_migration_${timestamp}.db`);
-        fs.copyFileSync(dbPath, backupPath);
-        console.log("Auto-backup successfully created before migration at:", backupPath);
+        console.log("Auto-backup created before migration at:", createSafeBackup("products_rebuild"));
       } catch (backupErr) {
-        console.error("Failed to create auto-backup before migration:", backupErr);
+        console.error("ABORTING products migration — no safety backup could be created:", backupErr.message);
+        console.error("The products table was left unchanged. Fix the backup problem and restart.");
+        return; // leaves this callback, so the rebuild below never runs
       }
 
       db.serialize(() => {
@@ -783,5 +968,14 @@ db.serialize(() => {
     });
   });
 });
+
+// Ordered, version-gated migrations.
+// Exposed as a promise so that future DATA migrations can be awaited before the
+// app starts serving reads/writes.
+if (process.env.SKIP_MIGRATIONS !== "1") {
+  db.migrationsReady = applyMigrations();
+} else {
+  db.migrationsReady = Promise.resolve();
+}
 
 module.exports = db;
